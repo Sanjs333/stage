@@ -1138,7 +1138,7 @@
     saveData();
     try {
       if (typeof createChatMessages === "function") {
-        createChatMessages([{ role: "user", message: p.content }])
+        createChatMessages([{ role: "user", message: substitudeMacros(p.content) }])
           .then(() => {
             if (typeof triggerSlash === "function")
               triggerSlash("/trigger await=true");
