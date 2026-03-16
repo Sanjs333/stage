@@ -76,6 +76,7 @@
     "- 显示收藏、最近使用、各分组入口",
     "- 顶部搜索框可以搜索标题、内容、作者、系列名",
     "- 点击漏斗图标可按标签/分组筛选",
+    "- 标签筛选支持「任一匹配」和「全部匹配」两种模式，点击筛选面板中的按钮切换",
     "- 点击排序图标可切换多种排序方式",
     "- 点击骰子图标可随机抽取一条剧场",
     "",
@@ -130,6 +131,9 @@
     "- 支持查找、上/下一个、替换当前、全部替换",
     "- `Enter` 跳到下一个，`Shift+Enter` 跳到上一个",
     "",
+    "### 回到顶部",
+    "编辑区域滚动超过一定距离后，右下角会出现回顶按钮，预览模式下同样可用。",
+    "",
     "### 专注模式",
     "点击展开图标进入专注模式，面板放大到全屏只显示编辑区域，适合长文编辑。",
     "",
@@ -149,6 +153,7 @@
     "- 每次保存编辑时，自动保存上一版到历史（最多保留5 条）",
     "- 可以查看历史版本、回退、或进行版本对比",
     "- 版本对比页面用颜色标记新增行和删除行",
+    "- 版本历史超过一定数量时会在底栏和打开面板时给出提醒，可在设置中关闭",
     "",
     "---",
     "",
@@ -193,8 +198,11 @@
     "- **默认作者**：新建剧场时自动填入的作者名",
     "- **自动检查间隔**：打开面板时，超过设定时间未检查的订阅会自动静默检查（默认6小时，设为0关闭）",
     "- **快捷短语管理**：管理编辑器里可快速插入的文本片段",
+    "- **历史提醒开关**：可设置底栏是否在历史超过30条时变红提醒",
+    "- **查看历史记录**：快速查看哪些剧场有版本历史，支持单条清空",
     "- **清空版本历史**：一键清空所有剧场的版本历史",
     "- **重置使用统计**：归零所有使用次数和最近使用时间",
+
     "",
     "---",
     "",
@@ -642,6 +650,39 @@
     }
   }
 
+function syncThemeColors() {
+    const $p = $("#" + PANEL_ID);
+    if (!$p.length) return;
+    try {
+      let parentDoc = null;
+      let parentWin = null;
+      try {
+        if (window.parent && window.parent.document) {
+          parentDoc = window.parent.document;
+          parentWin = window.parent;
+        }
+      } catch (e) {}
+      const doc = parentDoc || document;
+      const win = parentWin || window;
+      var inputColor = "";
+      var selects = doc.querySelectorAll(".drawer-content select");
+      for (var i = 0; i < selects.length; i++) {
+        var cs = win.getComputedStyle(selects[i]);
+        if (cs.color) { inputColor = cs.color; break; }
+      }
+      if (!inputColor) {
+        var textPoles = doc.querySelectorAll(".text_pole");
+        for (var j = 0; j < textPoles.length; j++) {
+          var cs2 = win.getComputedStyle(textPoles[j]);
+          if (cs2.color) { inputColor = cs2.color; break; }
+        }
+      }
+      if (inputColor) {
+        $p[0].style.setProperty("--ms-themed-input-color", inputColor);
+      }
+    } catch (e) {}
+  }
+
   function closeActiveDropdown() {
     const $p = $("#" + PANEL_ID);
     if ($p.length) {
@@ -708,6 +749,10 @@
         data.settings = { ...data.settings, ...(stored.settings || {}) };
         if (data.settings.autoCheckInterval === undefined)
           data.settings.autoCheckInterval = 6;
+        if (data.settings.historyWarnEnabled === undefined)
+          data.settings.historyWarnEnabled = true;
+        if (data.settings.filterTagMode === undefined)
+          data.settings.filterTagMode = "or";
         if (data.settings.subUpdatesPending === undefined)
           data.settings.subUpdatesPending = 0;
         if (!Array.isArray(data.settings.definedTags))
@@ -1053,10 +1098,17 @@
 
   function filterPrompts(list) {
     let r = list;
-    if (filterState.tags.length > 0)
-      r = r.filter(
-        (p) => p.tags && filterState.tags.some((tid) => p.tags.includes(tid)),
-      );
+    if (filterState.tags.length > 0) {
+      if (data.settings.filterTagMode === "and") {
+        r = r.filter(
+          (p) => p.tags && filterState.tags.every((tid) => p.tags.includes(tid)),
+        );
+      } else {
+        r = r.filter(
+          (p) => p.tags && filterState.tags.some((tid) => p.tags.includes(tid)),
+        );
+      }
+    }
     if (filterState.groupId) {
       if (filterState.groupId === "_ungrouped")
         r = r.filter((p) => !p.groupId || !getGroup(p.groupId));
@@ -1142,7 +1194,6 @@
           .then(() => {
             if (typeof triggerSlash === "function")
               triggerSlash("/trigger await=true");
-            toast("success", "已发送并触发生成");
             autoCollapsePanel();
           })
           .catch(() => {
@@ -1155,7 +1206,6 @@
           setTimeout(() => {
             $("#send_but").trigger("click");
           }, 100);
-          toast("success", "已发送");
           autoCollapsePanel();
         } else toast("error", "找不到输入框");
       }
@@ -1823,7 +1873,7 @@
   function getCSS() {
     return `
 #${PANEL_ID}{--ms-accent:var(--SmartThemeFavColor,#c9957a);--ms-accent-rgb:201,149,122;--ms-danger:#e55;--ms-danger-rgb:238,85,85;--ms-success:#5cb85c;}
-#${PANEL_ID}{position:fixed;z-index:50000;background-color:var(--SmartThemeBlurTintColor,#1a1a2e);border:1px solid var(--SmartThemeBorderColor,#333);border-radius:10px;box-shadow:0 4px 24px rgba(0,0,0,0.45);display:none;flex-direction:column;color:var(--SmartThemeBodyColor,#ccc);font-family:inherit;font-size:14px;overflow:hidden;width:440px;max-width:92vw;max-height:82vh;min-width:300px;left:50%;top:60px;transform:translateX(-50%);}
+#${PANEL_ID}{position:fixed;z-index:9998;background-color:var(--SmartThemeBlurTintColor,#1a1a2e);border:1px solid var(--SmartThemeBorderColor,#333);border-radius:10px;box-shadow:0 4px 24px rgba(0,0,0,0.45);display:none;flex-direction:column;color:var(--SmartThemeBodyColor,#ccc);font-family:inherit;font-size:14px;overflow:hidden;width:440px;max-width:92vw;max-height:82vh;min-width:300px;left:50%;top:60px;transform:translateX(-50%);}
 #${PANEL_ID}.ms-visible{display:flex;}
 #${PANEL_ID}.ms-collapsed .ms-body,#${PANEL_ID}.ms-collapsed .ms-toolbar,#${PANEL_ID}.ms-collapsed .ms-footer,#${PANEL_ID}.ms-collapsed .ms-filter-panel{display:none!important;}
 #${PANEL_ID}.ms-collapsed .ms-header{border-bottom:none;padding:1px 10px;min-height:18px;}
@@ -1835,7 +1885,7 @@
 .ms-hbtn{width:26px;height:26px;border:none;background:transparent;color:var(--SmartThemeBodyColor,#aaa);cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:13px;flex-shrink:0;padding:0;transition:background 0.15s;}
 .ms-hbtn:hover{background:rgba(255,255,255,0.08);}
 .ms-toolbar{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid var(--SmartThemeBorderColor,#333);flex-shrink:0;flex-wrap:wrap;}
-.ms-search{flex:1;min-width:100px;padding:6px 10px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:8px;color:var(--SmartThemeBodyColor,#ccc);font-size:13px;font-family:inherit;outline:none;}
+.ms-search{flex:1;min-width:100px;padding:6px 10px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:8px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:13px;font-family:inherit;outline:none;}
 .ms-search:focus{border-color:var(--SmartThemeQuoteColor,#666);}
 .ms-toolbar-actions{display:flex;gap:4px;margin-left:auto;flex-shrink:0;}
 .ms-tbtn{padding:5px 10px;border:1px solid var(--SmartThemeBorderColor,#444);background:transparent;color:var(--SmartThemeBodyColor,#aaa);border-radius:8px;cursor:pointer;font-size:12px;font-family:inherit;white-space:nowrap;transition:background 0.15s,color 0.15s;}
@@ -1847,6 +1897,7 @@
 .ms-body::-webkit-scrollbar{width:5px;}
 .ms-body::-webkit-scrollbar-thumb{background:var(--SmartThemeBorderColor,#444);border-radius:4px;}
 #${PANEL_ID} .ms-footer{padding:5px 10px;border-top:1px solid var(--SmartThemeBorderColor,#333);font-size:11px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;display:flex;flex-direction:row!important;align-items:center;justify-content:space-between;gap:6px;min-height:28px;flex-wrap:nowrap!important;overflow:hidden;}
+#${PANEL_ID}:not(.ms-collapsed) .ms-footer[style*="block"]{display:flex!important;}
 .ms-footer>span:first-child{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:1;}
 #${PANEL_ID} .ms-footer-btns{display:flex;gap:6px;flex-shrink:0;flex-wrap:nowrap!important;white-space:nowrap;justify-content:flex-end;}
 .ms-footer-btns a{color:var(--SmartThemeQuoteColor,#777);cursor:pointer;font-size:11px;text-decoration:none;transition:color 0.15s;white-space:nowrap;}
@@ -1881,6 +1932,8 @@
 .ms-card-info{flex:1;min-width:0;}
 .ms-card-title{font-size:13px;font-weight:500;color:var(--SmartThemeBodyColor,#ddd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ms-card-meta{font-size:10px;color:var(--SmartThemeQuoteColor,#666);margin-top:2px;display:flex;gap:4px;align-items:center;flex-wrap:wrap;}
+.ms-card-series{font-size:10px;color:var(--ms-accent);opacity:0.75;display:flex;align-items:center;gap:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;}
+.ms-card-series i{font-size:9px;flex-shrink:0;}
 .ms-card-preview{font-size:11px;color:var(--SmartThemeQuoteColor,#777);overflow:hidden;text-overflow:ellipsis;margin-top:2px;white-space:nowrap;}
 .ms-card-preview.ms-has-search{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;}
 .ms-card-quick{display:flex;gap:2px;flex-shrink:0;}
@@ -1944,10 +1997,14 @@
 .ms-form-row{display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap;}
 .ms-field{display:flex;flex-direction:column;gap:3px;}
 .ms-field label{font-size:12px;color:var(--SmartThemeQuoteColor,#888);font-weight:500;}
-.ms-field input,.ms-field select,.ms-field textarea{padding:7px 10px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:8px;color:var(--SmartThemeBodyColor,#ccc);font-size:13px;font-family:inherit;outline:none;width:100%;box-sizing:border-box;}
+.ms-field input,.ms-field select,.ms-field textarea{padding:7px 10px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:8px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:13px;font-family:inherit;outline:none;width:100%;box-sizing:border-box;}
 .ms-field input,.ms-field select{height:33px;}
 .ms-field input:focus,.ms-field select:focus,.ms-field textarea:focus{border-color:var(--SmartThemeQuoteColor,#777);}
-.ms-field textarea{min-height:180px;max-height:60vh;resize:vertical;line-height:1.6;border-radius:0 0 8px 8px;overflow-y:auto;}
+.ms-field textarea{min-height:180px;max-height:60vh;resize:vertical;line-height:1.6;border-radius:0 0 8px 8px;overflow-y:auto;width:100%!important;max-width:none!important;margin:0!important;box-sizing:border-box!important;}
+.ms-content-field{position:relative!important;}
+.ms-edit-scroll-top{position:absolute;bottom:10px;right:14px;width:28px;height:28px;border-radius:50%;background:transparent;border:none;color:var(--ms-accent,var(--SmartThemeBodyColor,#aaa));cursor:pointer;display:none;align-items:center;justify-content:center;font-size:14px;z-index:10;opacity:0.4;transition:opacity 0.2s,background 0.15s;-webkit-tap-highlight-color:transparent;}
+.ms-edit-scroll-top:hover{background:rgba(var(--ms-accent-rgb,201,149,122),0.15);opacity:1;}
+.ms-edit-scroll-top.visible{display:flex;}
 .ms-md-toolbar{display:flex;gap:2px;padding:2px 3px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-bottom:none;border-radius:8px 8px 0 0;flex-wrap:wrap;flex-shrink:0;}
 .ms-md-btn{width:24px;height:24px;border:none;background:transparent;color:var(--SmartThemeQuoteColor,#888);cursor:pointer;border-radius:4px;font-size:12px;display:flex;align-items:center;justify-content:center;transition:background 0.12s,color 0.12s;}
 .ms-md-btn:hover{background:rgba(255,255,255,0.08);color:var(--SmartThemeBodyColor,#ddd);}
@@ -2132,12 +2189,12 @@
 .ms-series-header:hover{background:rgba(255,255,255,0.03);}
 .ms-series-arrow{font-size:9px;color:var(--SmartThemeQuoteColor,#666);transition:transform 0.2s;width:10px;flex-shrink:0;}
 .ms-series-arrow.open{transform:rotate(90deg);}
-.ms-series-title{flex:1;font-size:14px;color:var(--SmartThemeBodyColor,#ddd);font-weight:500;}
+.ms-series-title{flex:1;font-size:12px;color:var(--SmartThemeBodyColor,#ddd);font-weight:500;}
 .ms-series-cnt{font-size:10px;color:var(--SmartThemeQuoteColor,#777);flex-shrink:0;}
 .ms-series-body{display:none;border-left:2px solid rgba(var(--ms-accent-rgb),0.2);margin-left:14px;}
 .ms-series-body.open{display:block;}
 .ms-find-bar{display:flex;align-items:center;gap:4px;padding:4px 6px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-bottom:none;flex-shrink:0;flex-wrap:wrap;}
-.ms-find-input{flex:1;padding:4px 8px;background:rgba(255,255,255,0.05);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:4px;color:var(--SmartThemeBodyColor,#ccc);font-size:12px;font-family:inherit;outline:none;min-width:60px;}
+.ms-find-input{flex:1;padding:4px 8px;background:rgba(255,255,255,0.05);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:4px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:12px;font-family:inherit;outline:none;min-width:60px;}
 .ms-find-input:focus{border-color:var(--SmartThemeQuoteColor,#666);}
 .ms-find-count{font-size:11px;color:var(--SmartThemeQuoteColor,#888);white-space:nowrap;min-width:32px;text-align:center;flex-shrink:0;}
 .ms-find-count.no-match{color:var(--ms-danger);}
@@ -2150,6 +2207,7 @@
 #${PANEL_ID}.ms-focus-mode .ms-content-field{flex:1!important;display:flex!important;flex-direction:column!important;min-height:0!important;overflow:hidden!important;}
 #${PANEL_ID}.ms-focus-mode .ms-content-field>label{display:none!important;}
 #${PANEL_ID}.ms-focus-mode .ms-form-edit textarea{flex:1!important;min-height:0!important;max-height:none!important;resize:none!important;}
+#${PANEL_ID}.ms-focus-mode #ms-edit-preview-pane{flex:1!important;min-height:0!important;max-height:none!important;}
 #${PANEL_ID}.ms-focus-mode .ms-form-edit .ms-char-count{flex-shrink:0;}
 #${PANEL_ID}.ms-focus-mode .ms-form-edit .ms-form-btns{flex-shrink:0;}
 #${PANEL_ID}.ms-focus-mode #ms-footer{display:none!important;}
@@ -2157,7 +2215,7 @@
 #${PANEL_ID}.ms-focus-mode #ms-toolbar .ms-form-title{display:none;}
 #${PANEL_ID}.ms-collapsed.ms-focus-mode{width:440px!important;max-width:92vw!important;height:auto!important;max-height:none!important;}
 #${PANEL_ID}.ms-collapsed.ms-focus-mode .ms-body,#${PANEL_ID}.ms-collapsed.ms-focus-mode .ms-toolbar,#${PANEL_ID}.ms-collapsed.ms-focus-mode .ms-footer,#${PANEL_ID}.ms-collapsed.ms-focus-mode .ms-filter-panel{display:none!important;}
-.ms-scroll-top{position:absolute;bottom:44px;right:10px;width:32px;height:32px;border-radius:50%;background:var(--SmartThemeBlurTintColor,#2a2a3a);border:1px solid var(--SmartThemeBorderColor,#444);color:var(--SmartThemeBodyColor,#aaa);cursor:pointer;display:none;align-items:center;justify-content:center;font-size:14px;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,0.3);transition:opacity 0.2s,background 0.15s;-webkit-tap-highlight-color:transparent;}
+.ms-scroll-top{position:absolute;bottom:44px;right:10px;width:32px;height:32px;border-radius:50%;background:var(--SmartThemeBlurTintColor,#2a2a3a);border:1px solid var(--SmartThemeBorderColor,#444);color: var(--ms-accent, var(--SmartThemeBodyColor, #aaa));cursor:pointer;display:none;align-items:center;justify-content:center;font-size:14px;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,0.3);transition:opacity 0.2s,background 0.15s;-webkit-tap-highlight-color:transparent;}
 .ms-scroll-top:hover{background:rgba(255,255,255,0.1);}
 .ms-scroll-top.visible{display:flex;}
 .ms-sub-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ms-accent);margin-left:3px;vertical-align:middle;animation:ms-sub-pulse 2s ease-in-out infinite;}
@@ -2173,6 +2231,14 @@
   #${PANEL_ID}.ms-focus-mode{width:100vw!important;max-width:100vw!important;height:100dvh!important;max-height:100dvh!important;top:0!important;left:0!important;transform:none!important;border-radius:0!important;}
 }
 @media(max-width:500px){.ms-search{flex:1 1 100%;}}
+.ms-switch{position:relative;display:inline-block;width:28px;height:14px;flex-shrink:0;vertical-align:middle;}
+.ms-switch input{opacity:0;width:0;height:0;position:absolute;}
+.ms-switch-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:var(--SmartThemeBorderColor,#555);border-radius:14px;transition:0.25s;}
+.ms-switch-slider:before{content:"";position:absolute;height:10px;width:10px;left:2px;bottom:2px;background:#fff;border-radius:50%;transition:0.25s;}
+.ms-switch input:checked+.ms-switch-slider{background:var(--ms-accent);}
+.ms-switch input:checked+.ms-switch-slider:before{transform:translateX(14px);}
+.ms-filter-mode-btn{padding:1px 8px;border:1px solid var(--SmartThemeBorderColor,#444);background:rgba(var(--ms-accent-rgb),0.08);color:var(--ms-accent);border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit;transition:all 0.15s;line-height:1.4;}
+.ms-filter-mode-btn:hover{background:rgba(var(--ms-accent-rgb),0.18);border-color:var(--ms-accent);}
 `;
   }
 
@@ -2226,11 +2292,13 @@
       "reorder-tags": renderReorderTags,
       history: renderHistory,
       "history-diff": renderHistoryDiff,
+      "history-list": renderHistoryList,
       subscriptions: renderSubscriptions,
       "subscription-add": renderSubscriptionAdd,
       "subscription-detail": renderSubscriptionDetail,
     };
     if (map[v.name]) map[v.name](v);
+    if ($p.find("#ms-footer").css("display") === "block") $p.find("#ms-footer").css("display", "flex");
     var $scrollBody = $p.find("#ms-body");
     if (v._expandedSeries && v._expandedSeries.length) {
       v._expandedSeries.forEach(function (sid) {
@@ -2375,6 +2443,7 @@
       });
     }
     $body.scrollTop(_scrollTop);
+    if ($p.find("#ms-footer").css("display") === "block") $p.find("#ms-footer").css("display", "flex");
   }
 
   function buildBatchFooter() {
@@ -2409,11 +2478,14 @@
       let list = sortPrompts(
         filterPrompts(searchPrompts(data.prompts, searchQuery)),
       );
-      if (list.length > 0)
-        html +=
-          `<div class="ms-section-label">搜索结果 (${list.length})</div>` +
-          renderPromptCards(list, true);
-      else
+      if (list.length > 0) {
+        html += `<div class="ms-section-label">${searchQuery ? "搜索" : "筛选"}结果 (${list.length})</div>`;
+        if (!searchQuery && filterState.groupId && filterState.groupId !== "_ungrouped") {
+          html += renderGroupBodyWithSeries(list);
+        } else {
+          html += renderPromptCards(list, true);
+        }
+      } else
         html = `<div class="ms-empty"><i class="fa-solid fa-magnifying-glass"></i>没有找到匹配的内容</div>`;
       return html;
     }
@@ -2470,12 +2542,18 @@
       data.settings.subUpdatesPending > 0
         ? '<span class="ms-sub-dot"></span>'
         : "";
+    var historyWarn = "";
+    var hTotal = data.prompts.reduce(function(s, p) { return s + (p.history ? p.history.length : 0); }, 0);
+    if (hTotal > 0) {
+      var isWarn = data.settings.historyWarnEnabled && hTotal > 30;
+      historyWarn = ' · <a data-action="history-list" style="color:' + (isWarn ? 'var(--ms-danger)' : 'var(--SmartThemeQuoteColor,#666)') + ';text-decoration:none;cursor:pointer;"' + (isWarn ? ' title="建议清理版本历史"' : '') + '>' + (isWarn ? '⚠' : '') + '历史' + hTotal + '条</a>';
+    }
     return (
       "<span>" +
       data.prompts.length +
       " 条 · " +
       data.groups.length +
-      ' 组</span><div class="ms-footer-btns"><a data-action="manage-groups"><i class="fa-solid fa-folder-open"></i>分组</a> <a data-action="manage-tags"><i class="fa-solid fa-tags"></i>标签</a> <a data-action="import"><i class="fa-solid fa-file-import"></i>导入</a> <a data-action="export"><i class="fa-solid fa-file-export"></i>导出</a> <a data-action="subscriptions"><i class="fa-solid fa-rss"></i>订阅' +
+      ' 组' + historyWarn + '</span><div class="ms-footer-btns"><a data-action="manage-groups"><i class="fa-solid fa-folder-open"></i>分组</a> <a data-action="manage-tags"><i class="fa-solid fa-tags"></i>标签</a> <a data-action="import"><i class="fa-solid fa-file-import"></i>导入</a> <a data-action="export"><i class="fa-solid fa-file-export"></i>导出</a> <a data-action="subscriptions"><i class="fa-solid fa-rss"></i>订阅' +
       subDot +
       '</a> <a data-action="settings"><i class="fa-solid fa-gear"></i>设置</a> </div>'
     );
@@ -2510,7 +2588,8 @@
   function buildFilterPanel() {
     let html = "";
     if (data.settings.definedTags.length > 0) {
-      html += `<div class="ms-filter-section">标签筛选（可多选）</div><div class="ms-tag-row">`;
+      var modeLabel = data.settings.filterTagMode === "and" ? "全部匹配" : "任一匹配";
+      html += `<div class="ms-filter-section" style="display:flex;align-items:center;gap:6px;">标签筛选（可多选）<button class="ms-filter-mode-btn" id="ms-tag-mode-toggle">${modeLabel}</button></div><div class="ms-tag-row">`;
       data.settings.definedTags.forEach((t) => {
         const a = filterState.tags.includes(t.id);
         html += `<span class="ms-tag-toggle ${a ? "active" : ""}" data-filter-tag="${t.id}" style="${a ? "background:" + t.color + ";" : ""}">${esc(t.name)}</span>`;
@@ -2540,18 +2619,20 @@
         starIcon = p.starred ? "fa-solid" : "fa-regular",
         isSel = selectedIds.has(p.id);
       const g = p.groupId ? getGroup(p.groupId) : null;
-      const groupLabelH =
-        showGroupLabel && g
-          ? `<span style="color:${g.color};font-size:10px;font-weight:500;">${esc(g.name)}</span><span style="color:var(--SmartThemeQuoteColor,#555);margin:0 3px;">·</span>`
-          : "";
-      const seriesLabelH =
-        searchQuery && p.series
-          ? `<span style="color:var(--ms-accent);font-size:10px;opacity:0.7;"><i class="fa-solid fa-layer-group" style="font-size:8px;margin-right:2px;"></i>${esc(p.series)}</span><span style="color:var(--SmartThemeQuoteColor,#555);margin:0 3px;">·</span>`
-          : "";
-      const titleH =
-        groupLabelH +
-        seriesLabelH +
-        (searchQuery ? highlightText(p.title, searchQuery) : esc(p.title));
+      var seriesAboveH = "";
+      if (showGroupLabel) {
+        var _metaParts = [];
+        if (g) {
+          _metaParts.push('<span style="color:' + g.color + ';display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-folder" style="font-size:9px;"></i>' + (searchQuery ? highlightText(g.name, searchQuery) : esc(g.name)) + '</span>');
+        }
+        if (p.series) {
+          _metaParts.push('<span style="color:var(--ms-accent);opacity:0.8;display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-layer-group" style="font-size:9px;"></i>' + (searchQuery ? highlightText(p.series, searchQuery) : esc(p.series)) + '</span>');
+        }
+        if (_metaParts.length > 0) {
+          seriesAboveH = '<div style="font-size:10px;display:flex;align-items:center;gap:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;">' + _metaParts.join('<span style="color:var(--SmartThemeQuoteColor,#555);margin:0 2px;">\u00b7</span>') + '</div>';
+        }
+      }
+      const titleH = searchQuery ? highlightText(p.title, searchQuery) : esc(p.title);
       const prevH = searchQuery
         ? highlightText(
             getContextSnippet(p.content, searchQuery, 50),
@@ -2568,11 +2649,11 @@
           tagsH += `<span class="ms-tag-chip ms-tag-chip-sm" style="background:${t.color};">${esc(t.name)}</span>`;
       });
       if (selectMode) {
-        html += `<div class="ms-card ${isSel ? "selected" : ""}" data-pid="${p.id}"><div class="ms-card-check"><i class="fa-solid fa-check"></i></div>${pinH}<div class="ms-card-info"><div class="ms-card-title">${titleH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div>`;
+                html += `<div class="ms-card ${isSel ? "selected" : ""}" data-pid="${p.id}"><div class="ms-card-check"><i class="fa-solid fa-check"></i></div>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div>`;
         if (tagsH) html += `<div class="ms-card-tags-row">${tagsH}</div>`;
         html += `</div>`;
       } else {
-        html += `<div class="ms-card" data-pid="${p.id}"><span class="ms-card-star ${starCls}" data-pid="${p.id}"><i class="${starIcon} fa-star"></i></span>${pinH}<div class="ms-card-info"><div class="ms-card-title">${titleH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div><div class="ms-card-quick"><button class="ms-card-qbtn" data-qaction="duplicate" data-pid="${p.id}" title="创建副本"><i class="fa-solid fa-clone"></i></button><button class="ms-card-qbtn" data-qaction="send" data-pid="${p.id}" title="填入输入框"><i class="fa-solid fa-right-to-bracket"></i></button></div><i class="fa-solid fa-angle-right" style="color:var(--SmartThemeQuoteColor,#555);font-size:10px;flex-shrink:0;"></i>`;
+        html += `<div class="ms-card" data-pid="${p.id}"><span class="ms-card-star ${starCls}" data-pid="${p.id}"><i class="${starIcon} fa-star"></i></span>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div><div class="ms-card-quick"><button class="ms-card-qbtn" data-qaction="duplicate" data-pid="${p.id}" title="创建副本"><i class="fa-solid fa-clone"></i></button><button class="ms-card-qbtn" data-qaction="send" data-pid="${p.id}" title="填入输入框"><i class="fa-solid fa-right-to-bracket"></i></button></div><i class="fa-solid fa-angle-right" style="color:var(--SmartThemeQuoteColor,#555);font-size:10px;flex-shrink:0;"></i>`;
         if (tagsH) html += `<div class="ms-card-tags-row">${tagsH}</div>`;
         html += `</div>`;
       }
@@ -2647,6 +2728,30 @@
             rendered.add(q.id);
           });
         } else {
+          if (p.series && p.series.trim()) {
+            var fullSeriesCount = data.prompts.filter(function (q) {
+              return q.series && q.series.trim() === seriesName && q.groupId === p.groupId;
+            }).length;
+            if (fullSeriesCount > 1) {
+              var sid2 = "ms-series-" + simpleHash(seriesName + (p.groupId || "") + "_f");
+              var headerExtra2 = "";
+              if (selectMode) {
+                var isSel2 = selectedIds.has(p.id);
+                var cIcon2 = isSel2 ? "fa-solid fa-square-check" : "fa-regular fa-square";
+                var scCls2 = isSel2 ? " ms-sc-all" : "";
+                headerExtra2 = '<div class="ms-series-check' + scCls2 + "\" data-series-ids='" + JSON.stringify([p.id]) + "'><i class=\"fa-solid fa-check\"></i></div>";
+              }
+              html += '<div class="ms-series-group"><div class="ms-series-header" data-series-id="' + sid2 + '">' + headerExtra2 +
+                '<i class="fa-solid fa-angle-right ms-series-arrow open"></i>' +
+                '<i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:12px;"></i>' +
+                '<span class="ms-series-title">' + esc(seriesName) + '</span>' +
+                '<span class="ms-series-cnt" style="opacity:0.6;">筛选 1/' + fullSeriesCount + '</span>' +
+                '</div><div class="ms-series-body open" id="' + sid2 + '">' +
+                renderPromptCards([p], false) + '</div></div>';
+              rendered.add(p.id);
+              return;
+            }
+          }
           html += renderPromptCards([p], false);
           rendered.add(p.id);
         }
@@ -3137,6 +3242,9 @@
     $p.find("#ms-footer").on("click.ms", "[data-action='settings']", () =>
       navigateTo({ name: "settings" }),
     );
+    $p.find("#ms-footer").on("click.ms", "[data-action='history-list']", () =>
+      navigateTo({ name: "history-list" }),
+    );
     $p.find("#ms-footer").on("click.ms", "[data-action='subscriptions']", () =>
       navigateTo({ name: "subscriptions" }),
     );
@@ -3217,8 +3325,15 @@
         bindFilterEvents($p);
         renderBodyOnly();
       })
+      .on("click.msf", "#ms-tag-mode-toggle", function () {
+        data.settings.filterTagMode = data.settings.filterTagMode === "and" ? "or" : "and";
+        saveData();
+        $p.find("#ms-filter-panel").html(buildFilterPanel());
+        bindFilterEvents($p);renderBodyOnly();
+      })
       .on("click.msf", "[data-filter-group]", function () {
-        filterState.groupId = $(this).data("filter-group") || null;
+        var gid = $(this).data("filter-group") || null;
+        filterState.groupId = (filterState.groupId === gid) ? null : gid;
         $p.find("#ms-filter-panel").html(buildFilterPanel());
         bindFilterEvents($p);
         renderBodyOnly();
@@ -3849,6 +3964,7 @@
           <div style="display:flex;gap:4px;align-items:center;width:100%;"><input type="text" id="ms-replace-input" class="ms-find-input" placeholder="替换为..."><button class="ms-md-btn" id="ms-replace-one" title="替换当前"><i class="fa-solid fa-right-left"></i></button><button class="ms-md-btn" id="ms-replace-all" title="全部替换"><i class="fa-solid fa-arrows-rotate"></i></button></div>
         </div>
         <textarea id="ms-edit-content" placeholder="输入提示词内容...">${esc(content)}</textarea>
+        <button class="ms-edit-scroll-top" id="ms-edit-scroll-top" title="回到顶部"><i class="fa-solid fa-angle-up"></i></button>
       </div>
       <div class="ms-char-count" id="ms-char-count">${stats.chars} 字 · ${stats.lines} 行</div>
       <div class="ms-form-btns"><button class="ms-btn" id="ms-edit-cancel">取消</button><button class="ms-btn primary" id="ms-edit-save">保存</button></div>
@@ -3990,6 +4106,7 @@
         var $existPreview = $taWrap.find("#ms-edit-preview-pane");
         if ($existPreview.length) {
           $existPreview.remove();
+          $p.find("#ms-preview-scroll-top").remove();
           $p.find("#ms-edit-content").show();
           if ($p.find("[data-md='find']").hasClass("active")) {
             $p.find(".ms-find-bar").show();
@@ -4000,11 +4117,23 @@
           var previewHtml = renderMd($p.find("#ms-edit-content").val());
           $p.find("#ms-edit-content").hide();
           $p.find(".ms-find-bar").hide();
+          $p.find("#ms-edit-scroll-top").removeClass("visible");
           $taWrap.append(
             '<div id="ms-edit-preview-pane" class="ms-preview-content" style="flex:1;overflow-y:auto;min-height:180px;max-height:60vh;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:0 0 8px 8px;padding:14px;">' +
               previewHtml +
               "</div>",
           );
+          $taWrap.append('<button class="ms-edit-scroll-top" id="ms-preview-scroll-top" title="回到顶部"><i class="fa-solid fa-angle-up"></i></button>');
+          $p.find("#ms-edit-preview-pane").on("scroll", function () {
+            var $btn = $p.find("#ms-preview-scroll-top");
+            if (this.scrollTop > 150) $btn.addClass("visible");
+            else $btn.removeClass("visible");
+          });
+          $p.find("#ms-preview-scroll-top").on("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            $p.find("#ms-edit-preview-pane").animate({ scrollTop: 0 }, 200);
+          });
           $(this).addClass("active");
           $(this).find("i").attr("class", "fa-solid fa-eye-slash");
         }
@@ -4403,6 +4532,16 @@
         $p.find("[data-md='find']").removeClass("active");
         getTa()?.focus();
       }
+    });
+    $p.find("#ms-edit-content").on("scroll.ms-edit-st", function () {
+      var $btn = $p.find("#ms-edit-scroll-top");
+      if (this.scrollTop > 150) $btn.addClass("visible");
+      else $btn.removeClass("visible");
+    });
+    $p.find("#ms-edit-scroll-top").on("click.ms", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      $p.find("#ms-edit-content").animate({ scrollTop: 0 }, 200);
     });
     $p.find("#ms-body").on("click.ms", "#ms-edit-cancel", navigateBack);
     $p.find("#ms-body").on("click.ms", "#ms-edit-save", () => {
@@ -5280,7 +5419,7 @@
       `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">设置</span>`,
     );
     $p.find("#ms-body").html(
-      `<div class="ms-form"><div class="ms-field"><label>默认作者署名</label><input type="text" id="ms-default-author" placeholder="新建时自动填入" value="${esc(data.settings.defaultAuthor || "")}"></div><div class="ms-divider"></div><button class="ms-tbtn" id="ms-go-qp" style="width:100%;text-align:center;"><i class="fa-solid fa-bolt"></i> 管理快捷短语(${data.quickPhrases.length})</button><button class="ms-tbtn" id="ms-go-stats" style="width:100%;text-align:center;"><i class="fa-solid fa-chart-bar"></i> 使用统计</button><button class="ms-tbtn" id="ms-go-subs" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-rss"></i> 订阅管理 (${data.subscriptions.length})</button><div class="ms-divider"></div><div class="ms-section-label">订阅设置</div><div class="ms-field"><label>自动检查间隔 <span style="font-weight:350;opacity:0.5;">(打开面板时，超过此时间未检查的订阅会自动静默检查)</span></label><div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-auto-check-interval" min="0" max="168" step="1" value="${data.settings.autoCheckInterval || 6}" style="width:80px;"><span style="font-size:12px;color:var(--SmartThemeQuoteColor,#888);">小时（设为 0 关闭自动检查）</span></div></div><div class="ms-divider"></div><div class="ms-section-label">使用说明</div><button class="ms-tbtn" id="ms-regen-guide" style="width:100%;text-align:center;"><i class="fa-solid fa-book"></i> 重新生成使用说明与预览示例</button><div class="ms-divider"></div><div class="ms-section-label">数据管理</div><button class="ms-tbtn danger" id="ms-clear-all-history" style="width:100%;text-align:center;"><i class="fa-solid fa-broom"></i> 清空全部版本历史</button><button class="ms-tbtn danger" id="ms-reset-usage" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-rotate"></i> 重置使用统计</button></div>`,
+      `<div class="ms-form"><div class="ms-field"><label>默认作者署名</label><input type="text" id="ms-default-author" placeholder="新建时自动填入" value="${esc(data.settings.defaultAuthor || "")}"></div><div class="ms-divider"></div><button class="ms-tbtn" id="ms-go-qp" style="width:100%;text-align:center;"><i class="fa-solid fa-bolt"></i> 管理快捷短语(${data.quickPhrases.length})</button><button class="ms-tbtn" id="ms-go-stats" style="width:100%;text-align:center;"><i class="fa-solid fa-chart-bar"></i> 使用统计</button><button class="ms-tbtn" id="ms-go-subs" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-rss"></i> 订阅管理 (${data.subscriptions.length})</button><div class="ms-divider"></div><div class="ms-section-label">订阅设置</div><div class="ms-field"><label>自动检查间隔 <span style="font-weight:350;opacity:0.5;">(打开面板时，超过此时间未检查的订阅会自动静默检查)</span></label><div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-auto-check-interval" min="0" max="168" step="1" value="${data.settings.autoCheckInterval || 6}" style="width:80px;"><span style="font-size:12px;color:var(--SmartThemeQuoteColor,#888);">小时（设为 0 关闭自动检查）</span></div></div><div class="ms-divider"></div><div class="ms-section-label">使用说明</div><button class="ms-tbtn" id="ms-regen-guide" style="width:100%;text-align:center;"><i class="fa-solid fa-book"></i> 重新生成使用说明与预览示例</button><div class="ms-divider"></div><div class="ms-section-label">数据管理</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-history-warn-toggle" ${data.settings.historyWarnEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">历史超过30条时在底栏变红提醒</span></div><button class="ms-tbtn" id="ms-go-history-list" style="width:100%;text-align:center;margin-bottom:6px;"><i class="fa-solid fa-clock-rotate-left"></i> 查看有历史记录的剧场(${data.prompts.filter(function(p){return p.history && p.history.length > 0;}).length} 条)</button><button class="ms-tbtn danger" id="ms-clear-all-history" style="width:100%;text-align:center;"><i class="fa-solid fa-broom"></i> 清空全部版本历史</button><button class="ms-tbtn danger" id="ms-reset-usage" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-rotate"></i> 重置使用统计</button></div>`,
     );
     $p.find("#ms-footer").hide();
     bindAllEvents();
@@ -5314,6 +5453,13 @@
         toast("success", "使用说明已生成，请在分组列表中查看");
       }
     });
+    $p.find("#ms-body").on("change.ms", "#ms-history-warn-toggle", function () {
+      data.settings.historyWarnEnabled = $(this).is(":checked");
+      saveData();
+    });
+    $p.find("#ms-body").on("click.ms", "#ms-go-history-list", () =>
+      navigateTo({ name: "history-list" }),
+    );
     $p.find("#ms-body").on("click.ms", "#ms-clear-all-history", function () {
       var total = data.prompts.reduce(function (s, p) {
         return s + (p.history ? p.history.length : 0);
@@ -6630,6 +6776,81 @@
     await checkAllSubscriptions(true);
   }
 
+  function renderHistoryList() {
+    const $p = $("#" + PANEL_ID);
+    $p.find("#ms-title").text("有历史记录的剧场");
+    $p.find("#ms-toolbar").html(
+      '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">有历史记录的剧场</span>',
+    );
+    var withHistory = data.prompts.filter(function (p) {
+      return p.history && p.history.length > 0;
+    });
+    var totalH = withHistory.reduce(function (s, p) {
+      return s + p.history.length;
+    }, 0);
+    var html = "";
+    if (withHistory.length === 0) {
+      html =
+        '<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>没有任何剧场有历史记录</div>';
+    } else {
+      withHistory
+        .sort(function (a, b) {
+          return (b.history ? b.history.length : 0) - (a.history ? a.history.length : 0);
+        })
+        .forEach(function (p) {
+          var g = p.groupId ? getGroup(p.groupId) : null;
+          var gLabel = g
+            ? '<span style="color:' + g.color + ';"><i class="fa-solid fa-folder" style="font-size:9px;margin-right:2px;"></i>' + esc(g.name) + "</span>"
+            : '<span style="opacity:0.5;">未分组</span>';
+          var lastSaved = p.history.length > 0 ? formatDate(p.history[p.history.length - 1].savedAt) : "";
+          html +=
+            '<div class="ms-card" data-pid="' + p.id + '" style="cursor:pointer;">' +
+            '<div class="ms-card-info" style="flex:1;min-width:0;">' +
+            '<div class="ms-card-title">' + esc(p.title) + "</div>" +
+            '<div class="ms-card-meta" style="gap:6px;">' +
+            gLabel +
+            '<span style="color:var(--ms-accent);">' + p.history.length + "/5 条历史</span>" +
+            (lastSaved ? '<span style="opacity:0.6;">' + lastSaved + "</span>" : "") +
+            "</div></div>" +
+            '<div style="display:flex;gap:2px;flex-shrink:0;">' +
+            '<button class="ms-card-qbtn" data-hlist-action="view" data-pid="' + p.id + '" title="查看历史"><i class="fa-solid fa-clock-rotate-left"></i></button>' +
+            '<button class="ms-card-qbtn" data-hlist-action="clear" data-pid="' + p.id + '" title="清空此条历史"><i class="fa-solid fa-trash" style="color:var(--ms-danger);"></i></button>' +
+            "</div></div>";
+        });
+    }
+    $p.find("#ms-body").html(html);$p.find("#ms-footer")
+      .html(
+        "<span>" + withHistory.length + " 条剧场 · 共 " + totalH + " 条历史</span>" +
+          (withHistory.length > 0
+            ? '<div class="ms-footer-btns"><a data-action="clear-all-h"><i class="fa-solid fa-broom"></i> 全部清空</a></div>'
+            : ""),
+      )
+      .show();
+    bindAllEvents();$p.find("#ms-body").on("click.ms", "[data-hlist-action='view']", function (e) {
+      e.stopPropagation();
+      navigateTo({ name: "history", promptId: $(this).data("pid") });
+    });
+    $p.find("#ms-body").on("click.ms", "[data-hlist-action='clear']", function (e) {
+      e.stopPropagation();
+      var pid = $(this).data("pid");
+      var pr = getPrompt(pid);
+      if (!pr) return;
+      if (!confirm('确定清空「' + pr.title + '」的所有版本历史吗？')) return;
+      pr.history = [];
+      saveData();
+      toast("success", "已清空");renderHistoryList();
+    });
+    $p.find("#ms-footer").on("click.ms", "[data-action='clear-all-h']", function () {
+      if (!confirm("确定清空所有剧场的版本历史吗？共 " + totalH + " 条历史记录。")) return;
+      data.prompts.forEach(function (p) {
+        p.history = [];
+      });
+      saveData();
+      toast("success", "已全部清空");
+      renderHistoryList();
+    });
+  }
+
   function renderSubscriptions() {
     var $p = $("#" + PANEL_ID);
     if (data.settings.subUpdatesPending > 0) {
@@ -7121,6 +7342,7 @@
     }
     updateAccentColor();
     syncThemeBackground();
+    syncThemeColors();
     if (!$p.data("ms-drop-bound")) {
       $p.data("ms-drop-bound", true);
       let dragCounter = 0;
@@ -7323,6 +7545,7 @@
           themeDebounce = setTimeout(function () {
             updateAccentColor();
             syncThemeBackground();
+            syncThemeColors();
           }, 300);
         });
         themeObs.observe(window.parent.document.documentElement, {
