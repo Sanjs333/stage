@@ -46,7 +46,7 @@
     "#b57e97",
     "#8b5b8c",
   ];
-  var GUIDE_VERSION = 2.6;
+  var GUIDE_VERSION = 2.7;
   var BUILTIN_GUIDE_CONTENT = [
     "# 小剧场 使用说明",
     "",
@@ -383,6 +383,9 @@
     "- 需要手动编辑预设来放置宏",
     "- 没有选中剧场时宏会替换为空字符串",
     "",
+    "- 注入示例：",
+    "![alt](https://i.postimg.cc/D0Vjnh7K/zhu-ru-shi-li.png)",
+    "",
     "## 四、前缀指令模板",
     "前缀指令是包裹在剧场内容外面的说明书，告诉 AI 该如何处理剧场内容。",
     "",
@@ -515,7 +518,7 @@
     "- 注入内容会占用上下文窗口的空间，建议剧场指令内容与数量控制在合理长度内",
     "- 多条注入会显著影响AI输出注意力，并增加输出 token 消耗，按需选择",
   ].join("\n");
-  
+
   var BUILTIN_PREVIEW_CONTENT = [
     "```",
     "你好，这是一个预览页支持的格式示例",
@@ -1076,8 +1079,8 @@
               groupId: "_builtin_guide_group",
               author: "ssssan_",
               tags: [],
-              starred: false,
-              pinned: false,
+              starred: true,
+              pinned: true,
               sourceId: null,
               createdAt: _ijgNow,
               lastUsedAt: null,
@@ -1092,6 +1095,30 @@
           }
         }
         data.settings.guideVersion = GUIDE_VERSION;
+        saveData();
+      }
+
+      var builtinGuideIds = [
+        "_builtin_guide",
+        "_builtin_inject_guide",
+        "_builtin_preview",
+      ];
+      var builtinGuideMap = {};
+      data.prompts.forEach(function (p) {
+        if (builtinGuideIds.indexOf(p.id) >= 0) {
+          builtinGuideMap[p.id] = p;
+        }
+      });
+      var orderedBuiltinGuides = builtinGuideIds
+        .map(function (id) {
+          return builtinGuideMap[id];
+        })
+        .filter(Boolean);
+      if (orderedBuiltinGuides.length > 0) {
+        data.prompts = data.prompts.filter(function (p) {
+          return builtinGuideIds.indexOf(p.id) < 0;
+        });
+        data.prompts = orderedBuiltinGuides.concat(data.prompts);
         saveData();
       }
     } catch (e) {
@@ -1138,6 +1165,25 @@
     });
     data.prompts[0].fingerprint = contentFingerprint(data.prompts[0]);
     data.prompts.unshift({
+      id: "_builtin_inject_guide",
+      title: "小剧场 注入功能指南",
+      content: BUILTIN_INJECT_GUIDE_CONTENT,
+      groupId: "_builtin_guide_group",
+      author: "ssssan_",
+      tags: [],
+      starred: true,
+      pinned: true,
+      sourceId: null,
+      createdAt: now - 1,
+      lastUsedAt: null,
+      fingerprint: "",
+      usageCount: 0,
+      updatedAt: now - 1,
+      series: "",
+      history: [],
+    });
+    data.prompts[0].fingerprint = contentFingerprint(data.prompts[0]);
+    data.prompts.unshift({
       id: "_builtin_guide",
       title: "小剧场 使用说明",
       content: BUILTIN_GUIDE_CONTENT,
@@ -1152,25 +1198,6 @@
       fingerprint: "",
       usageCount: 0,
       updatedAt: now + 1,
-      series: "",
-      history: [],
-    });
-    data.prompts[0].fingerprint = contentFingerprint(data.prompts[0]);
-    data.prompts.unshift({
-      id: "_builtin_inject_guide",
-      title: "小剧场 注入功能指南",
-      content: BUILTIN_INJECT_GUIDE_CONTENT,
-      groupId: "_builtin_guide_group",
-      author: "ssssan_",
-      tags: [],
-      starred: false,
-      pinned: false,
-      sourceId: null,
-      createdAt: now - 1,
-      lastUsedAt: null,
-      fingerprint: "",
-      usageCount: 0,
-      updatedAt: now - 1,
       series: "",
       history: [],
     });
@@ -1729,15 +1756,18 @@
     for (var _dbIdx = 0; _dbIdx < detailBlocks.length; _dbIdx++) {
       var block = detailBlocks[_dbIdx];
       var bodyParts = block.body.split(/(%%DB\d+%%)/);
-      var innerHtml = bodyParts.map(function(part) {
-        if (!part) return '';
-        var m = part.match(/^%%DB(\d+)%%$/);
-        if (m) {
-          return renderedDetailBlocks[parseInt(m[1])] || '';
-        }
-        return renderMd(part);
-      }).join('');
-      renderedDetailBlocks[_dbIdx] = '<details class="ms-details"><summary class="ms-summary">' +
+      var innerHtml = bodyParts
+        .map(function (part) {
+          if (!part) return "";
+          var m = part.match(/^%%DB(\d+)%%$/);
+          if (m) {
+            return renderedDetailBlocks[parseInt(m[1])] || "";
+          }
+          return renderMd(part);
+        })
+        .join("");
+      renderedDetailBlocks[_dbIdx] =
+        '<details class="ms-details"><summary class="ms-summary">' +
         esc(block.summary) +
         '</summary><div class="ms-details-body">' +
         innerHtml +
@@ -4834,21 +4864,54 @@
       }
       if (md === "preview-toggle") {
         var $taWrap = $p.find(".ms-content-field");
+        var $ta = $p.find("#ms-edit-content");
+        var taEl = $ta[0];
         var $existPreview = $taWrap.find("#ms-edit-preview-pane");
+
+        function getScrollRatio(el) {
+          if (!el) return 0;
+          var max = el.scrollHeight - el.clientHeight;
+          if (max <= 0) return 0;
+          return el.scrollTop / max;
+        }
+
+        function setScrollByRatio(el, ratio) {
+          if (!el) return;
+          var max = el.scrollHeight - el.clientHeight;
+          if (max <= 0) {
+            el.scrollTop = 0;
+            return;
+          }
+          el.scrollTop = max * ratio;
+        }
+
         if ($existPreview.length) {
+          var previewEl = $existPreview[0];
+          var previewRatio = getScrollRatio(previewEl);
+
           $existPreview.remove();
           $p.find("#ms-preview-scroll-top").remove();
-          $p.find("#ms-edit-content").show();
+          $ta.show();
+
           if ($p.find("[data-md='find']").hasClass("active")) {
             $p.find(".ms-find-bar").show();
           }
+
+          requestAnimationFrame(function () {
+            setScrollByRatio(taEl, previewRatio);
+            $ta.trigger("scroll");
+          });
+
           $(this).removeClass("active");
           $(this).find("i").attr("class", "fa-solid fa-eye");
         } else {
-          var previewHtml = renderMd($p.find("#ms-edit-content").val());
-          $p.find("#ms-edit-content").hide();
+          var taRatio = getScrollRatio(taEl);
+          var previewHtml = renderMd($ta.val());
+
+          $ta.hide();
           $p.find(".ms-find-bar").hide();
           $p.find("#ms-edit-scroll-top").removeClass("visible");
+
           $taWrap.append(
             '<div id="ms-edit-preview-pane" class="ms-preview-content" style="flex:1;overflow-y:auto;min-height:180px;max-height:60vh;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:0 0 8px 8px;padding:14px;">' +
               previewHtml +
@@ -4857,16 +4920,26 @@
           $taWrap.append(
             '<button class="ms-edit-scroll-top" id="ms-preview-scroll-top" title="回到顶部"><i class="fa-solid fa-angle-up"></i></button>',
           );
+
+          var previewEl2 = $p.find("#ms-edit-preview-pane")[0];
+
+          requestAnimationFrame(function () {
+            setScrollByRatio(previewEl2, taRatio);
+            $(previewEl2).trigger("scroll");
+          });
+
           $p.find("#ms-edit-preview-pane").on("scroll", function () {
             var $btn = $p.find("#ms-preview-scroll-top");
             if (this.scrollTop > 150) $btn.addClass("visible");
             else $btn.removeClass("visible");
           });
+
           $p.find("#ms-preview-scroll-top").on("click", function (e) {
             e.preventDefault();
             e.stopPropagation();
             $p.find("#ms-edit-preview-pane").animate({ scrollTop: 0 }, 200);
           });
+
           $(this).addClass("active");
           $(this).find("i").attr("class", "fa-solid fa-eye-slash");
         }
