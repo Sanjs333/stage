@@ -46,7 +46,7 @@
     "#b57e97",
     "#8b5b8c",
   ];
-  var GUIDE_VERSION = 2.7;
+  var GUIDE_VERSION = 2.8;
   var BUILTIN_GUIDE_CONTENT = [
     "# 小剧场 使用说明",
     "",
@@ -594,6 +594,11 @@
   let _currentStagePrompt = null;
   let _injectIndicatorIdx = 0;
   let _currentStagePrompts = [];
+  let _skipAllInjectForNextGeneration = false;
+  let _skipNextInjectPromptIds = [];
+  let _pendingClearStageSelectedIds = [];
+  let _macroInjectBusy = false;
+  let _macroBusyWarned = false;
 
   function esc(s) {
     if (!s) return "";
@@ -1556,6 +1561,8 @@
     if (!p) return;
     try {
       if (typeof createChatMessages === "function") {
+        _skipAllInjectForNextGeneration = true;
+
         createChatMessages([
           { role: "user", message: substitudeMacros(p.content) },
         ])
@@ -1568,11 +1575,14 @@
             autoCollapsePanel();
           })
           .catch(() => {
+            _skipAllInjectForNextGeneration = false;
             toast("error", "发送失败");
           });
       } else {
         const $ta = $("#send_textarea");
         if ($ta.length) {
+          _skipAllInjectForNextGeneration = true;
+
           p.lastUsedAt = Date.now();
           p.usageCount = (p.usageCount || 0) + 1;
           saveData();
@@ -7601,7 +7611,13 @@
       }
       if (!imported.prompts && !imported.groups)
         throw new Error("无效的小剧场数据");
-      var newHash = simpleHash(JSON.stringify(imported.prompts || []));
+      var newHash = simpleHash(
+        JSON.stringify({
+          groups: imported.groups || [],
+          prompts: imported.prompts || [],
+          tags: imported.tags || [],
+        }),
+      );
       if (newHash === sub.lastHash) {
         sub.lastChecked = Date.now();
         saveData();
@@ -8210,19 +8226,27 @@
         ri.excludedGroupIds.length > 0 ||
         ri.excludedSeries.length > 0 ||
         ri.excludedPromptIds.length > 0;
+
       if (allExcluded) {
         ri.excludedGroupIds = [];
         ri.excludedSeries = [];
         ri.excludedPromptIds = [];
       } else {
-        var _allGids = data.groups.map(function (g) {
-          return g.id;
-        });
-        if (getUngroupedPrompts().length > 0) _allGids.push("_ungrouped");
-        ri.excludedGroupIds = _allGids;
-        ri.excludedSeries = [];
-        ri.excludedPromptIds = [];
+        var visiblePromptIds = data.prompts
+          .filter(matchesRpoolFilter)
+          .map(function (p) {
+            return p.id;
+          });
+
+        if (!Array.isArray(ri.excludedPromptIds)) {
+          ri.excludedPromptIds = [];
+        }
+
+        ri.excludedPromptIds = Array.from(
+          new Set(ri.excludedPromptIds.concat(visiblePromptIds)),
+        );
       }
+
       saveData();
       refreshPool();
     });
@@ -8445,7 +8469,13 @@
         data.subscriptions.push(sub);
         var result = mergeSubscriptionData(sub, imported);
         sub.lastChecked = Date.now();
-        sub.lastHash = simpleHash(JSON.stringify(imported.prompts || []));
+        sub.lastHash = simpleHash(
+          JSON.stringify({
+            groups: imported.groups || [],
+            prompts: imported.prompts || [],
+            tags: imported.tags || [],
+          }),
+        );
         sub.updateLog.push({
           time: Date.now(),
           added: result.added,
@@ -9091,10 +9121,19 @@
           tavern_events.GENERATION_AFTER_COMMANDS,
           async function (type, option, dry_run) {
             if (dry_run) return;
+
+            if (_skipAllInjectForNextGeneration) {
+              _skipAllInjectForNextGeneration = false;
+              _currentStagePrompt = null;
+              _currentStagePrompts = [];
+              return;
+            }
+
             if (!data.settings.stageInjectEnabled) return;
             var stagePrompts = [];
             var wasManual = false;
             var sids = data.settings.stageSelectedIds || [];
+
             if (sids.length > 0) {
               sids.forEach(function (sid) {
                 var sp = getPrompt(sid);
@@ -9102,6 +9141,17 @@
               });
               wasManual = true;
             }
+
+            if (
+              Array.isArray(_skipNextInjectPromptIds) &&
+              _skipNextInjectPromptIds.length > 0
+            ) {
+              stagePrompts = stagePrompts.filter(function (p) {
+                return _skipNextInjectPromptIds.indexOf(p.id) < 0;
+              });
+              _skipNextInjectPromptIds = [];
+            }
+
             if (
               stagePrompts.length === 0 &&
               data.settings.randomInject &&
@@ -9111,25 +9161,44 @@
               if (rp) stagePrompts.push(rp);
               wasManual = false;
             }
+
+            if (stagePrompts.length === 0) {
+              _currentStagePrompt = null;
+              _currentStagePrompts = [];
+              _pendingClearStageSelectedIds = [];
+              return;
+            }
+
+            if (data.settings.stageInjectMode === "macro") {
+              if (_macroInjectBusy) {
+                if (!_macroBusyWarned) {
+                  _macroBusyWarned = true;
+                  toast(
+                    "warning",
+                    "检测到并发生成，本次已跳过小剧场宏注入，避免串台",
+                  );
+                }
+                _currentStagePrompt = null;
+                _currentStagePrompts = [];
+                _pendingClearStageSelectedIds = [];
+                return;
+              }
+              _macroInjectBusy = true;
+              _macroBusyWarned = false;
+            }
+
             _currentStagePrompt =
               stagePrompts.length > 0 ? stagePrompts[0] : null;
             _currentStagePrompts = stagePrompts;
+
             if (wasManual) {
-              data.settings.stageSelectedIds = [];
-              saveData();
-              updateInjectIndicator();
-              if (panelVisible) {
-                var $injectBtn = $(
-                  "#" + PANEL_ID + " [data-action='toggle-inject']",
-                );
-                if ($injectBtn.length) {
-                  $injectBtn
-                    .removeClass("ms-inject-active")
-                    .html('<i class="fa-solid fa-syringe"></i>选为注入');
-                }
-              }
+              _pendingClearStageSelectedIds = stagePrompts.map(function (p) {
+                return p.id;
+              });
+            } else {
+              _pendingClearStageSelectedIds = [];
             }
-            if (stagePrompts.length === 0) return;
+
             if (data.settings.stageInjectMode === "depth") {
               var allContent = substitudeMacros(
                 buildStageContent(stagePrompts),
@@ -9152,11 +9221,14 @@
         eventOn(tavern_events.GENERATION_ENDED, function () {
           _currentStagePrompt = null;
           _currentStagePrompts = [];
+          _skipAllInjectForNextGeneration = false;
           updateInjectIndicator();
         });
+
         eventOn(tavern_events.GENERATION_STOPPED, function () {
           _currentStagePrompt = null;
           _currentStagePrompts = [];
+          _skipAllInjectForNextGeneration = false;
           updateInjectIndicator();
         });
       }
