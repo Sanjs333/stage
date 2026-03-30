@@ -515,7 +515,7 @@
     "- 注入内容会占用上下文窗口的空间，建议剧场指令内容与数量控制在合理长度内",
     "- 多条注入会显著影响AI输出注意力，并增加输出 token 消耗，按需选择",
   ].join("\n");
-
+  
   var BUILTIN_PREVIEW_CONTENT = [
     "```",
     "你好，这是一个预览页支持的格式示例",
@@ -545,6 +545,15 @@
     "#### 四",
     "##### 五",
     "###### 六",
+    "",
+    "**嵌套折叠 (支持原生 HTML)**",
+    "<details><summary>点击展开外层</summary>",
+    "这里是外层的内容，可以包含文字。",
+    "  <details><summary>点击展开内层</summary>",
+    "  这里是嵌套的内层内容！",
+    "  </details>",
+    "</details>",
+    "",
     "---",
   ].join("\n");
 
@@ -1564,14 +1573,18 @@
       },
     );
     var detailBlocks = [];
-    text = text.replace(
-      /<details>\s*\n?\s*<summary>([\s\S]*?)<\/summary>\s*\n?([\s\S]*?)<\/details>/gi,
-      function (m, summary, body) {
-        var idx = detailBlocks.length;
-        detailBlocks.push({ summary: summary.trim(), body: body.trim() });
-        return "%%DB" + idx + "%%";
-      },
-    );
+    var _dbPrevText;
+    do {
+      _dbPrevText = text;
+      text = text.replace(
+        /<details>\s*\n?\s*<summary>((?:(?!<\/summary>)[\s\S])*)<\/summary>\s*\n?((?:(?!<details[\s>])[\s\S])*?)<\/details>/gi,
+        function (m, summary, body) {
+          var idx = detailBlocks.length;
+          detailBlocks.push({ summary: summary.trim(), body: body.trim() });
+          return "%%DB" + idx + "%%";
+        },
+      );
+    } while (text !== _dbPrevText);
     var tmp = text;
     var inlineCodes = [];
     tmp = tmp.replace(/`([^`\n]+)`/g, function (m, code) {
@@ -1712,17 +1725,27 @@
           "</code></pre>",
       );
     });
-    detailBlocks.forEach(function (block, idx) {
-      var innerHtml = renderMd(block.body);
-      h = h.replace(
-        "%%DB" + idx + "%%",
-        '<details class="ms-details"><summary class="ms-summary">' +
-          esc(block.summary) +
-          '</summary><div class="ms-details-body">' +
-          innerHtml +
-          "</div></details>",
-      );
-    });
+    var renderedDetailBlocks = [];
+    for (var _dbIdx = 0; _dbIdx < detailBlocks.length; _dbIdx++) {
+      var block = detailBlocks[_dbIdx];
+      var bodyParts = block.body.split(/(%%DB\d+%%)/);
+      var innerHtml = bodyParts.map(function(part) {
+        if (!part) return '';
+        var m = part.match(/^%%DB(\d+)%%$/);
+        if (m) {
+          return renderedDetailBlocks[parseInt(m[1])] || '';
+        }
+        return renderMd(part);
+      }).join('');
+      renderedDetailBlocks[_dbIdx] = '<details class="ms-details"><summary class="ms-summary">' +
+        esc(block.summary) +
+        '</summary><div class="ms-details-body">' +
+        innerHtml +
+        "</div></details>";
+    }
+    for (var _dbIdx2 = detailBlocks.length - 1; _dbIdx2 >= 0; _dbIdx2--) {
+      h = h.replace("%%DB" + _dbIdx2 + "%%", renderedDetailBlocks[_dbIdx2]);
+    }
     return h;
   }
 
@@ -2491,14 +2514,12 @@
 .ms-preview-content code.ms-ic{background:var(--SmartThemeBlurTintColor,rgba(128,128,128,0.2));color:var(--SmartThemeEmColor,var(--ms-accent));border:1px solid var(--SmartThemeBorderColor,rgba(128,128,128,0.3));padding:1px 5px;border-radius:3px;font-size:12px;word-break:break-all;}
 .ms-preview-content pre.ms-codeblock{background:var(--SmartThemeBlurTintColor,rgba(0,0,0,0.3));border:1px solid var(--SmartThemeBorderColor,#444);box-shadow:inset 0 0 10px var(--SmartThemeShadowColor,transparent);border-radius:6px;padding:10px 12px;margin:6px 0;overflow-x:auto;font-size:12px;line-height:1.5;}
 .ms-preview-content pre.ms-codeblock code{color:var(--SmartThemeBodyColor,#ccc);font-family:Consolas,"Courier New",monospace;white-space:pre-wrap;word-break:break-word;background:none;border:none;padding:0;border-radius:0;font-size:12px;}
-.ms-details{border:1px solid var(--SmartThemeBorderColor,#444);border-radius:8px;margin:8px 0;overflow:hidden;background:rgba(255,255,255,0.02);}
-.ms-details[open]{background:rgba(255,255,255,0.01);}
-.ms-summary{padding:10px 14px;cursor:pointer;font-weight:600;font-size:13px;color:var(--SmartThemeBodyColor,#ddd);list-style:none;display:flex;align-items:center;gap:6px;transition:background 0.15s;user-select:none;}
-.ms-summary::-webkit-details-marker{display:none;}
-.ms-summary::before{content:"\\25B6";font-size:9px;color:var(--ms-accent);transition:transform 0.2s;flex-shrink:0;}
-.ms-details[open]>.ms-summary::before{transform:rotate(90deg);}
-.ms-summary:hover{background:rgba(255,255,255,0.04);}
-.ms-details-body{padding:6px 14px 14px;border-top:1px solid var(--SmartThemeBorderColor,#333);line-height:1.7;}
+.ms-details{margin:4px 0;}
+.ms-summary{padding:2px 0px;cursor:pointer;font-weight:600;font-size:13px;color:var(--SmartThemeBodyColor,#ddd);transition:background 0.15s;user-select:none;}
+.ms-summary::marker{color:var(--ms-accent);}
+.ms-summary::-webkit-details-marker{color:var(--ms-accent);}
+.ms-summary:hover{opacity:0.8;}
+.ms-details-body{padding:2px 0 2px 16px;line-height:1.7;}
 .ms-details-body>:first-child{margin-top:0!important;}
 .ms-pv-meta{flex:1;display:flex;flex-wrap:wrap;gap:4px;align-items:center;min-width:0;}
 .ms-pv-chip{display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:10px;color:var(--SmartThemeQuoteColor,#999);background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.06);white-space:nowrap;}
@@ -4683,7 +4704,7 @@
     bindAllEvents();
     const getTa = () => $p.find("#ms-edit-content")[0];
     let um = null;
-    if (!um) um = createUndoManager(getTa);
+    if (!v._savedEditState) um = createUndoManager(getTa);
     const isMobile =
       /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
       window.innerWidth < 768;
@@ -8797,6 +8818,12 @@
       sy,
       sl,
       st;
+    let _didMove = false;
+    let _dblTapTime = 0;
+    let _dblTapDidMove = false;
+    let _origLeft = "",
+      _origTop = "",
+      _origTransform = "";
 
     headerEl.addEventListener("pointerdown", function (e) {
       var t = e.target;
@@ -8809,6 +8836,11 @@
         return;
       e.preventDefault();
       dragging = true;
+      _didMove = false;
+      _dblTapDidMove = false;
+      _origLeft = panelEl.style.getPropertyValue("left");
+      _origTop = panelEl.style.getPropertyValue("top");
+      _origTransform = panelEl.style.getPropertyValue("transform");
       sx = e.clientX;
       sy = e.clientY;
       var rect = panelEl.getBoundingClientRect();
@@ -8825,6 +8857,11 @@
     headerEl.addEventListener("pointermove", function (e) {
       if (!dragging) return;
       e.preventDefault();
+      if (Math.abs(e.clientX - sx) > 3 || Math.abs(e.clientY - sy) > 3) {
+        _didMove = true;
+        _dblTapDidMove = true;
+      }
+      if (!_didMove) return;
       var nl = sl + (e.clientX - sx),
         nt = st + (e.clientY - sy);
       nt = Math.max(0, Math.min(nt, ownerWin.innerHeight - 30));
@@ -8839,6 +8876,28 @@
     function endDrag() {
       if (!dragging) return;
       dragging = false;
+      if (!_dblTapDidMove) {
+        var _now = Date.now();
+        if (_now - _dblTapTime < 400) {
+          _dblTapTime = 0;
+          resetPanelPosition();
+          return;
+        }
+        _dblTapTime = _now;
+      } else {
+        _dblTapTime = 0;
+      }
+      if (!_didMove) {
+        if (_origLeft)
+          panelEl.style.setProperty("left", _origLeft, "important");
+        else panelEl.style.removeProperty("left");
+        if (_origTop) panelEl.style.setProperty("top", _origTop, "important");
+        else panelEl.style.removeProperty("top");
+        if (_origTransform)
+          panelEl.style.setProperty("transform", _origTransform, "important");
+        else panelEl.style.removeProperty("transform");
+        return;
+      }
       data.settings.panelPos = {
         top: panelEl.style.getPropertyValue("top"),
         left: panelEl.style.getPropertyValue("left"),
