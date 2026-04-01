@@ -1228,7 +1228,19 @@
       console.error("[小剧场] 保存数据失败", e);
     }
   }
-
+  function saveDraft(draftData) {
+    data.settings._editDraft = draftData;
+    saveData();
+  }
+  function loadDraft() {
+    return data.settings._editDraft || null;
+  }
+  function clearDraft() {
+    if (data.settings._editDraft) {
+      delete data.settings._editDraft;
+      saveData();
+    }
+  }
   function getGroup(id) {
     return data.groups.find((g) => g.id === id) || null;
   }
@@ -2478,7 +2490,7 @@
 .ms-footer-btns a:hover{color:var(--SmartThemeBodyColor,#ccc);}
 .ms-batch-bar{display:flex;gap:4px;width:100%;align-items:center;flex-wrap:nowrap;}
 .ms-batch-bar .ms-batch-count{font-size:12px;color:var(--SmartThemeBodyColor,#ccc);white-space:nowrap;margin-right:auto;}
-.ms-batch-btn{padding:4px 10px;border:1px solid var(--SmartThemeBorderColor,#444);background:transparent;color:var(--SmartThemeBodyColor,#aaa);border-radius:6px;cursor:pointer;font-size:11px;font-family:inherit;transition:background 0.15s;white-space:nowrap;display:inline-flex;align-items:center;gap:4px;}
+.ms-batch-btn{padding:4px 7px;border:1px solid var(--SmartThemeBorderColor,#444);background:transparent;color:var(--SmartThemeBodyColor,#aaa);border-radius:6px;cursor:pointer;font-size:11px;font-family:inherit;transition:background 0.15s;white-space:nowrap;display:inline-flex;align-items:center;gap:3px;}
 .ms-batch-btn:hover{background:rgba(255,255,255,0.06);}
 .ms-batch-btn.danger{color:var(--ms-danger);border-color:var(--ms-danger);}
 .ms-batch-btn.danger:hover{background:rgba(var(--ms-danger-rgb),0.12);}
@@ -4654,6 +4666,19 @@
       : pr.author || "";
     const series = isNew ? "" : pr.series || "";
     const promptTags = isNew ? [] : pr.tags || [];
+    if (!v._savedEditState && !v._draftChecked) {
+      v._draftChecked = true;
+      var draft = loadDraft();
+      if (draft && draft.savedAt && Date.now() - draft.savedAt < 86400000) {
+        var draftHasContent =
+          (draft.title && draft.title.trim()) ||
+          (draft.content && draft.content.trim());
+        if (draftHasContent) {
+          v._pendingDraft = draft;
+        }
+      }
+    }
+
     editDirty = false;
     editSnapshot = JSON.stringify({
       title,
@@ -4693,7 +4718,23 @@
       });
       editDirty = cur !== editSnapshot;
     }
-    $p.find("#ms-body").html(`<div class="ms-form-edit">
+    var _draftBannerH = "";
+    if (v._pendingDraft) {
+      var _d = v._pendingDraft;
+      var _dAge = Math.round((Date.now() - _d.savedAt) / 60000);
+      var _dTimeStr =
+        _dAge < 60 ? _dAge + " 分钟前" : Math.round(_dAge / 60) + " 小时前";
+      var _dMatch = _d.promptId === (v.promptId || null);
+      _draftBannerH =
+        '<div id="ms-draft-banner" style="padding:8px 12px;background:rgba(var(--ms-accent-rgb),0.10);border:1px solid rgba(var(--ms-accent-rgb),0.25);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;"><i class="fa-solid fa-clock-rotate-left" style="color:var(--ms-accent);flex-shrink:0;"></i><span style="flex:1;min-width:0;color:var(--SmartThemeBodyColor,#ccc);">检测到 ' +
+        _dTimeStr +
+        " 的未保存草稿" +
+        (_dMatch
+          ? ""
+          : "（来自另一条剧场「" + esc(truncate(_d.title, 15)) + "」）") +
+        '</span><button class="ms-tbtn" id="ms-draft-restore" style="padding:3px 10px;font-size:11px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-rotate-left" style="margin-right:3px;"></i>恢复</button><button class="ms-tbtn" id="ms-draft-discard" style="padding:3px 10px;font-size:11px;"><i class="fa-solid fa-xmark" style="margin-right:3px;"></i>丢弃</button></div>';
+    }
+    $p.find("#ms-body").html(`<div class="ms-form-edit">${_draftBannerH}
       <div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>标题</label><input type="text" id="ms-edit-title" placeholder="小剧场名字" value="${esc(title)}"></div><div class="ms-field" style="flex:1;"><label>系列 <span style="font-weight:350;opacity:0.5;">(同系列自动聚合)</span></label><input type="text" id="ms-edit-series" placeholder="如：「衣柜大公开」" value="${esc(series)}"></div></div>
       <div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>分组</label><select id="ms-edit-group">${groupOpts}</select></div><div class="ms-field" style="flex:1;"><label>作者</label><input type="text" id="ms-edit-author" placeholder="署名" value="${esc(author)}"></div></div>
       <div class="ms-field"><label>标签</label><div class="ms-tag-row" id="ms-edit-tags">${buildTagsUI()}</div></div>
@@ -4756,6 +4797,34 @@
         }, 350);
       });
     }
+    $p.find("#ms-body").on("click.ms", "#ms-draft-restore", function () {
+      var draft = v._pendingDraft;
+      if (!draft) return;
+      $p.find("#ms-edit-title").val(draft.title || "");
+      $p.find("#ms-edit-content").val(draft.content || "");
+      $p.find("#ms-edit-group").val(draft.groupId || "");
+      $p.find("#ms-edit-author").val(draft.author || "");
+      $p.find("#ms-edit-series").val(draft.series || "");
+      editTags = draft.tags ? [...draft.tags] : [];
+      $p.find("#ms-edit-tags").html(buildTagsUI());
+      var rs = countStats(draft.content || "");
+      $p.find("#ms-char-count").text(rs.chars + " 字 · " + rs.lines + " 行");
+      markDirty();
+      $p.find("#ms-draft-banner").slideUp(200, function () {
+        $(this).remove();
+      });
+      delete v._pendingDraft;
+      clearDraft();
+      toast("success", "草稿已恢复");
+    });
+    $p.find("#ms-body").on("click.ms", "#ms-draft-discard", function () {
+      $p.find("#ms-draft-banner").slideUp(200, function () {
+        $(this).remove();
+      });
+      delete v._pendingDraft;
+      clearDraft();
+    });
+
     $p.find("#ms-body").on(
       "click.ms",
       "#ms-edit-tags .ms-tag-toggle",
@@ -4777,16 +4846,36 @@
         markDirty();
       }
     });
+    var _draftTimer = null;
+    function scheduleDraftSave() {
+      clearTimeout(_draftTimer);
+      _draftTimer = setTimeout(function () {
+        saveDraft({
+          promptId: v.promptId || null,
+          title: $p.find("#ms-edit-title").val() || "",
+          content: $p.find("#ms-edit-content").val() || "",
+          groupId: $p.find("#ms-edit-group").val() || "",
+          author: $p.find("#ms-edit-author").val() || "",
+          series: $p.find("#ms-edit-series").val() || "",
+          tags: editTags,
+          savedAt: Date.now(),
+        });
+      }, 2000);
+    }
     $p.find("#ms-body").on("input.ms", "#ms-edit-content", function () {
       um.scheduleCapture();
       const s = countStats(this.value);
       $p.find("#ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
       markDirty();
+      scheduleDraftSave();
     });
     $p.find("#ms-body").on(
       "input.ms",
       "#ms-edit-title, #ms-edit-author, #ms-edit-series",
-      markDirty,
+      function () {
+        markDirty();
+        scheduleDraftSave();
+      },
     );
     $p.find("#ms-body").on("change.ms", "#ms-edit-group", function () {
       if (isNew && !$p.find("#ms-edit-author").val().trim()) {
@@ -5363,7 +5452,10 @@
       e.stopPropagation();
       $p.find("#ms-edit-content").animate({ scrollTop: 0 }, 200);
     });
-    $p.find("#ms-body").on("click.ms", "#ms-edit-cancel", navigateBack);
+    $p.find("#ms-body").on("click.ms", "#ms-edit-cancel", function () {
+      clearDraft();
+      navigateBack();
+    });
     $p.find("#ms-body").on("click.ms", "#ms-edit-save", () => {
       const t = $p.find("#ms-edit-title").val().trim(),
         c = $p.find("#ms-edit-content").val().trim(),
@@ -5375,6 +5467,7 @@
         return;
       }
       editDirty = false;
+      clearDraft();
       if (v.promptId) {
         const existingP = getPrompt(v.promptId);
         if (
