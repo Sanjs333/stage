@@ -5281,6 +5281,27 @@
       }
     });
     let findMatchIdx = 0;
+
+    function scrollTaToPos(ta, pos) {
+      if (!ta) return;
+      var text = ta.value.substring(0, pos);
+      var lineCount = text.split("\n").length;
+      var style = window.getComputedStyle(ta);
+      var lineHeight = parseFloat(style.lineHeight);
+      if (isNaN(lineHeight)) {
+        lineHeight = parseFloat(style.fontSize) * 1.6;
+      }
+      var targetTop = (lineCount - 1) * lineHeight;
+      var visibleTop = ta.scrollTop;
+      var visibleBottom = ta.scrollTop + ta.clientHeight;
+      if (
+        targetTop < visibleTop + lineHeight ||
+        targetTop > visibleBottom - lineHeight * 2
+      ) {
+        ta.scrollTop = Math.max(0, targetTop - ta.clientHeight / 3);
+      }
+    }
+
     function getFindPositions(query) {
       const ta = getTa();
       if (!ta || !query) return [];
@@ -5327,6 +5348,7 @@
           positions[findMatchIdx],
           positions[findMatchIdx] + query.length,
         );
+        scrollTaToPos(ta, positions[findMatchIdx]);
       }
       $p.find("#ms-find-count")
         .text(findMatchIdx + 1 + "/" + positions.length)
@@ -5397,6 +5419,7 @@
           newPositions[findMatchIdx],
           newPositions[findMatchIdx] + query.length,
         );
+        scrollTaToPos(ta, newPositions[findMatchIdx]);
       }
       updateFindDisplay();
     });
