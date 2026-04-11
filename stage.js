@@ -46,7 +46,7 @@
     "#b57e97",
     "#8b5b8c",
   ];
-  var GUIDE_VERSION = 2.8;
+  var GUIDE_VERSION = 2.9;
   var BUILTIN_GUIDE_CONTENT = [
     "# 小剧场 使用说明",
     "",
@@ -90,8 +90,8 @@
     "- **点击卡片**：进入预览",
     "- **长按卡片**：进入多选模式",
     "- **点击星星**：收藏/取消收藏",
-    "- **克隆按钮**：快速创建副本",
-    "- **发送按钮**：直接填入输入框",
+    "- **填入按钮**：将内容填入输入框",
+    "- **发送按钮**：直接发送并触发AI生成",
     "",
     "---",
     "",
@@ -3328,7 +3328,7 @@
         if (tagsH) html += `<div class="ms-card-tags-row">${tagsH}</div>`;
         html += `</div>`;
       } else {
-        html += `<div class="ms-card${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><span class="ms-card-star ${starCls}" data-pid="${p.id}"><i class="${starIcon} fa-star"></i></span>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div><div class="ms-card-quick"><button class="ms-card-qbtn" data-qaction="duplicate" data-pid="${p.id}" title="创建副本"><i class="fa-solid fa-clone"></i></button><button class="ms-card-qbtn" data-qaction="send" data-pid="${p.id}" title="填入输入框"><i class="fa-solid fa-right-to-bracket"></i></button></div><i class="fa-solid fa-angle-right" style="color:var(--SmartThemeQuoteColor,#555);font-size:10px;flex-shrink:0;"></i>`;
+        html += `<div class="ms-card${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><span class="ms-card-star ${starCls}" data-pid="${p.id}"><i class="${starIcon} fa-star"></i></span>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div><div class="ms-card-quick"><button class="ms-card-qbtn" data-qaction="send" data-pid="${p.id}" title="填入输入框"><i class="fa-solid fa-right-to-bracket"></i></button><button class="ms-card-qbtn" data-qaction="send-gen" data-pid="${p.id}" title="发送并生成"><i class="fa-solid fa-paper-plane"></i></button></div><i class="fa-solid fa-angle-right" style="color:var(--SmartThemeQuoteColor,#555);font-size:10px;flex-shrink:0;"></i>`;
         if (tagsH) html += `<div class="ms-card-tags-row">${tagsH}</div>`;
         html += `</div>`;
       }
@@ -3937,10 +3937,8 @@
       e.stopPropagation();
       const action = $(this).data("qaction"),
         pid = $(this).data("pid");
-      if (action === "duplicate") {
-        duplicatePrompt(pid);
-        renderBodyOnly();
-      } else if (action === "send") sendToInput(pid);
+      if (action === "send") sendToInput(pid);
+      else if (action === "send-gen") sendAndGenerate(pid);
     });
     $p.find("#ms-footer").on("click.ms", "[data-action='manage-groups']", () =>
       navigateTo({ name: "groups" }),
@@ -4276,7 +4274,7 @@
         ${historyCount > 0 ? `<button class="ms-pa" data-action="history"><i class="fa-solid fa-clock-rotate-left"></i> 历史 (${historyCount})</button>` : ""}<button class="ms-pa danger" data-action="delete"><i class="fa-solid fa-trash"></i> 删除</button>
       </div>
       ${tagsH ? `<div style="padding:6px 14px;">${tagsH}</div>` : ""}
-      <div style="padding:2px 14px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);">${stats.chars} 字 · ${stats.lines} 行${pr.usageCount ? " · 使用 " + pr.usageCount + " 次" : ""}</div>
+      <div style="padding:2px 14px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);display:flex;justify-content:space-between;align-items:center;"><span>${stats.chars} 字 · ${stats.lines} 行${pr.usageCount ? " · 使用 " + pr.usageCount + " 次" : ""}</span>${pr.updatedAt && pr.updatedAt !== pr.createdAt ? '<span style="opacity:0.7;" title="修改日期"><i class="fa-solid fa-pen-to-square" style="margin-right:2px;font-size:9px;"></i>' + formatDate(pr.updatedAt) + '</span>' : pr.createdAt ? '<span style="opacity:0.7;" title="创建日期"><i class="fa-solid fa-calendar-plus" style="margin-right:2px;font-size:9px;"></i>' + formatDate(pr.createdAt) + '</span>' : ''}</div>
       <div class="ms-preview-content">${renderMd(pr.content)}</div>`);
     var _isInjected =
       (data.settings.stageSelectedIds || []).indexOf(pr.id) >= 0;
