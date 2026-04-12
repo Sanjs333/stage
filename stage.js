@@ -2811,12 +2811,15 @@
 #${PANEL_ID}.ms-focus-mode #ms-toolbar .ms-form-title{display:none;}
 #${PANEL_ID}.ms-collapsed.ms-focus-mode{width:440px!important;max-width:92vw!important;height:auto!important;max-height:none!important;}
 #${PANEL_ID}.ms-collapsed.ms-focus-mode .ms-body,#${PANEL_ID}.ms-collapsed.ms-focus-mode .ms-toolbar,#${PANEL_ID}.ms-collapsed.ms-focus-mode .ms-footer,#${PANEL_ID}.ms-collapsed.ms-focus-mode .ms-filter-panel{display:none!important;}
-.ms-scroll-top{position:absolute;bottom:44px;right:10px;width:32px;height:32px;border-radius:50%;background:var(--SmartThemeBlurTintColor,#2a2a3a);border:1px solid var(--SmartThemeBorderColor,#444);color: var(--ms-accent, var(--SmartThemeBodyColor, #aaa));cursor:pointer;display:none;align-items:center;justify-content:center;font-size:14px;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,0.3);transition:opacity 0.2s,background 0.15s;-webkit-tap-highlight-color:transparent;}
+.ms-scroll-top{position:absolute;bottom:82px;right:10px;width:32px;height:32px;border-radius:50%;background:var(--SmartThemeBlurTintColor,#2a2a3a);border:1px solid var(--SmartThemeBorderColor,#444);color: var(--ms-accent, var(--SmartThemeBodyColor, #aaa));cursor:pointer;display:none;align-items:center;justify-content:center;font-size:14px;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,0.3);transition:opacity 0.2s,background 0.15s;-webkit-tap-highlight-color:transparent;}
 .ms-scroll-top:hover{background:rgba(255,255,255,0.1);}
 .ms-scroll-top.visible{display:flex;}
+.ms-scroll-bottom{position:absolute;bottom:44px;right:10px;width:32px;height:32px;border-radius:50%;background:var(--SmartThemeBlurTintColor,#2a2a3a);border:1px solid var(--SmartThemeBorderColor,#444);color:var(--ms-accent,var(--SmartThemeBodyColor,#aaa));cursor:pointer;display:none;align-items:center;justify-content:center;font-size:14px;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,0.3);transition:opacity 0.2s,background 0.15s;-webkit-tap-highlight-color:transparent;}
+.ms-scroll-bottom:hover{background:rgba(255,255,255,0.1);}
+.ms-scroll-bottom.visible{display:flex;}
 .ms-sub-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ms-accent);margin-left:3px;vertical-align:middle;animation:ms-sub-pulse 2s ease-in-out infinite;}
 @keyframes ms-sub-pulse{0%,100%{opacity:1;}50%{opacity:0.3;}}
-#${PANEL_ID}.ms-collapsed .ms-scroll-top{display:none!important;}
+#${PANEL_ID}.ms-collapsed .ms-scroll-top,#${PANEL_ID}.ms-collapsed .ms-scroll-bottom{display:none!important;}
 @media(max-width:768px){
   #${PANEL_ID}{width:92vw!important;left:50%!important;transform:translateX(-50%)!important;}
   .ms-batch-bar .ms-batch-btn .ms-btn-label{display:none!important;}
@@ -2874,7 +2877,7 @@
       <div class="ms-body" id="ms-body"></div>
       <div class="ms-footer" id="ms-footer"></div>
       <div class="ms-dropdown" id="ms-dropdown"></div>
-      <input type="file" id="ms-file-input" accept=".json" style="display:none;"><button class="ms-scroll-top" id="ms-scroll-top" title="回到顶部"><i class="fa-solid fa-angle-up"></i></button></div>`;
+      <input type="file" id="ms-file-input" accept=".json" style="display:none;"><button class="ms-scroll-top" id="ms-scroll-top" title="回到顶部"><i class="fa-solid fa-angle-up"></i></button><button class="ms-scroll-bottom" id="ms-scroll-bottom" title="回到底部"><i class="fa-solid fa-angle-down"></i></button></div>`;
   }
 
   function renderView() {
@@ -2950,6 +2953,7 @@
       $scrollBody.scrollTop(0);
     }
     updateInjectIndicator();
+    setTimeout(function() { $p.find("#ms-body").trigger("scroll"); }, 100);
     if (v._lastViewedId) {
       setTimeout(function () {
         var $card = $p.find('.ms-card[data-pid="' + v._lastViewedId + '"]');
@@ -3070,6 +3074,7 @@
       });
     }
     $body.scrollTop(_scrollTop);
+    setTimeout(function() { $body.trigger("scroll"); }, 50);
     if ($p.find("#ms-footer").css("display") === "block")
       $p.find("#ms-footer").css("display", "flex");
   }
@@ -4013,15 +4018,27 @@
     $p.find("#ms-body")
       .off("scroll.ms-scroll-top")
       .on("scroll.ms-scroll-top", function () {
-        var $btn = $p.find("#ms-scroll-top");
-        if (this.scrollTop > 150) $btn.addClass("visible");
-        else $btn.removeClass("visible");
+        var $btnTop = $p.find("#ms-scroll-top");
+        var $btnBottom = $p.find("#ms-scroll-bottom");
+        if (this.scrollTop > 150) $btnTop.addClass("visible");
+        else $btnTop.removeClass("visible");
+        var distToBottom = this.scrollHeight - this.scrollTop - this.clientHeight;
+        if (distToBottom > 150) $btnBottom.addClass("visible");
+        else $btnBottom.removeClass("visible");
       });
     $p.off("click.ms-scroll-top").on(
       "click.ms-scroll-top",
       "#ms-scroll-top",
       function () {
         $p.find("#ms-body").animate({ scrollTop: 0 }, 200);
+      },
+    );
+    $p.off("click.ms-scroll-bottom").on(
+      "click.ms-scroll-bottom",
+      "#ms-scroll-bottom",
+      function () {
+        var $body = $p.find("#ms-body");
+        $body.animate({ scrollTop: $body[0].scrollHeight }, 200);
       },
     );
   }
@@ -4274,7 +4291,7 @@
         ${historyCount > 0 ? `<button class="ms-pa" data-action="history"><i class="fa-solid fa-clock-rotate-left"></i> 历史 (${historyCount})</button>` : ""}<button class="ms-pa danger" data-action="delete"><i class="fa-solid fa-trash"></i> 删除</button>
       </div>
       ${tagsH ? `<div style="padding:6px 14px;">${tagsH}</div>` : ""}
-      <div style="padding:2px 14px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);display:flex;justify-content:space-between;align-items:center;"><span>${stats.chars} 字 · ${stats.lines} 行${pr.usageCount ? " · 使用 " + pr.usageCount + " 次" : ""}</span>${pr.updatedAt && pr.updatedAt !== pr.createdAt ? '<span style="opacity:0.7;" title="修改日期"><i class="fa-solid fa-pen-to-square" style="margin-right:2px;font-size:9px;"></i>' + formatDate(pr.updatedAt) + '</span>' : pr.createdAt ? '<span style="opacity:0.7;" title="创建日期"><i class="fa-solid fa-calendar-plus" style="margin-right:2px;font-size:9px;"></i>' + formatDate(pr.createdAt) + '</span>' : ''}</div>
+      <div style="padding:2px 14px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);display:flex;justify-content:space-between;align-items:center;"><span>${stats.chars} 字 · ${stats.lines} 行${pr.usageCount ? " · 使用 " + pr.usageCount + " 次" : ""}</span>${pr.updatedAt && pr.updatedAt !== pr.createdAt ? '<span style="opacity:0.7;" title="修改日期"><i class="fa-solid fa-pen-to-square" style="margin-right:2px;font-size:9px;"></i>' + formatDate(pr.updatedAt) + "</span>" : pr.createdAt ? '<span style="opacity:0.7;" title="创建日期"><i class="fa-solid fa-calendar-plus" style="margin-right:2px;font-size:9px;"></i>' + formatDate(pr.createdAt) + "</span>" : ""}</div>
       <div class="ms-preview-content">${renderMd(pr.content)}</div>`);
     var _isInjected =
       (data.settings.stageSelectedIds || []).indexOf(pr.id) >= 0;
