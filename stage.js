@@ -25,540 +25,21 @@
     "#b57e97",
     "#8b5b8c",
   ];
-  const TAG_COLORS = [
-    "#D6A2A2",
-    "#DDAA90",
-    "#D1C28D",
-    "#A1BC9D",
-    "#91B9B5",
-    "#9FB1CD",
-    "#B0ABCC",
-    "#BFA3C4",
-    "#CE9EA8",
-    "#C49696",
-    "#C7A287",
-    "#C4B981",
-    "#b5b06b",
-    "#7ca881",
-    "#6b9ea0",
-    "#748eb5",
-    "#9280ab",
-    "#b57e97",
-    "#8b5b8c",
-  ];
+  const TAG_COLORS = GROUP_COLORS;
   var GUIDE_VERSION = 2.9;
-  var BUILTIN_GUIDE_CONTENT = [
-    "# 小剧场 使用说明",
-    "",
-    "## 基本概念",
-    "- **剧场**：一条提示词/文本内容，是最小单位",
-    '- **分组**：将相关剧场归类在一起（如"日常互动"、"战斗场景"、或作者分组）',
-    "- **系列**：同一分组内，同系列的剧场会自动聚合折叠显示",
-    "- **标签**：跨分组的分类标记，一条剧场可以有多个标签",
-    "- **快捷短语**：编辑时可以快速插入的常用文本片段",
-    "",
-    "---",
-    "",
-    "## 打开方式",
-    "点击酒馆扩展菜单（三横线→扩展）中的「小剧场」按钮打开面板。",
-    "",
-    "## 面板操作",
-    "- **拖拽标题栏**：移动面板位置",
-    "- **双击标题栏**：重置面板到默认位置",
-    "- **最小化按钮（−）**：收起面板只留标题栏",
-    "- **关闭按钮（×）**：关闭面板",
-    "- **拖拽 .json 文件到面板上**：快速导入",
-    "",
-    "---",
-    "",
-    "## 主界面",
-    "",
-    "### 列表页",
-    "- 显示收藏、最近使用、各分组入口",
-    "- 顶部搜索框可以搜索标题、内容、作者、系列名",
-    "- 点击漏斗图标可按标签/分组筛选",
-    "- 标签筛选支持「任一匹配」和「全部匹配」两种模式，点击筛选面板中的按钮切换",
-    "- 点击排序图标可切换多种排序方式",
-    "- 点击骰子图标可随机抽取一条剧场",
-    "",
-    "### 分组页",
-    "- 同系列的剧场会自动折叠成一个组",
-    "- 点击系列标题展开/收起",
-    "- 长按分组入口可直接进入分组编辑",
-    "",
-    "### 卡片操作",
-    "- **点击卡片**：进入预览",
-    "- **长按卡片**：进入多选模式",
-    "- **点击星星**：收藏/取消收藏",
-    "- **填入按钮**：将内容填入输入框",
-    "- **发送按钮**：直接发送并触发AI生成",
-    "",
-    "---",
-    "",
-    "## 多选模式",
-    "进入多选模式后（长按卡片或点击工具栏的✓✓ 按钮）：",
-    "- 底栏出现批量操作按钮",
-    "- **全选/取消**：选中当前可见的所有剧场",
-    "- **移动**：批量移动到其他分组",
-    "- **标签**：批量添加/移除标签",
-    "- **作者**：批量设置作者",
-    "- **系列**：批量添加/移除/设置系列名",
-    "- **导出**：导出选中的剧场",
-    "- **删除**：批量删除",
-    "",
-    "系列组左边会出现复选框，可以一键选中整个系列。",
-    "",
-    "---",
-    "",
-    "## 预览页",
-    "- 支持 Markdown 渲染（粗体、斜体、标题、列表、代码块、表格、任务列表等）",
-    "- 任务列表的勾选框可以直接点击切换",
-    "- **填入输入框**：将内容填入 SillyTavern 的输入框",
-    "- **发送并生成**：填入并自动触发 AI 生成回复",
-    "- 上下箭头可在当前列表的条目间切换浏览",
-    "",
-    "---",
-    "",
-    "## 编辑器",
-    "",
-    "### Markdown 工具栏",
-    "提供粗体、斜体、删除线、标题（多次点击切换1~6级）、引用、列表、任务列表、代码、链接、图片、分割线、表格等快捷按钮。",
-    "",
-    "### 快捷短语",
-    "点击闪电图标弹出快捷短语面板，点击即可在光标处插入。",
-    "",
-    "### 查找替换",
-    "- 点击放大镜或按 `Ctrl+F` 打开",
-    "- 支持查找、上/下一个、替换当前、全部替换",
-    "- `Enter` 跳到下一个，`Shift+Enter` 跳到上一个",
-    "",
-    "### 回到顶部",
-    "编辑区域滚动超过一定距离后，右下角会出现回顶按钮，预览模式下同样可用。",
-    "",
-    "### 专注模式",
-    "点击展开图标进入专注模式，面板放大到全屏只显示编辑区域，适合长文编辑。",
-    "",
-    "### Shift选择（移动端）",
-    "移动端没有物理 Shift 键，点击方向十字图标激活 Shift 模式，再点击文本另一位置即可选中一段文字。",
-    "",
-    "### 快捷键",
-    "- `Ctrl+S`：保存",
-    "- `Ctrl+Z`：撤销",
-    "- `Ctrl+Y` / `Ctrl+Shift+Z`：重做",
-    "- `Ctrl+F`：打开查找",
-    "- `Esc`：返回上一页/ 关闭面板",
-    "- 删除本轮按钮：点击后删除聊天记录中最后两条消息（如果只剩一条则删除该条），方便编辑小剧场时测试效果。",
-    "",
-    "---",
-    "",
-    "## 版本历史",
-    "- 每次保存编辑时，自动保存上一版到历史（最多保留5 条）",
-    "- 可以查看历史版本、回退、或进行版本对比",
-    "- 版本对比页面用颜色标记新增行和删除行",
-    "- 版本历史超过一定数量时会在底栏和打开面板时给出提醒，可在设置中关闭",
-    "",
-    "---",
-    "",
-    "## 导入导出",
-    "",
-    "### 导出",
-    "- 支持导出全部、按分组导出、批量选择导出、单条导出",
-    "- 可选是否包含分组信息、标签信息、版本历史",
-    "- 导出为 `.json` 文件",
-    "",
-    "### 导入",
-    "- 支持三种模式：",
-    "  - **合并更新（推荐）**：智能去重，新增添加，修改过的更新，相同的跳过",
-    "  - **全部追加**：不检查直接全部添加",
-    "  - **覆盖替换**：清空现有数据，完全替换",
-    "- 可选是否导入分组/标签",
-    "- 不导入分组时可以指定放入哪个分组",
-    "",
-    "---",
-    "",
-    "## 分组管理",
-    "- 可以新建、重命名、删除、调整顺序",
-    "- 每个分组可以设置颜色（预设色或自定义色，分组管理页面点击颜色圆圈）",
-    "- 可以设置分组备注和默认作者",
-    "- 支持多选批量删除",
-    "",
-    "## 标签管理",
-    "- 可以新建、重命名、删除、调整顺序",
-    "- 每个标签可以设置颜色",
-    "- 支持多选批量删除",
-    "",
-    "---",
-    "",
-    "## 使用统计",
-    "在设置页面点击「使用统计」查看：",
-    "- 总剧场数、总使用次数、收藏数、平均使用次数",
-    "- 分组分布柱状图",
-    "- 最常使用 TOP 5",
-    "- 最近使用记录",
-    "",
-    "## 设置",
-    "- **默认作者**：新建剧场时自动填入的作者名",
-    "- **自动检查间隔**：打开面板时，超过设定时间未检查的订阅会自动静默检查（默认6小时，设为0关闭）",
-    "- **快捷短语管理**：管理编辑器里可快速插入的文本片段",
-    "- **历史提醒开关**：可设置底栏是否在历史超过30条时变红提醒",
-    "- **查看历史记录**：快速查看哪些剧场有版本历史，支持单条清空",
-    "- **清空版本历史**：一键清空所有剧场的版本历史",
-    "- **重置使用统计**：归零所有使用次数和最近使用时间",
-
-    "",
-    "---",
-    "",
-    "## 订阅功能",
-    "",
-    "### 什么是订阅？",
-    "订阅让你可以通过一个链接持续接收其他创作者分享的剧场合集。创作者更新了内容后，你只需点击「检查更新」就能自动获取最新内容，不需要反复手动下载和导入文件。",
-    "",
-    "### 如何添加订阅",
-    "1. 获取创作者分享的 JSON 文件链接",
-    "2. 打开小剧场面板",
-    "3. 底栏点击「订阅」，或进入 设置 → 订阅管理",
-    "4. 点击右上角 **+** 按钮",
-    "5. 填写订阅名称（随便起，方便你自己辨认）",
-    "6. 粘贴 JSON 链接",
-    "7. 根据需要调整导入选项：",
-    "   - **导入分组信息**：是否保留创作者的分组结构",
-    "   - **导入标签信息**：是否保留创作者设置的标签",
-    "   - **放入分组**：不导入分组信息时，可以指定把订阅内容放入哪个分组",
-    "   - **允许更新已有内容**：开启后，创作者修改过的内容会自动同步到你本地；关闭则只接收新增内容，不会覆盖你自己的修改",
-    "8. 点击「添加并检查」，会立即验证链接并导入内容",
-    "",
-    "### 管理已有订阅",
-    "在订阅列表中点击某个订阅可以：",
-    "- 修改名称、链接、导入选项",
-    "- 点击「检查更新」手动同步最新内容",
-    "- 查看历史更新记录（每次同步的新增/更新/跳过数量）",
-    "- 删除订阅（已经导入的剧场不会被删除）",
-    "",
-    "在订阅列表底部点击「全部检查更新」可以一次性检查所有订阅。",
-    "",
-    "### 自动检查",
-    "打开面板时，如果有订阅超过设定时间（默认6小时）未检查过，会自动在后台静默检查。有更新才会弹提示，没更新完全无感。可以在设置中调整间隔或关闭。",
-    "",
-    "### 订阅的同步逻辑",
-    "订阅使用与「合并更新」相同的智能同步逻辑：",
-    "- **新内容**：自动添加",
-    "- **已修改的内容**：如果开启了「允许更新已有内容」，会自动更新",
-    "- **完全相同的内容**：自动跳过，不重复添加",
-    "- **你自己的本地修改**：不会被覆盖（除非内容指纹匹配到同一条）",
-    "",
-    "### 更新提醒",
-    "当订阅检查到有新更新时，主页底栏的「订阅」按钮旁会出现一个闪烁的小圆点提醒。进入订阅管理页面后提醒自动消失。",
-    "",
-    "---",
-    "",
-    "## 创作者订阅教程",
-    "",
-    "如果你想让别人能订阅你的剧场，只需要三步：导出 → 上传 → 分享链接。",
-    "",
-    "### 第一步：导出你的剧场",
-    "1. 在小剧场中选择要分享的内容（可以按分组导出，也可以批量选择）",
-    "2. 导出时建议勾选「包含分组信息」和「包含标签信息」",
-    "3. 得到一个 `.json` 文件",
-    "",
-    "### 第二步：上传到文件托管",
-    "你需要把 JSON 文件放到一个能通过链接直接访问的地方。推荐使用 **GitHub**（免费、稳定、方便更新）。",
-    "",
-    "#### 方式一：GitHub公开仓库",
-    "1. 注册/登录 [GitHub](https://github.com)",
-    "2. 点击右上角 **+** → **New repository**（新建仓库）",
-    "3. 填写仓库名（如 `my-mini-stage`），选Public公开",
-    "4. 点击 **Create repository**",
-    "5. 在仓库页面点击 **Add file** → **Upload files**",
-    "6. 把你的 `.json` 文件拖进去，点击 **Commit changes**",
-    "7. 点击上传好的文件名打开它",
-    "8. 点击右上角的 **Raw** 按钮",
-    "9. 复制浏览器地址栏的链接，这就是你的订阅链接！",
-    "",
-    "链接格式：`https://raw.githubusercontent.com/你的用户名/仓库名/main/文件名.json`",
-    "",
-    "**国内加速（可选）**：可以把链接转成 jsDelivr CDN 格式，国内访问更快：",
-    "`https://cdn.jsdelivr.net/gh/用户名/仓库名@main/文件名.json`",
-    "",
-    "> jsDelivr 有缓存，更新文件后可能需要等一段时间才能生效。如果需要立即生效，请使用 GitHub Raw 链接。",
-    "",
-    "#### 方式二：Secret Gist（不想公开内容时推荐）",
-    "1. 打开 [gist.github.com](https://gist.github.com)",
-    "2. 文件名填 `my-stage.json`（英文即可）",
-    "3. 粘贴你导出的 JSON 文件全部内容",
-    "4. 点击 **Create secret gist**（不是 public！）",
-    "5. 点击右上角 **Raw** 按钮，复制地址栏链接",
-    "",
-    "> **注意**：复制到的原始链接中包含 commit hash（一串随机字符），每次编辑 Gist 后这段 hash 都会变化，导致旧链接失效。分享时请去掉 commit hash 部分",
-    "> - 原始链接：`https://gist.githubusercontent.com/用户名/xxxxx/raw/0338784d09d734dfac0d3f741b736c3710c06ff6/my-stage.json`",
-    "> - 分享链接：`https://gist.githubusercontent.com/用户名/xxxxx/raw/my-stage.json`",
-    "> 去掉中间那段 hash 后，链接始终指向最新版本，更新 Gist 内容后无需重新分享链接。",
-    "",
-    "Secret Gist 不会出现在搜索结果中，只有知道链接的人才能访问，不需要任何认证。更新时直接编辑 Gist 内容保存即可。",
-    "> **关于更新延迟**：GitHub Raw 与 Gist Raw 均有约 5 分钟的服务端缓存，更新内容后需等待 5 分钟即可同步。",
-    "",
-    "> 以下为上传使用教程",
-    "![Secret Gist示例1](https://i.postimg.cc/Fs5YMcCH/ju-chang-shuo-ming1.png)",
-    "![Secret Gist示例2](https://i.postimg.cc/rFXDBWZF/ju-chang-shuo-ming2.png)",
-    "![Secret Gist示例3](https://i.postimg.cc/rp7JjbCp/IMG-20260325-215620.png)",
-    "#### 其他托管方式",
-    "任何能提供直接文件访问链接的服务都可以：Gitee（国内）、自己的服务器、Cloudflare R2 等。",
-    "",
-    "### 第三步：分享链接",
-    "把链接分享给别人，别人在小剧场里添加订阅 → 粘贴你的链接 → 就能接收你的内容。",
-    "",
-    "### 如何更新内容",
-    "1. 重新导出最新的 JSON 文件",
-    "2. 在GitHub仓库中覆盖上传原来的文件（或编辑 Gist粘贴新内容）",
-    "3. 提交保存",
-    "4. 订阅者点击「检查更新」就能获取你的最新内容",
-    "",
-    "### 创作者小贴士",
-    "- 给分组设置「默认作者」，新建剧场自动带上署名",
-    "- 善用分组和系列功能，让合集结构清晰",
-    "- 导出时包含分组和标签，订阅者体验更好",
-    "- 更新后在社区通知一声，提醒大家检查更新",
-    "- 上传到托管的文件名建议用英文或拼音",
-    "",
-    "---",
-    "",
-    "## 数据存储",
-    "所有数据保存在 SillyTavern 的扩展设置中，跟随酒馆数据一起备份和恢复。建议定期通过导出功能备份数据。",
-    "",
-    "",
-    "## 重要提示",
-    "请定期清理版本历史，避免数据膨胀。",
-  ].join("\n");
-
-  var BUILTIN_INJECT_GUIDE_CONTENT = [
-    "# 小剧场 · 注入功能指南",
-    "## 一、什么是注入？",
-    "注入是小剧场的核心功能之一。它允许你在发送消息给 AI 时，自动将选中的剧场内容插入到 AI 的提示词（Prompt）中。",
-    "你在小剧场里选好一段内容,下次发送消息时，这段内容会自动塞进提示词中，引导AI输出完成指令。",
-    "**注入 ≠ 发送：**",
-    "- **发送**（填入输入框/发送并生成）：内容作为**用户消息**出现在聊天记录中",
-    "- **注入**：内容作为**隐藏指令**插入到提示词中，不会出现在聊天记录里，但 AI 能看到，会随正文一起输出小剧场，**但可能会影响模型注意力，有概率降低模型正文质量**",
-    "",
-    "**适用场景：**",
-    "- 让 AI 在回复末尾输出一段特定格式的小剧场",
-    "- 给 AI 临时追加人设补充、场景描述、行为指令",
-    "- 随机触发事件或彩蛋",
-    "- 不想污染聊天记录，但又需要传达特定指令",
-    "",
-    "##二、启用注入功能",
-    "### 开启步骤",
-    "1. 打开小剧场面板",
-    "2. 点击底栏「设置」",
-    "3. 找到「注入设置」区域",
-    "4. 打开「启用注入功能」开关",
-    "### 开启后",
-    "- 预览页面底部会多出一个「选为注入」按钮",
-    "- 标题栏会显示注入状态指示器（小注射器图标 💉）",
-    "- 被选中注入的剧场卡片/分组/系列左侧会有高亮标记",
-    "",
-    "## 三、注入模式详解",
-    "小剧场提供两种注入模式，在设置中切换：",
-    "",
-    "### 1. 深度注入（将内容插入到聊天历史的指定深度）",
-    "**深度值（Depth）：**",
-    "| 深度 | 含义 |",
-    "|------|------|----------|",
-    "| 0 | 在聊天记录（chat history)最后，用户最新输入下 |",
-    "| 1 | 聊天记录倒数第二条消息之后 |",
-    "| 2+ | 越大越靠前，以此类推|",
-    "",
-    "**消息角色（Role）：**",
-    "| 角色 | 说明 | 建议 |",
-    "|------|------|------|",
-    "| System | 系统指令身份 | 最常用，稳定可靠 |",
-    "| User | 模拟用户消息 | 某些模型对用户消息响应更好 |",
-    "| Assistant | 模拟助手回复 | 可用于引导特定输出格式 |",
-    "",
-    "### 2. 自定义宏模式（通过`{{stage_prompt}}`宏来手动控制插入位置）",
-    "",
-    "**使用方式：**",
-    "在预设提示词小剧场条目区域内单独启用一条放置宏",
-    "",
-    "**优点：** 位置完全自定义，可以放在预设的任意位置",
-    "**注意：**",
-    "- 需要手动编辑预设来放置宏",
-    "- 没有选中剧场时宏会替换为空字符串",
-    "",
-    "- 注入示例：",
-    "![alt](https://i.postimg.cc/D0Vjnh7K/zhu-ru-shi-li.png)",
-    "",
-    "## 四、前缀指令模板",
-    "前缀指令是包裹在剧场内容外面的说明书，告诉 AI 该如何处理剧场内容。",
-    "",
-    "### 默认前缀指令",
-    "系统自带一个默认模板，在「设置 → 注入设置 → 默认前缀指令」中查看和修改。",
-    "",
-    "默认模板示例说明：",
-    "```",
-    "<stage>",
-    "在正文最后输出以下剧场内容，使用以下html折叠包裹。",
-    "<details>",
-    "<summary>小剧场 {{random::1::2::3::4::5::6::7::8::9::10}}| {{stage_title}}</summary>",
-    "在此处输出剧场内容，纯文字直接输出，网页代码上下需用代码块包裹",
-    "</details>",
-    "",
-    "以下是需要输出的剧场内容：",
-    "{{stage}}",
-    "</stage>",
-    "```",
-    "#### 注意事项",
-    "- **{{random::1::2::3::4::5::6::7::8::9::10}}为酒馆的随机数宏，用这个是为了实现折叠头随机美化效果，若无需求可删除**",
-    "",
-    "### 可用宏变量",
-    "| 宏 | 说明 | 何时可用 |",
-    "|-----|------|----------|",
-    "| `{{stage}}` | 剧场原始内容（纯文本） | 前缀模板内 / 宏模式 |",
-    "| `{{stage_title}}` | 当前剧场的标题 | 前缀模板内 / 宏模式 |",
-    "| `{{stage_count}}` | 选中的剧场总数 | 多条外壳模板内 |",
-    "| `{{stage_tasks}}` | 所有任务块的拼接体 | 多条外壳模板内 |",
-    "| `{{stage_prompt}}` | 前缀指令+剧场内容的完整注入体 | 宏模式 |",
-    "",
-    "### `{{stage}}` 的插入逻辑",
-    "- 如果前缀中**包含** `{{stage}}`：剧场内容会精确替换到 `{{stage}}` 所在位置",
-    "- 如果前缀中**没有** `{{stage}}`：剧场内容自动拼接在前缀的后面（换行分隔）",
-    "- 如果**没有设置前缀**：只发送剧场原始内容",
-    "",
-    "### 分组专属前缀",
-    "每个分组可以在「分组设置 → 注入前缀指令」中设置自己的前缀。",
-    "- 优先级：分组前缀 > 全局默认前缀 > 无前缀",
-    "- 不同类型的剧场可以设置不同的输出格式",
-    "- 根据自己**小剧场属性**编辑默认前缀，固定前缀格式可搭配**不发送剧场正则**使用。",
-    "> 例如：此预设剧场格式为</stage>……</stage>**，通过此前缀，你可以很方便的指定AI按照此固定格式输出，而不用修改每条剧场指令。**",
-    "> **不同作者可能存在不同格式要求，所以分组设置内也支持自定义该分组的默认前缀。发送不同分组剧场时则根据设定发送不同前缀，自动适配多样情况。**",
-    "",
-    "## 五、多条注入",
-    "",
-    "### 选择多条剧场",
-    "在预览页面点击「选为注入」可以叠加选择多条剧场：",
-    "- 第一次点击：选中，按钮变为「取消注入」",
-    "- 按钮会显示当前已选数量，如「选为注入(+2)」",
-    "- 已选中的再点击：取消该条的选中",
-    "",
-    "### 多条外壳模板",
-    "**当选中 2 条以上剧场时，系统使用「多条外壳模板」来组织结构。**",
-    "在「设置 → 注入设置 → 多条外壳模板」中可自定义。",
-    "",
-    "默认模板：",
-    "```",
-    "<stage>",
-    "以下共有 {{stage_count}} 个独立小剧场任务，请在正文最后按顺序逐一完成，每条剧场单独使用对应格式包裹。",
-    "",
-    "{{stage_tasks}}",
-    "</stage>",
-    "```",
-    "",
-    "### 多条处理逻辑",
-    "1. 每条剧场单独应用各自的前缀指令（分组前缀或默认前缀）",
-    "2. 前缀最外层的 XML 标签会被自动剥离（避免嵌套标签冲突）",
-    "3. 每条剧场自动编号：【任务1】、【任务2】...",
-    "4. 所有任务之间用分割线 `---` 分隔",
-    "5. 整体用多条外壳模板包裹",
-    "",
-    "### ⚠️ 重要注意",
-    "- 多条外壳模板中**必须**包含 `{{stage_tasks}}`",
-    "- 如果模板缺少 `{{stage_tasks}}`，系统会自动回退到内置默认模板",
-    "- 只有选中 1 条时使用单条前缀逻辑，2 条及以上才使用多条外壳",
-    "- 灵活使用左下角拓展菜单内的“查看提示词情况”可直观查看指令详细内容",
-    "",
-    "## 六、随机注入",
-    "",
-    "### 功能说明",
-    "当你没有手动选中任何剧场时，系统可以自动从「随机池」中随机抽取一条进行注入，每次 AI 生成请求都会重新随机抽取。",
-    "",
-    "### 开启方式",
-    "设置 → 注入设置 → 随机注入 → 打开开关",
-    "",
-    "### 优先级规则",
-    "手动选择 > 随机注入",
-    "| 状态 | 行为 |",
-    "|------|------|",
-    "| 手动选中了剧场 | 使用手动选中的，使用后自动清除选中状态 |",
-    "| 没有手动选中 + 随机注入开启 | 从随机池随机抽取一条 |",
-    "| 没有手动选中 + 随机注入关闭 | 不注入任何内容 |",
-    "",
-    "### 随机池管理",
-    "点击「管理随机池」可以精细控制哪些剧场参与随机：",
-    "",
-    "- **整组排除**：取消勾选分组的复选框 → 该分组所有剧场不参与随机",
-    "- **整系列排除**：取消勾选系列的复选框 → 该系列所有剧场不参与随机",
-    "- **单条排除**：取消勾选某条剧场的复选框 → 该条不参与随机",
-    "- **全选/全不选**：顶部按钮快速切换",
-    "- **搜索/标签筛选**：可通过搜索和标签快速定位要排除的内容",
-    "",
-    "### 排除的层级关系",
-    "分组排除 > 系列排除 > 单条排除",
-    "- 排除了分组后，该分组内的系列和单条排除设置会被禁用（灰显）",
-    "- 排除了系列后，该系列内的单条排除设置会被禁用",
-    "",
-    "## 七、注入状态指示",
-    "",
-    "### 标题栏指示器",
-    "| 图标 | 含义 |",
-    "|------|------|",
-    "| 💉 + 剧场标题 | 手动选中了 1 条剧场 |",
-    '| 💉 + "已选 N 条" | 手动选中了多条剧场 |',
-    '| 🎲 + "随机 N 条" | 随机注入开启，显示随机池条目数 |',
-    "| 无显示 | 注入功能关闭 / 没有选中内容 |",
-    "",
-    "### 卡片高亮",
-    "被选中注入的剧场在列表中有特殊样式：",
-    "- 卡片左侧有彩色边框，背景有浅色高亮",
-    "- 如果在系列中，整个系列头部也会高亮。如果在分组中，分组入口也会高亮。",
-    "",
-    "### 点击指示器跳转",
-    "- 点击标题栏的注入指示器可以快速跳转到对应剧场的预览页",
-    "- 如果选中了多条，每次点击会按顺序轮流跳转到不同的剧场",
-    "- 如果面板处于收起状态，点击后会自动展开面板",
-    "",
-    "## 八、使用技巧与注意事项",
-    "- 注入内容会占用上下文窗口的空间，建议剧场指令内容与数量控制在合理长度内",
-    "- 多条注入会显著影响AI输出注意力，并增加输出 token 消耗，按需选择",
-  ].join("\n");
-
-  var BUILTIN_PREVIEW_CONTENT = [
-    "```",
-    "你好，这是一个预览页支持的格式示例",
-    "```",
-    "`你好`",
-    "**测试**",
-    "~~测试~~",
-    "> 测试",
-    "- 测试",
-    '"测试"',
-    "\u201c测试\u201d",
-    "**表格**",
-    "| 列1 | 列2 |",
-    "|-----|-----|",
-    "| 内容 | 内容 |",
-    "",
-    "**任务列表**",
-    "- [x] 已完成",
-    "- [ ] 未完成",
-    "**链接与图片**",
-    "- [文字](url) →链接",
-    "- ![alt](https://i.ibb.co/Fv66fS0/image.png) → 图片，只支持图床链接",
-    "",
-    "# 一",
-    "## 二",
-    "### 三",
-    "#### 四",
-    "##### 五",
-    "###### 六",
-    "",
-    "**嵌套折叠 (支持原生 HTML)**",
-    "<details><summary>点击展开外层</summary>",
-    "这里是外层的内容，可以包含文字。",
-    "  <details><summary>点击展开内层</summary>",
-    "  这里是嵌套的内层内容！",
-    "  </details>",
-    "</details>",
-    "",
-    "---",
-  ].join("\n");
+  var GUIDE_REMOTE_URLS = {
+    guide:
+      "https://gist.githubusercontent.com/Sanjs333/c45460dc2bb5908ff53b5769088b122d/raw/guide.md",
+    injectGuide:
+      "https://gist.githubusercontent.com/Sanjs333/125678ce0a45cefa9ef9375de91b94f9/raw/inject_guide.md",
+    preview:
+      "https://gist.githubusercontent.com/Sanjs333/697860e53603f718b051b4f06e30171b/raw/preview.md",
+  };
+  var BUILTIN_GUIDE_CONTENT =
+    "# 小剧场 使用说明\n\n正在从云端加载完整使用说明...\n\n如果长时间未加载，请检查网络或手动前往设置页「重新生成使用说明」。";
+  var BUILTIN_INJECT_GUIDE_CONTENT =
+    "# 小剧场 · 注入功能指南\n\n正在从云端加载完整注入指南...\n\n如果长时间未加载，请检查网络。";
+  var BUILTIN_PREVIEW_CONTENT = "# 预览格式示例\n\n正在从云端加载示例内容...";
 
   let data = {
     groups: [],
@@ -605,6 +86,17 @@
     const d = document.createElement("div");
     d.appendChild(document.createTextNode(s));
     return d.innerHTML;
+  }
+  function chk(id, a, label) {
+    return (
+      '<label class="ms-check-item"><input type="checkbox" id="' +
+      id +
+      '"' +
+      (a ? " " + a : "") +
+      "> " +
+      label +
+      "</label>"
+    );
   }
   function truncate(s, n) {
     return !s ? "" : s.length > n ? s.substring(0, n) + "..." : s;
@@ -1129,6 +621,63 @@
     } catch (e) {
       console.error("[小剧场] 加载数据失败", e);
     }
+  }
+
+  async function fetchRemoteGuide(url) {
+    try {
+      var fetchUrl =
+        url + (url.indexOf("?") >= 0 ? "&" : "?") + "_t=" + Date.now();
+      var response = await fetch(fetchUrl);
+      if (!response.ok) throw new Error("HTTP " + response.status);
+      var text = await response.text();
+      if (!text || text.length < 20) throw new Error("内容为空");
+      return text;
+    } catch (e) {
+      console.warn("[小剧场] 云端指南加载失败:", url, e);
+      return null;
+    }
+  }
+
+  async function updateBuiltinGuidesFromRemote() {
+    if (!GUIDE_REMOTE_URLS || !GUIDE_REMOTE_URLS.guide) return;
+    var updated = false;
+    var fetchMap = {
+      _builtin_guide: GUIDE_REMOTE_URLS.guide,
+      _builtin_inject_guide: GUIDE_REMOTE_URLS.injectGuide,
+      _builtin_preview: GUIDE_REMOTE_URLS.preview,
+    };
+    for (var pid in fetchMap) {
+      var p = data.prompts.find(function (x) {
+        return x.id === pid;
+      });
+      if (!p) continue;
+      var remoteText = await fetchRemoteGuide(fetchMap[pid]);
+      if (remoteText && remoteText !== p.content) {
+        p.content = remoteText;
+        p.updatedAt = Date.now();
+        p.fingerprint = contentFingerprint(p);
+        updated = true;
+      }
+    }
+    if (updated) {
+      saveData();
+      if (panelVisible) {
+        try {
+          renderView();
+        } catch (e) {}
+      }
+    }
+  }
+
+  function setupPage(title, toolbarHtml) {
+    var $p = $("#" + PANEL_ID);
+    $p.find("#ms-title").text(title);
+    $p.find("#ms-toolbar").html(
+      '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">' +
+        (toolbarHtml !== undefined ? toolbarHtml : esc(title)) +
+        "</span>",
+    );
+    return $p;
   }
 
   function createBuiltinGuide() {
@@ -2598,9 +2147,12 @@
 .ms-field input:focus,.ms-field select:focus,.ms-field textarea:focus{border-color:var(--SmartThemeQuoteColor,#777);}
 .ms-field textarea{min-height:180px;max-height:60vh;resize:vertical;line-height:1.6;border-radius:0 0 8px 8px;overflow-y:auto;width:100%!important;max-width:none!important;margin:0!important;box-sizing:border-box!important;}
 .ms-content-field{position:relative!important;}
-.ms-edit-scroll-top{position:absolute;bottom:10px;right:14px;width:28px;height:28px;border-radius:50%;background:transparent;border:none;color:var(--ms-accent,var(--SmartThemeBodyColor,#aaa));cursor:pointer;display:none;align-items:center;justify-content:center;font-size:14px;z-index:10;opacity:0.4;transition:opacity 0.2s,background 0.15s;-webkit-tap-highlight-color:transparent;}
+.ms-edit-scroll-top{position:absolute;bottom:48px;right:14px;width:28px;height:28px;border-radius:50%;background:transparent;border:none;color:var(--ms-accent,var(--SmartThemeBodyColor,#aaa));cursor:pointer;display:none;align-items:center;justify-content:center;font-size:14px;z-index:10;opacity:0.4;transition:opacity 0.2s,background 0.15s;-webkit-tap-highlight-color:transparent;}
 .ms-edit-scroll-top:hover{background:rgba(var(--ms-accent-rgb,201,149,122),0.15);opacity:1;}
 .ms-edit-scroll-top.visible{display:flex;}
+.ms-edit-scroll-bottom{position:absolute;bottom:10px;right:14px;width:28px;height:28px;border-radius:50%;background:transparent;border:none;color:var(--ms-accent,var(--SmartThemeBodyColor,#aaa));cursor:pointer;display:none;align-items:center;justify-content:center;font-size:14px;z-index:10;opacity:0.4;transition:opacity 0.2s,background 0.15s;-webkit-tap-highlight-color:transparent;}
+.ms-edit-scroll-bottom:hover{background:rgba(var(--ms-accent-rgb,201,149,122),0.15);opacity:1;}
+.ms-edit-scroll-bottom.visible{display:flex;}
 .ms-md-toolbar{display:flex;gap:2px;padding:2px 3px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-bottom:none;border-radius:8px 8px 0 0;flex-wrap:wrap;flex-shrink:0;}
 .ms-md-btn{width:24px;height:24px;border:none;background:transparent;color:var(--SmartThemeQuoteColor,#888);cursor:pointer;border-radius:4px;font-size:12px;display:flex;align-items:center;justify-content:center;transition:background 0.12s,color 0.12s;}
 .ms-md-btn:hover{background:rgba(255,255,255,0.08);color:var(--SmartThemeBodyColor,#ddd);}
@@ -2953,7 +2505,9 @@
       $scrollBody.scrollTop(0);
     }
     updateInjectIndicator();
-    setTimeout(function() { $p.find("#ms-body").trigger("scroll"); }, 100);
+    setTimeout(function () {
+      $p.find("#ms-body").trigger("scroll");
+    }, 100);
     if (v._lastViewedId) {
       setTimeout(function () {
         var $card = $p.find('.ms-card[data-pid="' + v._lastViewedId + '"]');
@@ -3074,7 +2628,9 @@
       });
     }
     $body.scrollTop(_scrollTop);
-    setTimeout(function() { $body.trigger("scroll"); }, 50);
+    setTimeout(function () {
+      $body.trigger("scroll");
+    }, 50);
     if ($p.find("#ms-footer").css("display") === "block")
       $p.find("#ms-footer").css("display", "flex");
   }
@@ -3749,43 +3305,42 @@
   function bindAllEvents() {
     const $p = $("#" + PANEL_ID);
     $p.find("#ms-body, #ms-toolbar, #ms-footer, #ms-filter-panel").off(".ms");
-    $p.find("#ms-toolbar").on("compositionstart.ms", "#ms-search", function () {
+    var $body = $p.find("#ms-body"),
+      $toolbar = $p.find("#ms-toolbar"),
+      $footer = $p.find("#ms-footer");
+    $toolbar.on("compositionstart.ms", "#ms-search", function () {
       this._composing = true;
     });
-    $p.find("#ms-toolbar").on("compositionend.ms", "#ms-search", function () {
+    $toolbar.on("compositionend.ms", "#ms-search", function () {
       this._composing = false;
       searchQuery = $(this).val();
       $p.find("#ms-search-clear").toggle(!!searchQuery);
       renderBodyOnly();
     });
-    $p.find("#ms-toolbar").on("input.ms", "#ms-search", function () {
+    $toolbar.on("input.ms", "#ms-search", function () {
       if (this._composing) return;
       searchQuery = $(this).val();
       $p.find("#ms-search-clear").toggle(!!searchQuery);
       renderBodyOnly();
     });
-    $p.find("#ms-toolbar").on("click.ms", "#ms-search-clear", function () {
+    $toolbar.on("click.ms", "#ms-search-clear", function () {
       searchQuery = "";
       $p.find("#ms-search").val("").focus();
       $(this).hide();
       renderBodyOnly();
     });
-    $p.find("#ms-toolbar").on("click.ms", "#ms-btn-new", () =>
+    $toolbar.on("click.ms", "#ms-btn-new", () =>
       navigateTo({ name: "edit", promptId: null, defaultGroupId: null }),
     );
-    $p.find("#ms-toolbar").on("click.ms", "#ms-btn-sort", () =>
-      showSortDropdown($p),
-    );
-    $p.find("#ms-toolbar").on("click.ms", "#ms-btn-random", () =>
-      doRandomPick(),
-    );
-    $p.find("#ms-toolbar").on("click.ms", "#ms-btn-select", () => {
+    $toolbar.on("click.ms", "#ms-btn-sort", () => showSortDropdown($p));
+    $toolbar.on("click.ms", "#ms-btn-random", () => doRandomPick());
+    $toolbar.on("click.ms", "#ms-btn-select", () => {
       selectMode = !selectMode;
       if (!selectMode) selectedIds.clear();
       renderBodyOnly();
       $p.find("#ms-btn-select").toggleClass("active", selectMode);
     });
-    $p.find("#ms-toolbar").on("click.ms", "#ms-btn-filter", () => {
+    $toolbar.on("click.ms", "#ms-btn-filter", () => {
       const $fp = $p.find("#ms-filter-panel");
       if ($fp.hasClass("open")) $fp.removeClass("open");
       else {
@@ -3793,43 +3348,39 @@
         bindFilterEvents($p);
       }
     });
-    $p.find("#ms-body").on(
-      "pointerdown.ms",
-      ".ms-nav-item[data-nav='group']",
-      function (e) {
-        if ($(e.target).closest("button, a, input").length) return;
-        var gid = $(this).data("gid");
-        if (!gid || gid === "_ungrouped") return;
-        $(this).data("ms-nav-press-time", Date.now());
-        var $el = $(this);
-        var sx = e.clientX || 0,
-          sy = e.clientY || 0;
-        var navTimer = setTimeout(function () {
-          $el.data("ms-nav-lp-fired", true);
-          if (navigator.vibrate) navigator.vibrate(30);
-          navigateTo({ name: "group-edit", groupId: gid });
-        }, 600);
-        var onMove2 = function (ev) {
-          var dx = (ev.clientX || 0) - sx,
-            dy = (ev.clientY || 0) - sy;
-          if (dx * dx + dy * dy > 100) {
-            clearTimeout(navTimer);
-            navTimer = null;
-          }
-        };
-        var onUp2 = function () {
-          if (navTimer) {
-            clearTimeout(navTimer);
-            navTimer = null;
-          }
-          $p.off("pointermove.msnlp pointerup.msnlp pointercancel.msnlp");
-        };
-        $p.off("pointermove.msnlp pointerup.msnlp pointercancel.msnlp")
-          .on("pointermove.msnlp", onMove2)
-          .on("pointerup.msnlp pointercancel.msnlp", onUp2);
-      },
-    );
-    $p.find("#ms-body").on("click.ms", ".ms-nav-item", function () {
+    $body.on("pointerdown.ms", ".ms-nav-item[data-nav='group']", function (e) {
+      if ($(e.target).closest("button, a, input").length) return;
+      var gid = $(this).data("gid");
+      if (!gid || gid === "_ungrouped") return;
+      $(this).data("ms-nav-press-time", Date.now());
+      var $el = $(this);
+      var sx = e.clientX || 0,
+        sy = e.clientY || 0;
+      var navTimer = setTimeout(function () {
+        $el.data("ms-nav-lp-fired", true);
+        if (navigator.vibrate) navigator.vibrate(30);
+        navigateTo({ name: "group-edit", groupId: gid });
+      }, 600);
+      var onMove2 = function (ev) {
+        var dx = (ev.clientX || 0) - sx,
+          dy = (ev.clientY || 0) - sy;
+        if (dx * dx + dy * dy > 100) {
+          clearTimeout(navTimer);
+          navTimer = null;
+        }
+      };
+      var onUp2 = function () {
+        if (navTimer) {
+          clearTimeout(navTimer);
+          navTimer = null;
+        }
+        $p.off("pointermove.msnlp pointerup.msnlp pointercancel.msnlp");
+      };
+      $p.off("pointermove.msnlp pointerup.msnlp pointercancel.msnlp")
+        .on("pointermove.msnlp", onMove2)
+        .on("pointerup.msnlp pointercancel.msnlp", onUp2);
+    });
+    $body.on("click.ms", ".ms-nav-item", function () {
       var nav = $(this).data("nav");
       if ($(this).data("ms-nav-lp-fired")) {
         $(this).removeData("ms-nav-lp-fired");
@@ -3846,10 +3397,10 @@
       else if (nav === "group")
         navigateTo({ name: "group", groupId: $(this).data("gid") });
     });
-    $p.find("#ms-body").on("contextmenu.ms", ".ms-card", function (e) {
+    $body.on("contextmenu.ms", ".ms-card", function (e) {
       e.preventDefault();
     });
-    $p.find("#ms-body").on("pointerdown.ms", ".ms-card", function (e) {
+    $body.on("pointerdown.ms", ".ms-card", function (e) {
       if (selectMode) return;
       if ($(e.target).closest(".ms-card-star,.ms-card-qbtn").length) return;
       const pid = $(this).data("pid");
@@ -3890,7 +3441,7 @@
         .on("pointermove.mslp", onMove)
         .on("pointerup.mslp pointercancel.mslp", onUp);
     });
-    $p.find("#ms-body").on("click.ms", ".ms-card", function (e) {
+    $body.on("click.ms", ".ms-card", function (e) {
       if ($(e.target).closest(".ms-card-star,.ms-card-qbtn").length) return;
       if (longPressTriggered) {
         longPressTriggered = false;
@@ -3909,13 +3460,13 @@
       }
       navigateTo({ name: "preview", promptId: pid });
     });
-    $p.find("#ms-body").on("click.ms", ".ms-series-header", function (e) {
+    $body.on("click.ms", ".ms-series-header", function (e) {
       if ($(e.target).closest(".ms-series-check").length) return;
       var sid = $(this).data("series-id");
       $(this).find(".ms-series-arrow").toggleClass("open");
       $p.find("#" + sid).toggleClass("open");
     });
-    $p.find("#ms-body").on("click.ms", ".ms-series-check", function (e) {
+    $body.on("click.ms", ".ms-series-check", function (e) {
       e.stopPropagation();
       if (!selectMode) return;
       var ids;
@@ -3933,47 +3484,47 @@
       });
       renderBodyOnly();
     });
-    $p.find("#ms-body").on("click.ms", ".ms-card-star", function (e) {
+    $body.on("click.ms", ".ms-card-star", function (e) {
       e.stopPropagation();
       toggleStar($(this).data("pid"));
       renderBodyOnly();
     });
-    $p.find("#ms-body").on("click.ms", ".ms-card-qbtn", function (e) {
+    $body.on("click.ms", ".ms-card-qbtn", function (e) {
       e.stopPropagation();
       const action = $(this).data("qaction"),
         pid = $(this).data("pid");
       if (action === "send") sendToInput(pid);
       else if (action === "send-gen") sendAndGenerate(pid);
     });
-    $p.find("#ms-footer").on("click.ms", "[data-action='manage-groups']", () =>
+    $footer.on("click.ms", "[data-action='manage-groups']", () =>
       navigateTo({ name: "groups" }),
     );
-    $p.find("#ms-footer").on("click.ms", "[data-action='manage-tags']", () =>
+    $footer.on("click.ms", "[data-action='manage-tags']", () =>
       navigateTo({ name: "tag-manage" }),
     );
-    $p.find("#ms-footer").on("click.ms", "[data-action='import']", () =>
+    $footer.on("click.ms", "[data-action='import']", () =>
       $p.find("#ms-file-input").trigger("click"),
     );
-    $p.find("#ms-footer").on("click.ms", "[data-action='export']", () =>
+    $footer.on("click.ms", "[data-action='export']", () =>
       navigateTo({ name: "export" }),
     );
-    $p.find("#ms-footer").on("click.ms", "[data-action='settings']", () =>
+    $footer.on("click.ms", "[data-action='settings']", () =>
       navigateTo({ name: "settings" }),
     );
-    $p.find("#ms-footer").on("click.ms", "[data-action='history-list']", () =>
+    $footer.on("click.ms", "[data-action='history-list']", () =>
       navigateTo({ name: "history-list" }),
     );
-    $p.find("#ms-footer").on("click.ms", "[data-action='subscriptions']", () =>
+    $footer.on("click.ms", "[data-action='subscriptions']", () =>
       navigateTo({ name: "subscriptions" }),
     );
-    $p.find("#ms-footer").on("click.ms", "[data-batch='selectall']", () => {
+    $footer.on("click.ms", "[data-batch='selectall']", () => {
       const vis = getVisiblePromptIds();
       if (vis.length > 0 && vis.every((id) => selectedIds.has(id)))
         vis.forEach((id) => selectedIds.delete(id));
       else vis.forEach((id) => selectedIds.add(id));
       renderBodyOnly();
     });
-    $p.find("#ms-footer").on("click.ms", "[data-batch='delete']", () => {
+    $footer.on("click.ms", "[data-batch='delete']", () => {
       if (selectedIds.size === 0) return;
       if (confirm(`确定删除选中的 ${selectedIds.size} 项吗？`)) {
         deletePrompts([...selectedIds]);
@@ -3981,19 +3532,17 @@
         renderView();
       }
     });
-    $p.find("#ms-footer").on("click.ms", "[data-batch='move']", () =>
-      showMoveDropdown($p),
-    );
-    $p.find("#ms-footer").on("click.ms", "[data-batch='tag']", () =>
+    $footer.on("click.ms", "[data-batch='move']", () => showMoveDropdown($p));
+    $footer.on("click.ms", "[data-batch='tag']", () =>
       showBatchTagDropdown($p),
     );
-    $p.find("#ms-footer").on("click.ms", "[data-batch='author']", () =>
+    $footer.on("click.ms", "[data-batch='author']", () =>
       showBatchAuthorDialog(),
     );
-    $p.find("#ms-footer").on("click.ms", "[data-batch='series']", () =>
+    $footer.on("click.ms", "[data-batch='series']", () =>
       showBatchSeriesDropdown($p),
     );
-    $p.find("#ms-footer").on("click.ms", "[data-batch='export']", () => {
+    $footer.on("click.ms", "[data-batch='export']", () => {
       if (selectedIds.size === 0) {
         toast("warning", "请先选择");
         return;
@@ -4015,30 +3564,28 @@
     );
     $p.off("click.ms-close").on("click.ms-close", "#ms-btn-close", hidePanel);
     $p.off("click.ms-back").on("click.ms-back", "#ms-go-back", navigateBack);
-    $p.find("#ms-body")
-      .off("scroll.ms-scroll-top")
-      .on("scroll.ms-scroll-top", function () {
-        var $btnTop = $p.find("#ms-scroll-top");
-        var $btnBottom = $p.find("#ms-scroll-bottom");
-        if (this.scrollTop > 150) $btnTop.addClass("visible");
-        else $btnTop.removeClass("visible");
-        var distToBottom = this.scrollHeight - this.scrollTop - this.clientHeight;
-        if (distToBottom > 150) $btnBottom.addClass("visible");
-        else $btnBottom.removeClass("visible");
-      });
+    $body.off("scroll.ms-scroll-top").on("scroll.ms-scroll-top", function () {
+      var $btnTop = $p.find("#ms-scroll-top");
+      var $btnBottom = $p.find("#ms-scroll-bottom");
+      if (this.scrollTop > 150) $btnTop.addClass("visible");
+      else $btnTop.removeClass("visible");
+      var distToBottom = this.scrollHeight - this.scrollTop - this.clientHeight;
+      if (distToBottom > 150) $btnBottom.addClass("visible");
+      else $btnBottom.removeClass("visible");
+    });
     $p.off("click.ms-scroll-top").on(
       "click.ms-scroll-top",
       "#ms-scroll-top",
       function () {
-        $p.find("#ms-body").animate({ scrollTop: 0 }, 200);
+        $body.animate({ scrollTop: 0 }, 200);
       },
     );
     $p.off("click.ms-scroll-bottom").on(
       "click.ms-scroll-bottom",
       "#ms-scroll-bottom",
       function () {
-        var $body = $p.find("#ms-body");
-        $body.animate({ scrollTop: $body[0].scrollHeight }, 200);
+        var $msBody = $p.find("#ms-body");
+        $msBody.animate({ scrollTop: $msBody[0].scrollHeight }, 200);
       },
     );
   }
@@ -4459,17 +4006,13 @@
   }
 
   function renderHistory(v) {
-    const $p = $("#" + PANEL_ID),
-      pr = getPrompt(v.promptId);
+    var pr = getPrompt(v.promptId);
     if (!pr) {
       navigateBack();
       return;
     }
-    const history = pr.history || [];
-    $p.find("#ms-title").text("版本历史");
-    $p.find("#ms-toolbar").html(
-      `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">版本历史 · ${esc(truncate(pr.title, 20))}</span>`,
-    );
+    var history = pr.history || [];
+    var $p = setupPage("版本历史", "版本历史 · " + esc(truncate(pr.title, 20)));
     let html = "";
     if (history.length === 0) {
       html = `<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>还没有历史版本</div>`;
@@ -4547,8 +4090,7 @@
   }
 
   function renderHistoryDiff(v) {
-    var $p = $("#" + PANEL_ID),
-      pr = getPrompt(v.promptId);
+    var pr = getPrompt(v.promptId);
     if (!pr) {
       navigateBack();
       return;
@@ -4568,10 +4110,7 @@
     var sameCount = diff.filter(function (d) {
       return d.type === "same";
     }).length;
-    $p.find("#ms-title").text("版本对比");
-    $p.find("#ms-toolbar").html(
-      '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">版本对比</span>',
-    );
+    var $p = setupPage("版本对比");
     var metaH = "";
     if ((h.title || "") !== (pr.title || "")) {
       metaH +=
@@ -4667,8 +4206,7 @@
   }
 
   function renderEdit(v) {
-    const $p = $("#" + PANEL_ID),
-      pr = v.promptId ? getPrompt(v.promptId) : null,
+    var pr = v.promptId ? getPrompt(v.promptId) : null,
       isNew = !pr;
     const title = isNew ? "" : pr.title,
       content = isNew ? "" : pr.content;
@@ -4703,9 +4241,9 @@
       series,
       tags: promptTags,
     });
-    $p.find("#ms-title").text(isNew ? "新建小剧场" : "编辑");
-    $p.find("#ms-toolbar").html(
-      `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">${isNew ? "新建小剧场" : "编辑小剧场"}</span>`,
+    var $p = setupPage(
+      isNew ? "新建小剧场" : "编辑",
+      isNew ? "新建小剧场" : "编辑小剧场",
     );
     let groupOpts = `<option value="">未分组</option>`;
     data.groups.forEach((gg) => {
@@ -4792,6 +4330,7 @@
         </div>
         <textarea id="ms-edit-content" placeholder="输入提示词内容...">${esc(content)}</textarea>
         <button class="ms-edit-scroll-top" id="ms-edit-scroll-top" title="回到顶部"><i class="fa-solid fa-angle-up"></i></button>
+        <button class="ms-edit-scroll-bottom" id="ms-edit-scroll-bottom" title="回到底部"><i class="fa-solid fa-angle-down"></i></button>
       </div>
       <div class="ms-char-count" id="ms-char-count">${stats.chars} 字 · ${stats.lines} 行</div>
       <div class="ms-form-btns"><button class="ms-btn" id="ms-edit-cancel">取消</button><button class="ms-btn primary" id="ms-edit-save">保存</button></div>
@@ -5005,6 +4544,7 @@
 
           $existPreview.remove();
           $p.find("#ms-preview-scroll-top").remove();
+          $p.find("#ms-preview-scroll-bottom").remove();
           $ta.show();
 
           if ($p.find("[data-md='find']").hasClass("active")) {
@@ -5034,6 +4574,9 @@
           $taWrap.append(
             '<button class="ms-edit-scroll-top" id="ms-preview-scroll-top" title="回到顶部"><i class="fa-solid fa-angle-up"></i></button>',
           );
+          $taWrap.append(
+            '<button class="ms-edit-scroll-bottom" id="ms-preview-scroll-bottom" title="回到底部"><i class="fa-solid fa-angle-down"></i></button>',
+          );
 
           var previewEl2 = $p.find("#ms-edit-preview-pane")[0];
 
@@ -5043,17 +4586,26 @@
           });
 
           $p.find("#ms-edit-preview-pane").on("scroll", function () {
-            var $btn = $p.find("#ms-preview-scroll-top");
-            if (this.scrollTop > 150) $btn.addClass("visible");
-            else $btn.removeClass("visible");
+            var $btnTop = $p.find("#ms-preview-scroll-top");
+            var $btnBottom = $p.find("#ms-preview-scroll-bottom");
+            if (this.scrollTop > 150) $btnTop.addClass("visible");
+            else $btnTop.removeClass("visible");
+            var distToBottom =
+              this.scrollHeight - this.scrollTop - this.clientHeight;
+            if (distToBottom > 150) $btnBottom.addClass("visible");
+            else $btnBottom.removeClass("visible");
           });
-
           $p.find("#ms-preview-scroll-top").on("click", function (e) {
             e.preventDefault();
             e.stopPropagation();
             $p.find("#ms-edit-preview-pane").animate({ scrollTop: 0 }, 200);
           });
-
+          $p.find("#ms-preview-scroll-bottom").on("click", function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            var $pane = $p.find("#ms-edit-preview-pane");
+            $pane.animate({ scrollTop: $pane[0].scrollHeight }, 200);
+          });
           $(this).addClass("active");
           $(this).find("i").attr("class", "fa-solid fa-eye-slash");
         }
@@ -5481,14 +5033,24 @@
       }
     });
     $p.find("#ms-edit-content").on("scroll.ms-edit-st", function () {
-      var $btn = $p.find("#ms-edit-scroll-top");
-      if (this.scrollTop > 150) $btn.addClass("visible");
-      else $btn.removeClass("visible");
+      var $btnTop = $p.find("#ms-edit-scroll-top");
+      var $btnBottom = $p.find("#ms-edit-scroll-bottom");
+      if (this.scrollTop > 150) $btnTop.addClass("visible");
+      else $btnTop.removeClass("visible");
+      var distToBottom = this.scrollHeight - this.scrollTop - this.clientHeight;
+      if (distToBottom > 150) $btnBottom.addClass("visible");
+      else $btnBottom.removeClass("visible");
     });
     $p.find("#ms-edit-scroll-top").on("click.ms", function (e) {
       e.preventDefault();
       e.stopPropagation();
       $p.find("#ms-edit-content").animate({ scrollTop: 0 }, 200);
+    });
+    $p.find("#ms-edit-scroll-bottom").on("click.ms", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      var $ta = $p.find("#ms-edit-content");
+      $ta.animate({ scrollTop: $ta[0].scrollHeight }, 200);
     });
     $p.find("#ms-body").on("click.ms", "#ms-edit-cancel", function () {
       clearDraft();
@@ -5662,14 +5224,13 @@
   }
 
   function renderQuickPhraseEdit(v) {
-    const $p = $("#" + PANEL_ID),
-      qp = v.phraseId
+    var qp = v.phraseId
         ? data.quickPhrases.find((q) => q.id === v.phraseId)
         : null,
       isNew = !qp;
-    $p.find("#ms-title").text(isNew ? "新建短语" : "编辑短语");
-    $p.find("#ms-toolbar").html(
-      `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">${isNew ? "新建" : "编辑"}快捷短语</span>`,
+    var $p = setupPage(
+      isNew ? "新建短语" : "编辑短语",
+      (isNew ? "新建" : "编辑") + "快捷短语",
     );
     $p.find("#ms-body").html(
       `<div class="ms-form"><div class="ms-field"><label>标题</label><input type="text" id="ms-qpe-title" value="${esc(qp ? qp.title : "")}"></div><div class="ms-field"><label>内容</label><textarea id="ms-qpe-content" style="min-height:140px;">${esc(qp ? qp.content : "")}</textarea></div><div class="ms-form-btns"><button class="ms-btn" id="ms-qpe-cancel">取消</button><button class="ms-btn primary" id="ms-qpe-save">保存</button></div></div>`,
@@ -5854,12 +5415,11 @@
   }
 
   function renderGroupEdit(v) {
-    const $p = $("#" + PANEL_ID),
-      g = v.groupId ? getGroup(v.groupId) : null,
+    var g = v.groupId ? getGroup(v.groupId) : null,
       isNew = !g;
-    $p.find("#ms-title").text(isNew ? "新建分组" : "编辑分组");
-    $p.find("#ms-toolbar").html(
-      `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">${isNew ? "新建" : "编辑"}分组</span>`,
+    var $p = setupPage(
+      isNew ? "新建分组" : "编辑分组",
+      (isNew ? "新建" : "编辑") + "分组",
     );
     $p.find("#ms-body").html(`<div class="ms-form">
       <div class="ms-field"><label>名称</label><input type="text" id="ms-gedit-name" value="${esc(g ? g.name : "")}"></div>
@@ -6084,11 +5644,7 @@
   }
 
   function renderStats() {
-    const $p = $("#" + PANEL_ID);
-    $p.find("#ms-title").text("使用统计");
-    $p.find("#ms-toolbar").html(
-      `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">使用统计</span>`,
-    );
+    const $p = setupPage("使用统计");
 
     const totalPrompts = data.prompts.length;
     const totalGroups = data.groups.length;
@@ -6371,11 +5927,7 @@
   }
 
   function renderSettings() {
-    const $p = $("#" + PANEL_ID);
-    $p.find("#ms-title").text("设置");
-    $p.find("#ms-toolbar").html(
-      `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">设置</span>`,
-    );
+    const $p = setupPage("设置");
     $p.find("#ms-body").html(
       `<div class="ms-form"><div class="ms-field"><label>默认作者署名</label><input type="text" id="ms-default-author" placeholder="新建时自动填入" value="${esc(data.settings.defaultAuthor || "")}"></div><div class="ms-divider"></div><div class="ms-section-label">注入设置</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-inject-enabled-toggle" ${data.settings.stageInjectEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">启用注入功能</span></div><div style="padding:4px 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);line-height:1.5;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>选中剧场后，内容会随下一次发送注入到 AI 提示词中</div><div id="ms-inject-details" style="${data.settings.stageInjectEnabled ? "" : "display:none;"}"><div class="ms-inject-settings-row"><label class="ms-inject-radio${data.settings.stageInjectMode === "depth" ? " active" : ""}" data-mode="depth"><input type="radio" name="ms-inject-mode" value="depth" ${data.settings.stageInjectMode === "depth" ? "checked" : ""}><i class="fa-solid fa-layer-group" style="margin-right:3px;font-size:11px;"></i>深度注入</label><label class="ms-inject-radio${data.settings.stageInjectMode === "macro" ? " active" : ""}" data-mode="macro"><input type="radio" name="ms-inject-mode" value="macro" ${data.settings.stageInjectMode === "macro" ? "checked" : ""}><i class="fa-solid fa-code" style="margin-right:3px;font-size:11px;"></i>自定义宏 {{stage}}</label></div><div class="ms-macro-info"><div class="ms-macro-info-title"><i class="fa-solid fa-wand-magic-sparkles" style="margin-right:4px;color:var(--ms-accent);"></i>可用宏</div><div><code>{{stage}}</code><span class="ms-macro-desc">剧场原始内容</span></div><div><code>{{stage_title}}</code><span class="ms-macro-desc">剧场标题</span></div><div><code>{{stage_count}}</code><span class="ms-macro-desc">选中的剧场总数</span></div><div><code>{{stage_tasks}}</code><span class="ms-macro-desc">所有任务块的拼接体</span></div><div><code>{{stage_prompt}}</code><span class="ms-macro-desc">前缀指令+剧场内容（完整注入体）</span></div></div><div id="ms-depth-opts" style="${data.settings.stageInjectMode === "depth" ? "" : "display:none;"}padding:0 14px;"><div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>注入深度</label><input type="number" id="ms-inject-depth" min="0" max="999" value="${data.settings.stageInjectDepth || 0}" style="width:100%;"></div><div class="ms-field" style="flex:1;"><label>消息角色</label><select id="ms-inject-role" style="width:100%;"><option value="system"${data.settings.stageInjectRole === "system" ? " selected" : ""}>System</option><option value="user"${data.settings.stageInjectRole === "user" ? " selected" : ""}>User</option><option value="assistant"${data.settings.stageInjectRole === "assistant" ? " selected" : ""}>Assistant</option></select></div></div></div><div class="ms-field" style="padding:6px 14px 0;"><label>默认前缀指令 <span style="font-weight:350;opacity:0.5;">(用 {{stage}} 标记剧场插入位置，不写则拼接在末尾)</span></label><textarea id="ms-default-prefix" style="min-height:120px;resize:vertical;" placeholder="例：在正文最后输出以下剧场内容...">${esc(data.settings.defaultStagePrefix || "")}</textarea></div><div class="ms-field" style="padding:6px 14px 0;"><label>多条外壳模板 <span style="font-weight:350;opacity:0.5;">(选多条剧场时的整体结构，用 {{stage_count}} 表示数量，{{stage_tasks}} 表示所有任务块)</span></label><textarea id="ms-multi-prefix" style="min-height:80px;resize:vertical;" placeholder="留空使用内置默认模板">${esc(data.settings.multiStagePrefix || "")}</textarea><div style="padding:4px 2px;font-size:10px;color:var(--ms-danger);line-height:1.5;"><i class="fa-solid fa-triangle-exclamation" style="margin-right:3px;"></i>多条外壳模板中必须包含 \{\{stage_tasks\}\}，否则会自动回退使用内置默认模板</div></div><div class="ms-section-label" style="margin-top:6px;">随机注入</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-random-toggle" ${data.settings.randomInject && data.settings.randomInject.enabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">没有手动选中时，自动从随机池中抽取</span></div><button class="ms-tbtn" id="ms-go-random-pool" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-sliders"></i> 管理随机池</button></div><div class="ms-divider"></div><button class="ms-tbtn" id="ms-go-qp" style="width:100%;text-align:center;"><i class="fa-solid fa-bolt"></i> 管理快捷短语(${data.quickPhrases.length})</button><button class="ms-tbtn" id="ms-go-stats" style="width:100%;text-align:center;"><i class="fa-solid fa-chart-bar"></i> 使用统计</button><button class="ms-tbtn" id="ms-go-subs" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-rss"></i> 订阅管理 (${data.subscriptions.length})</button><div class="ms-divider"></div><div class="ms-section-label">订阅设置</div><div class="ms-field"><label>自动检查间隔 <span style="font-weight:350;opacity:0.5;">(打开面板时，超过此时间未检查的订阅会自动静默检查)</span></label><div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-auto-check-interval" min="0" max="168" step="1" value="${data.settings.autoCheckInterval || 6}" style="width:80px;"><span style="font-size:12px;color:var(--SmartThemeQuoteColor,#888);">小时（设为 0 关闭自动检查）</span></div></div><div class="ms-divider"></div><div class="ms-section-label">使用说明</div><button class="ms-tbtn" id="ms-regen-guide" style="width:100%;text-align:center;"><i class="fa-solid fa-book"></i> 重新生成使用说明</button><div class="ms-divider"></div><div class="ms-section-label">脚本更新</div><button class="ms-tbtn" id="ms-update-script" style="width:100%;text-align:center;"><i class="fa-solid fa-arrows-rotate"></i> 检查脚本更新</button><div style="font-size:10px;color:var(--SmartThemeQuoteColor,#555);padding:4px 14px;line-height:1.5;">刷新浏览器缓存并重载脚本，获取最新版本。</div><div class="ms-divider"></div><div class="ms-section-label">数据管理</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-history-warn-toggle" ${data.settings.historyWarnEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">历史超过30条时在底栏变红提醒</span></div><button class="ms-tbtn" id="ms-go-history-list" style="width:100%;text-align:center;margin-bottom:6px;"><i class="fa-solid fa-clock-rotate-left"></i> 查看有历史记录的剧场(${
         data.prompts.filter(function (p) {
@@ -6597,9 +6149,9 @@
         });
         html += `</div></div>`;
       }
-      html += `<div class="ms-divider"></div><div class="ms-section-label">导出选项</div><div class="ms-export-opts-tight"><label class="ms-check-item"><input type="checkbox" id="ms-exp-groups" checked> 包含分组信息</label>
-        <label class="ms-check-item"><input type="checkbox" id="ms-exp-tags" checked> 包含标签信息</label>
-        <label class="ms-check-item"><input type="checkbox" id="ms-exp-history"> 包含版本历史</label>
+      html += `<div class="ms-divider"></div><div class="ms-section-label">导出选项</div><div class="ms-export-opts-tight">${chk("ms-exp-groups", "checked", "包含分组信息")}
+        ${chk("ms-exp-tags", "checked", "包含标签信息")}
+        ${chk("ms-exp-history", "", "包含版本历史")}
       </div>
       <div class="ms-form-btns" style="gap:6px;"><button class="ms-btn" id="ms-export-cancel">取消</button><button class="ms-btn primary" id="ms-export-go"><i class="fa-solid fa-download"></i> 导出 (${exportSet.size})</button></div></div>`;
       return html;
@@ -6746,9 +6298,9 @@
     $p.find("#ms-body")
       .html(`<div class="ms-form">${infoH}<div class="ms-divider"></div>
       <div class="ms-export-opts-tight">
-        <label class="ms-check-item"><input type="checkbox" id="ms-exps-groups" ${g ? "checked" : "disabled"}> 包含分组信息${g ? "" : " (无分组)"}</label>
-        <label class="ms-check-item"><input type="checkbox" id="ms-exps-tags" ${tagNames.length > 0 ? "checked" : "disabled"}> 包含标签信息${tagNames.length > 0 ? "" : " (无标签)"}</label>
-        <label class="ms-check-item"><input type="checkbox" id="ms-exps-history" ${hasHistory ? "" : "disabled"}> 包含版本历史${hasHistory ? "" : " (无历史)"}</label>
+        ${chk("ms-exps-groups", g ? "checked" : "disabled", "包含分组信息" + (g ? "" : " (无分组)"))}
+        ${chk("ms-exps-tags", tagNames.length > 0 ? "checked" : "disabled", "包含标签信息" + (tagNames.length > 0 ? "" : " (无标签)"))}
+        ${chk("ms-exps-history", hasHistory ? "" : "disabled", "包含版本历史" + (hasHistory ? "" : " (无历史)"))}
       </div>
       <div class="ms-form-btns" style="gap:6px;"><button class="ms-btn" id="ms-exps-cancel">取消</button><button class="ms-btn primary" id="ms-exps-go"><i class="fa-solid fa-download"></i> 导出</button></div></div>`);
     $p.find("#ms-footer").hide();
@@ -6799,9 +6351,9 @@
       });
       listH += `</div></div>`;
       return `<div class="ms-form">${infoH}${listH}<div class="ms-divider"></div><div class="ms-export-opts-tight">
-          <label class="ms-check-item"><input type="checkbox" id="ms-expg-groups" checked> 包含分组信息</label>
-          <label class="ms-check-item"><input type="checkbox" id="ms-expg-tags" ${tagNames.length > 0 ? "checked" : "disabled"}> 包含标签信息${tagNames.length > 0 ? "" : " (无标签)"}</label>
-          <label class="ms-check-item"><input type="checkbox" id="ms-expg-history"> 包含版本历史</label>
+          ${chk("ms-expg-groups", "checked", "包含分组信息")}
+          ${chk("ms-expg-tags", tagNames.length > 0 ? "checked" : "disabled", "包含标签信息" + (tagNames.length > 0 ? "" : " (无标签)"))}
+          ${chk("ms-expg-history", "", "包含版本历史")}
         </div>
         <div class="ms-form-btns" style="gap:6px;"><button class="ms-btn" id="ms-expg-cancel">取消</button><button class="ms-btn primary" id="ms-expg-go"><i class="fa-solid fa-download"></i> 导出 (${exportSet.size})</button></div></div>`;
     }
@@ -6924,9 +6476,9 @@
     $p.find("#ms-body")
       .html(`<div class="ms-form">${infoH}${listH}<div class="ms-divider"></div>
       <div class="ms-export-opts-tight">
-        <label class="ms-check-item"><input type="checkbox" id="ms-expb-groups" ${groupNames.length > 0 ? "checked" : "disabled"}> 包含分组信息${groupNames.length > 0 ? "" : " (无分组)"}</label>
-        <label class="ms-check-item"><input type="checkbox" id="ms-expb-tags" ${tagNames.length > 0 ? "checked" : "disabled"}> 包含标签信息${tagNames.length > 0 ? "" : " (无标签)"}</label>
-        <label class="ms-check-item"><input type="checkbox" id="ms-expb-history"> 包含版本历史</label>
+        ${chk("ms-expb-groups", groupNames.length > 0 ? "checked" : "disabled", "包含分组信息" + (groupNames.length > 0 ? "" : " (无分组)"))}
+        ${chk("ms-expb-tags", tagNames.length > 0 ? "checked" : "disabled", "包含标签信息" + (tagNames.length > 0 ? "" : " (无标签)"))}
+        ${chk("ms-expb-history", "", "包含版本历史")}
       </div>
       <div class="ms-form-btns" style="gap:6px;"><button class="ms-btn" id="ms-expb-cancel">取消</button><button class="ms-btn primary" id="ms-expb-go"><i class="fa-solid fa-download"></i> 导出</button></div></div>`);
     $p.find("#ms-footer").hide();
@@ -6992,8 +6544,8 @@
       <div style="font-size:13px;padding:6px 0;">检测到 <strong>${ip.length}</strong> 条小剧场</div>${authorH}
       ${previewH}
       <div class="ms-divider"></div><div class="ms-section-label">导入选项</div>
-      <label class="ms-check-item"><input type="checkbox" id="ms-imp-groups" ${ig.length > 0 ? "checked" : "disabled"}> 导入分组信息 (${ig.length} 个)${ig.length === 0 ? " — 文件中无分组" : ""}</label>
-      <label class="ms-check-item"><input type="checkbox" id="ms-imp-tags" ${itags.length > 0 ? "checked" : "disabled"}> 导入标签 (${itags.length} 个)${itags.length === 0 ? " — 文件中无标签" : ""}</label>
+      ${chk("ms-imp-groups", ig.length > 0 ? "checked" : "disabled", "导入分组信息 (" + ig.length + " 个)" + (ig.length === 0 ? " — 文件中无分组" : ""))}
+      ${chk("ms-imp-tags", itags.length > 0 ? "checked" : "disabled", "导入标签 (" + itags.length + " 个)" + (itags.length === 0 ? " — 文件中无标签" : ""))}
       <div class="ms-field" id="ms-imp-target-wrap" style="display:none;padding:0 14px;"><label>放入分组</label><select id="ms-imp-target">${groupOpts}</select></div>
       <div class="ms-divider"></div><div class="ms-section-label">导入方式</div>
       <div class="ms-import-opt" data-mode="merge"><div class="ms-import-opt-title"><i class="fa-solid fa-code-merge"></i> 合并更新 <span style="font-size:10px;color:#c9957a;font-weight:normal;">推荐</span></div><div class="ms-import-opt-desc">智能检测 — 新内容添加，作者修改过的自动更新，完全相同的跳过</div></div>
@@ -7173,11 +6725,7 @@
   }
 
   function renderReorderGroups() {
-    const $p = $("#" + PANEL_ID);
-    $p.find("#ms-title").text("调整分组顺序");
-    $p.find("#ms-toolbar").html(
-      `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">调整分组顺序</span>`,
-    );
+    const $p = setupPage("调整分组顺序");
     function buildReorderBody() {
       let html = "";
       data.groups.forEach((g, i) => {
@@ -7233,11 +6781,7 @@
     refreshGroups();
   }
   function renderReorderTags() {
-    const $p = $("#" + PANEL_ID);
-    $p.find("#ms-title").text("调整标签顺序");
-    $p.find("#ms-toolbar").html(
-      `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">调整标签顺序</span>`,
-    );
+    const $p = setupPage("调整标签顺序");
     function buildReorderBody() {
       let html = "";
       data.settings.definedTags.forEach((t, i) => {
@@ -7299,19 +6843,13 @@
   }
 
   function renderReorderPrompts(v) {
-    const $p = $("#" + PANEL_ID);
     if (data.settings.sortMode !== "custom") {
       data.settings.sortMode = "custom";
       saveData();
     }
-    const g = getGroup(v.groupId);
-    const title = g ? g.name : "条目";
-    $p.find("#ms-title").text("调整条目顺序");
-    $p.find("#ms-toolbar").html(
-      '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">调整 ' +
-        esc(title) +
-        " 内顺序</span>",
-    );
+    var g = getGroup(v.groupId);
+    var title = g ? g.name : "条目";
+    var $p = setupPage("调整条目顺序", "调整 " + esc(title) + " 内顺序");
     var groupPrompts = data.prompts.filter(function (p) {
       return p.groupId === v.groupId;
     });
@@ -7836,11 +7374,7 @@
   }
 
   function renderHistoryList() {
-    const $p = $("#" + PANEL_ID);
-    $p.find("#ms-title").text("有历史记录的剧场");
-    $p.find("#ms-toolbar").html(
-      '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">有历史记录的剧场</span>',
-    );
+    const $p = setupPage("有历史记录的剧场");
     var withHistory = data.prompts.filter(function (p) {
       return p.history && p.history.length > 0;
     });
@@ -7957,7 +7491,6 @@
   }
 
   function renderRandomPool() {
-    var $p = $("#" + PANEL_ID);
     var ri = data.settings.randomInject;
     if (!ri) {
       ri = {
@@ -7968,10 +7501,7 @@
       };
       data.settings.randomInject = ri;
     }
-    $p.find("#ms-title").text("随机池管理");
-    $p.find("#ms-toolbar").html(
-      '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">随机注入池</span>',
-    );
+    var $p = setupPage("随机池管理", "随机注入池");
     var _expandedGroups = new Set();
     var _expandedRpoolSeries = new Set();
     var _rpoolSearch = "";
@@ -8512,11 +8042,7 @@
   }
 
   function renderSubscriptionAdd() {
-    var $p = $("#" + PANEL_ID);
-    $p.find("#ms-title").text("添加订阅");
-    $p.find("#ms-toolbar").html(
-      '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">添加订阅</span>',
-    );
+    var $p = setupPage("添加订阅");
     var groupOpts = '<option value="">不指定 (未分组)</option>';
     data.groups.forEach(function (g) {
       groupOpts += '<option value="' + g.id + '">' + esc(g.name) + "</option>";
@@ -8532,9 +8058,13 @@
         '<div class="ms-divider"></div>' +
         '<div class="ms-section-label">导入选项</div>' +
         '<div class="ms-export-opts-tight">' +
-        '<label class="ms-check-item"><input type="checkbox" id="ms-sub-opt-groups" checked> 导入分组信息</label>' +
-        '<label class="ms-check-item"><input type="checkbox" id="ms-sub-opt-tags" checked> 导入标签信息</label>' +
-        '<label class="ms-check-item"><input type="checkbox" id="ms-sub-opt-update" checked> 允许更新已有内容 <span style="font-size:10px;opacity:0.5;">(关闭则只接收新增，不覆盖本地修改)</span></label>' +
+        chk("ms-sub-opt-groups", "checked", "导入分组信息") +
+        chk("ms-sub-opt-tags", "checked", "导入标签信息") +
+        chk(
+          "ms-sub-opt-update",
+          "checked",
+          '允许更新已有内容 <span style="font-size:10px;opacity:0.5;">(关闭则只接收新增，不覆盖本地修改)</span>',
+        ) +
         "</div>" +
         '<div class="ms-field" id="ms-sub-target-wrap" style="display:none;"><label>放入分组 <span style="font-weight:350;opacity:0.5;">(不导入分组时，新内容放入此分组)</span></label><select id="ms-sub-target">' +
         groupOpts +
@@ -8635,7 +8165,6 @@
   }
 
   function renderSubscriptionDetail(v) {
-    var $p = $("#" + PANEL_ID);
     var sub = data.subscriptions.find(function (s) {
       return s.id === v.subId;
     });
@@ -8643,12 +8172,7 @@
       navigateBack();
       return;
     }
-    $p.find("#ms-title").text(sub.name);
-    $p.find("#ms-toolbar").html(
-      '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">' +
-        esc(truncate(sub.name, 20)) +
-        "</span>",
-    );
+    var $p = setupPage(sub.name, esc(truncate(sub.name, 20)));
     var logs = sub.updateLog || [];
     var logH = "";
     if (logs.length === 0) {
@@ -8706,15 +8230,17 @@
         '<div class="ms-divider"></div>' +
         '<div class="ms-section-label">导入选项</div>' +
         '<div class="ms-export-opts-tight">' +
-        '<label class="ms-check-item"><input type="checkbox" id="ms-sub-d-groups" ' +
-        (sub.importGroups ? "checked" : "") +
-        "> 导入分组信息</label>" +
-        '<label class="ms-check-item"><input type="checkbox" id="ms-sub-d-tags" ' +
-        (sub.importTags ? "checked" : "") +
-        "> 导入标签信息</label>" +
-        '<label class="ms-check-item"><input type="checkbox" id="ms-sub-d-update" ' +
-        (sub.updateExisting !== false ? "checked" : "") +
-        "> 允许更新已有内容</label>" +
+        chk(
+          "ms-sub-d-groups",
+          sub.importGroups ? "checked" : "",
+          "导入分组信息",
+        ) +
+        chk("ms-sub-d-tags", sub.importTags ? "checked" : "", "导入标签信息") +
+        chk(
+          "ms-sub-d-update",
+          sub.updateExisting !== false ? "checked" : "",
+          "允许更新已有内容",
+        ) +
         "</div>" +
         '<div class="ms-field" id="ms-sub-d-target-wrap" style="' +
         (sub.importGroups ? "display:none;" : "") +
@@ -9239,6 +8765,9 @@
         showPanel();
       }, 1000);
     }
+    setTimeout(function () {
+      updateBuiltinGuidesFromRemote();
+    }, 3000);
     try {
       if (
         typeof eventOn === "function" &&
