@@ -4778,6 +4778,7 @@
 #${PANEL_ID}.ms-collapsed .ms-scroll-top,#${PANEL_ID}.ms-collapsed .ms-scroll-bottom{display:none!important;}
 @media(max-width:768px){
   #${PANEL_ID}{width:92vw!important;left:50%!important;transform:translateX(-50%)!important;}
+  .ms-modal-overlay .ms-modal{min-width:0!important;max-width:94%!important;}
   .ms-batch-bar .ms-batch-btn .ms-btn-label{display:none!important;}
   .ms-batch-bar .ms-batch-count{font-size:11px;}
   .ms-batch-bar{gap:3px;}
