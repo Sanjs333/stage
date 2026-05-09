@@ -2745,6 +2745,7 @@
   var _visIdsCacheKey = "";
   function getVisiblePromptIds() {
     const v = currentView();
+    var curCharForCache = getCurrentCharKeySafe() || "";
     var cacheKey =
       v.name +
       "|" +
@@ -2758,7 +2759,9 @@
       "|" +
       (data.settings.sortMode || "") +
       "|" +
-      data.prompts.length;
+      data.prompts.length +
+      "|" +
+      curCharForCache;
     if (_visIdsCacheKey === cacheKey && _visIdsCache) return _visIdsCache;
     let list = [];
     if (v.name === "list") list = data.prompts;
@@ -2772,9 +2775,77 @@
     else if (v.name === "character")
       list = getPromptsByCharacter(v.charKey || v.charName);
     else return [];
-    var result = sortPrompts(
-      filterPrompts(searchPrompts(list, searchQuery)),
-    ).map((p) => p.id);
+    var sorted = sortPrompts(filterPrompts(searchPrompts(list, searchQuery)));
+
+    function _groupBySeriesVisual(items) {
+      var out = [];
+      var seen = new Set();
+      items.forEach(function (p) {
+        if (seen.has(p.id)) return;
+        if (p.series && p.series.trim()) {
+          var sn = p.series.trim();
+          items.forEach(function (q) {
+            if (q.series && q.series.trim() === sn && !seen.has(q.id)) {
+              out.push(q);
+              seen.add(q.id);
+            }
+          });
+        } else {
+          out.push(p);
+          seen.add(p.id);
+        }
+      });
+      return out;
+    }
+
+    var ordered = sorted;
+    if (v.name === "group" && v.groupId && !searchQuery) {
+      var g = v.groupId !== "_ungrouped" ? getGroup(v.groupId) : null;
+      var hasAnyCharBind = !!g && sorted.some(function (p) {
+        return p.character && isLocalCharKey(p.character);
+      });
+      var usingPartitioned = hasAnyCharBind &&
+        filterState.includeTags.length === 0 &&
+        filterState.excludeTags.length === 0 &&
+        !filterState.onlyCurrentChar;
+      if (usingPartitioned) {
+        var general = sorted.filter(function (p) { return !p.character; });
+        var byChar = {};
+        sorted.forEach(function (p) {
+          if (p.character) {
+            if (!byChar[p.character]) byChar[p.character] = [];
+            byChar[p.character].push(p);
+          }
+        });
+        var orderedKeys = [];
+        var curKeyForOrder = getCurrentCharKeySafe();
+        var userOrder = g ? getCharDisplayOrder(g) : [];
+        var hasUserOrder = g && Array.isArray(g.charDisplayOrder) && g.charDisplayOrder.length > 0;
+        if (!hasUserOrder && curKeyForOrder && byChar[curKeyForOrder]) {
+          orderedKeys.push(curKeyForOrder);
+        }
+        userOrder.forEach(function (k) {
+          if (orderedKeys.indexOf(k) < 0 && byChar[k]) orderedKeys.push(k);
+        });
+        Object.keys(byChar).forEach(function (k) {
+          if (orderedKeys.indexOf(k) < 0) orderedKeys.push(k);
+        });
+        var visual = [];
+        _groupBySeriesVisual(general).forEach(function (p) { visual.push(p); });
+        orderedKeys.forEach(function (k) {
+          _groupBySeriesVisual(byChar[k] || []).forEach(function (p) { visual.push(p); });
+        });
+        ordered = visual;
+      } else {
+        ordered = _groupBySeriesVisual(sorted);
+      }
+    } else if (v.name === "character" && !searchQuery) {
+      ordered = _groupBySeriesVisual(sorted);
+    } else if (v.name === "list" && filterState.groupId && filterState.groupId !== "_ungrouped" && !searchQuery) {
+      ordered = _groupBySeriesVisual(sorted);
+    }
+
+    var result = ordered.map(function (p) { return p.id; });
     _visIdsCacheKey = cacheKey;
     _visIdsCache = result;
     return result;
@@ -8108,6 +8179,8 @@
         name: "edit",
         promptId: null,
         defaultGroupId: pr.groupId,
+        defaultSeries: pr.series || "",
+        defaultCharacter: pr.character || "",
       });
     });
     $p.find("#ms-body").on("click.ms", "[data-action='export-single']", () =>
@@ -8491,7 +8564,7 @@
         ? g.defaultAuthor
         : data.settings.defaultAuthor || ""
       : pr.author || "";
-    const series = isNew ? "" : pr.series || "";
+    const series = isNew ? (v.defaultSeries || "") : pr.series || "";
     const promptTags = isNew ? [] : pr.tags || [];
     if (!v._savedEditState && !v._draftChecked) {
       v._draftChecked = true;
