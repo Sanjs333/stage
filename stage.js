@@ -26,7 +26,7 @@
     "#8b5b8c",
   ];
   const TAG_COLORS = GROUP_COLORS;
-  var GUIDE_VERSION = "3.0";
+  var GUIDE_VERSION = "3.1";
   var GUIDE_REMOTE_URLS = {
     guide:
       "https://gist.githubusercontent.com/Sanjs333/c45460dc2bb5908ff53b5769088b122d/raw/guide.md",
@@ -77,6 +77,9 @@
   let selectedIds = new Set();
   let shiftKeyActive = false;
   let shiftAnchor = -1;
+  let rangeSelectMode = false;
+  let rangeSelectAnchor = null;
+  let rangeSelectAnchorPids = [];
   let groupSelectMode = false,
     selectedGroupIds = new Set();
   let tagSelectMode = false,
@@ -480,6 +483,131 @@
       },
     });
   }
+  function showInsertDialog(opts) {
+    var scopeItems = opts.scopeItems || [];
+    var otherItems = scopeItems.filter(function (it) {
+      return !it.isSelected;
+    });
+    var selCnt = scopeItems.length - otherItems.length;
+    var maxPos = otherItems.length + 1;
+    var inputId = "ms-insert-pos-" + Math.random().toString(36).slice(2);
+    var previewId = "ms-insert-preview-" + Math.random().toString(36).slice(2);
+
+    function buildPreview(pos) {
+      var html = "";
+      for (var i = 0; i <= otherItems.length; i++) {
+        if (i === pos) {
+          html +=
+            '<div class="ms-insert-marker" style="padding:6px 10px;margin:3px 0;background:rgba(var(--ms-accent-rgb),0.20);border:2px solid var(--ms-accent);border-radius:6px;font-size:12px;color:var(--ms-accent);font-weight:600;display:flex;align-items:center;gap:6px;"><i class="fa-solid fa-arrow-right-to-bracket"></i><span>插入此处：' +
+            selCnt +
+            " 条已选内容</span></div>";
+        }
+        if (i < otherItems.length) {
+          var item = otherItems[i];
+          var iconHtml = item.iconClass
+            ? '<i class="fa-solid ' +
+              item.iconClass +
+              '" style="color:var(--ms-accent);opacity:0.7;font-size:11px;flex-shrink:0;"></i>'
+            : "";
+          html +=
+            '<div class="ms-insert-item" data-i="' +
+            i +
+            '" title="点击：插入到此条目下面" style="padding:5px 10px;margin:2px 0;background:rgba(255,255,255,0.03);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:5px;font-size:12px;color:var(--SmartThemeBodyColor,#ccc);display:flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;transition:background 0.12s,border-color 0.12s;"><span style="color:var(--SmartThemeQuoteColor,#666);font-size:10px;flex-shrink:0;width:24px;">' +
+            (i + 1) +
+            ".</span>" +
+            iconHtml +
+            '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+            esc(item.name) +
+            "</span></div>";
+        }
+      }
+      return html;
+    }
+
+    return showModal({
+      title: opts.title || "插入到指定位置",
+      iconType: "info",
+      icon: "fa-arrow-right-to-bracket",
+      modalStyle: "min-width:340px;max-width:92vw;width:440px;",
+      body: function () {
+        return (
+          '<div style="margin-bottom:8px;font-size:12px;color:var(--SmartThemeBodyColor,#ccc);">把选中的 <strong>' +
+          selCnt +
+          "</strong> 项插入到第几位？（1-" +
+          maxPos +
+          "）</div>" +
+          '<input class="ms-modal-input" id="' +
+          inputId +
+          '" type="number" min="1" max="' +
+          maxPos +
+          '" value="1" style="margin-top:0;">' +
+          '<div style="margin-top:10px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);"><i class="fa-solid fa-eye" style="margin-right:3px;"></i>预览：</div>' +
+          '<div id="' +
+          previewId +
+          '" style="max-height:300px;overflow-y:auto;padding:6px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;background:rgba(0,0,0,0.15);margin-top:4px;">' +
+          buildPreview(0) +
+          "</div>"
+        );
+      },
+      buttons: [
+        { text: "取消", value: null },
+        {
+          text: "确定插入",
+          cls: "primary",
+          primary: true,
+          action: function ($overlay) {
+            var v = $overlay.find("#" + inputId).val();
+            var n = parseInt(v);
+            if (isNaN(n) || n < 1 || n > maxPos) {
+              toast("warning", "请输入 1 到 " + maxPos + " 之间的数字");
+              return false;
+            }
+            if (typeof opts.onConfirm === "function") {
+              opts.onConfirm(n - 1);
+            }
+            return true;
+          },
+        },
+      ],
+      cancelValue: null,
+      submitOnEnter: false,
+      onShow: function ($overlay) {
+        var $input = $overlay.find("#" + inputId);
+        var $preview = $overlay.find("#" + previewId);
+        $input.focus();
+        if ($input[0]) $input[0].select();
+        function update() {
+          var v = parseInt($input.val());
+          if (isNaN(v) || v < 1) v = 1;
+          if (v > maxPos) v = maxPos;
+          $preview.html(buildPreview(v - 1));
+          var $marker = $preview.find(".ms-insert-marker");
+          if ($marker.length) {
+            var markerEl = $marker[0];
+            var paneEl = $preview[0];
+            var paneRect = paneEl.getBoundingClientRect();
+            var markerRect = markerEl.getBoundingClientRect();
+            var markerInPane = markerRect.top - paneRect.top + paneEl.scrollTop;
+            var targetScroll =
+              markerInPane - (paneEl.clientHeight - markerRect.height) / 2;
+            var maxScroll = paneEl.scrollHeight - paneEl.clientHeight;
+            paneEl.scrollTop = Math.max(0, Math.min(targetScroll, maxScroll));
+          }
+        }
+        $input.on("input.msi", update);
+        setTimeout(update, 50);
+        $preview.on("click.msi", ".ms-insert-item", function () {
+          var clickedIdx = parseInt($(this).attr("data-i"));
+          if (isNaN(clickedIdx)) return;
+          var newVal = clickedIdx + 2;
+          if (newVal > maxPos) newVal = maxPos;
+          $input.val(newVal);
+          update();
+        });
+      },
+    });
+  }
+
   function simpleHash(str) {
     let h = 0;
     for (let i = 0; i < str.length; i++) {
@@ -3839,6 +3967,9 @@
   function exitSelectMode() {
     selectMode = false;
     selectedIds.clear();
+    rangeSelectMode = false;
+    rangeSelectAnchor = null;
+    rangeSelectAnchorPids = [];
   }
 
   function exitFocusMode() {
@@ -4852,10 +4983,12 @@
         filterPrompts(searchPrompts(getStarredPrompts(), searchQuery)),
       );
       $body.html(
-        f.length > 0
-          ? renderPromptCards(f, true)
-          : `<div class="ms-empty"><i class="fa-solid fa-star"></i>还没有收藏</div>`,
+        buildRangeModeHint() +
+          (f.length > 0
+            ? renderPromptCards(f, true)
+            : `<div class="ms-empty"><i class="fa-solid fa-star"></i>还没有收藏</div>`),
       );
+
       $p.find("#ms-footer")
         .html(
           selectMode ? buildBatchFooter() : `<span>${f.length} 条收藏</span>`,
@@ -4866,10 +4999,12 @@
         filterPrompts(searchPrompts(getRecentPrompts(), searchQuery)),
       );
       $body.html(
-        list.length > 0
-          ? renderPromptCards(list, true)
-          : `<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>还没有记录</div>`,
+        buildRangeModeHint() +
+          (list.length > 0
+            ? renderPromptCards(list, true)
+            : `<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>还没有记录</div>`),
       );
+
       $p.find("#ms-footer")
         .find("span:first")
         .text(list.length + " 条");
@@ -4912,6 +5047,18 @@
     if ($p.find("#ms-footer").css("display") === "block")
       $p.find("#ms-footer").css("display", "flex");
   }
+  function buildRangeModeHint() {
+    if (!selectMode || !rangeSelectMode) return "";
+    var vis = getVisiblePromptIds();
+    var anchorValid = rangeSelectAnchor && vis.indexOf(rangeSelectAnchor) >= 0;
+    return (
+      '<div style="padding:8px 14px;background:rgba(var(--ms-accent-rgb),0.06);border-bottom:1px solid var(--SmartThemeBorderColor,#333);font-size:11px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;"><i class="fa-solid fa-arrows-left-right-to-line" style="color:var(--ms-accent);margin-right:4px;"></i>范围模式：' +
+      (anchorValid
+        ? "已锚定，再次点选可扩展或收缩范围"
+        : "点选第一项确定锚点") +
+      ' · <span style="opacity:0.75;">长按某条目可改锚点到该处</span></div>'
+    );
+  }
 
   function buildBatchFooter() {
     const vis = getVisiblePromptIds();
@@ -4941,7 +5088,7 @@
   }
 
   function buildListBody() {
-    let html = "";
+    let html = buildRangeModeHint();
     if (
       searchQuery ||
       filterState.includeTags.length > 0 ||
@@ -5124,11 +5271,13 @@
     html += `<div class="ms-toolbar-actions">`;
     if (opts.filter)
       html += `<button class="ms-tbtn" id="ms-btn-filter" title="筛选"><i class="fa-solid fa-filter"></i></button>`;
+    if (opts.select && selectMode)
+      html += `<button class="ms-tbtn ${rangeSelectMode ? "active" : ""}" id="ms-btn-range" title="范围选择"><i class="fa-solid fa-arrows-left-right-to-line"></i></button>`;
     if (opts.select)
       html += `<button class="ms-tbtn ${selectMode ? "active" : ""}" id="ms-btn-select" title="多选"><i class="fa-solid fa-check-double"></i></button>`;
     if (opts.sort)
       html += `<button class="ms-tbtn" id="ms-btn-sort" title="排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>`;
-    if (opts.random)
+    if (opts.random && !selectMode)
       html += `<button class="ms-tbtn" id="ms-btn-random" title="随机抽取"><i class="fa-solid fa-dice"></i></button>`;
     if (opts.reorder)
       html += `<button class="ms-tbtn" id="ms-btn-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button>`;
@@ -5225,6 +5374,11 @@
         isSel = selectedIds.has(p.id);
       const isStageTarget =
         (data.settings.stageSelectedIds || []).indexOf(p.id) >= 0;
+      const isAnchor =
+        selectMode && rangeSelectMode && rangeSelectAnchor === p.id;
+      const anchorH = isAnchor
+        ? ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;margin-left:4px;" title="锚点"></i>'
+        : "";
       const g = p.groupId ? getGroup(p.groupId) : null;
       var seriesAboveH = "";
       if (showGroupLabel) {
@@ -5343,7 +5497,7 @@
       }
       if (selectMode) {
         _parts.push(
-          `<div class="ms-card ${isSel ? "selected" : ""}${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><div class="ms-card-check"><i class="fa-solid fa-check"></i></div>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div>`,
+          `<div class="ms-card ${isSel ? "selected" : ""}${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><div class="ms-card-check"><i class="fa-solid fa-check"></i></div>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}${anchorH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div>`,
         );
         if (_bottomRowH) _parts.push(_bottomRowH);
         _parts.push(`</div>`);
@@ -5378,6 +5532,7 @@
               seriesName + "||" + (p.groupId || "") + "||" + seriesItems.length,
             );
           var headerExtra = "";
+          var anchorBadge = "";
           if (selectMode) {
             var allSel = seriesItems.every(function (q) {
               return selectedIds.has(q.id);
@@ -5397,9 +5552,15 @@
                   return q.id;
                 }),
               ) +
-              "'><i class=\"fa-solid " +
+              "' data-series-key=\"" +
+              esc(sid) +
+              '"><i class="fa-solid ' +
               (someSel && !allSel ? "fa-minus" : "fa-check") +
               '"></i></div>';
+            if (rangeSelectMode && rangeSelectAnchor === "series:" + sid) {
+              anchorBadge =
+                ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>';
+            }
           }
           var _seriesHasStage =
             (data.settings.stageSelectedIds || []).length > 0 &&
@@ -5416,6 +5577,7 @@
             '<i class="fa-solid fa-angle-right ms-series-arrow"></i>' +
             '<i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:13px;"></i><span class="ms-series-title">' +
             esc(seriesName) +
+            anchorBadge +
             '</span><span class="ms-series-cnt">' +
             seriesItems.length +
             " 条</span></div>" +
@@ -5441,6 +5603,7 @@
                 "ms-series-" +
                 simpleHash(seriesName + "||" + (p.groupId || "") + "||_f");
               var headerExtra2 = "";
+              var anchorBadge2 = "";
               if (selectMode) {
                 var isSel2 = selectedIds.has(p.id);
                 var scCls2 = isSel2 ? " ms-sc-all" : "";
@@ -5449,7 +5612,13 @@
                   scCls2 +
                   "\" data-series-ids='" +
                   JSON.stringify([p.id]) +
-                  '\'><i class="fa-solid fa-check"></i></div>';
+                  "' data-series-key=\"" +
+                  esc(sid2) +
+                  '"><i class="fa-solid fa-check"></i></div>';
+                if (rangeSelectMode && rangeSelectAnchor === "series:" + sid2) {
+                  anchorBadge2 =
+                    ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>';
+                }
               }
               var _singleHasStage =
                 (data.settings.stageSelectedIds || []).indexOf(p.id) >= 0;
@@ -5464,6 +5633,7 @@
                 '<i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:12px;"></i>' +
                 '<span class="ms-series-title">' +
                 esc(seriesName) +
+                anchorBadge2 +
                 "</span>" +
                 '<span class="ms-series-cnt" style="opacity:0.6;">筛选 1/' +
                 fullSeriesCount +
@@ -5683,9 +5853,17 @@
       closeActiveDropdown();
       return;
     }
+    const _selGroupIds = new Set();
+    selectedIds.forEach(function (pid) {
+      var p = getPrompt(pid);
+      if (p) _selGroupIds.add(p.groupId || null);
+    });
     const seriesNames = [
       ...new Set(
         data.prompts
+          .filter(function (p) {
+            return _selGroupIds.has(p.groupId || null);
+          })
           .map(function (p) {
             return String(p.series || "").trim();
           })
@@ -6344,9 +6522,70 @@
     );
     $toolbar.on("click.ms", "#ms-btn-sort", () => showSortDropdown($p));
     $toolbar.on("click.ms", "#ms-btn-random", () => doRandomPick());
+    $toolbar.on("click.ms", "#ms-btn-range", () => {
+      rangeSelectMode = !rangeSelectMode;
+      if (rangeSelectMode && selectedIds.size > 0) {
+        var vis = getVisiblePromptIds();
+        rangeSelectAnchor = null;
+        rangeSelectAnchorPids = [];
+        var selArr = Array.from(selectedIds);
+        var firstP = selArr.length > 0 ? getPrompt(selArr[0]) : null;
+        if (firstP && firstP.series && firstP.series.trim()) {
+          var sname = firstP.series.trim();
+          var sgid = firstP.groupId || null;
+          var allSame = selArr.every(function (pid) {
+            var pp = getPrompt(pid);
+            return (
+              pp &&
+              (pp.series || "").trim() === sname &&
+              (pp.groupId || null) === sgid
+            );
+          });
+          if (allSame) {
+            var seriesItemsInVis = vis.filter(function (pid) {
+              var pp = getPrompt(pid);
+              return (
+                pp &&
+                (pp.series || "").trim() === sname &&
+                (pp.groupId || null) === sgid
+              );
+            });
+            if (
+              selArr.length === seriesItemsInVis.length &&
+              seriesItemsInVis.length > 1
+            ) {
+              var _sid =
+                "ms-series-" +
+                simpleHash(
+                  sname + "||" + (sgid || "") + "||" + seriesItemsInVis.length,
+                );
+              rangeSelectAnchor = "series:" + _sid;
+              rangeSelectAnchorPids = seriesItemsInVis.slice();
+            }
+          }
+        }
+        if (!rangeSelectAnchor) {
+          for (var i = 0; i < vis.length; i++) {
+            if (selectedIds.has(vis[i])) {
+              rangeSelectAnchor = vis[i];
+              rangeSelectAnchorPids = [vis[i]];
+              break;
+            }
+          }
+        }
+      } else {
+        rangeSelectAnchor = null;
+        rangeSelectAnchorPids = [];
+      }
+      rerenderAfterSelectChange();
+    });
     $toolbar.on("click.ms", "#ms-btn-select", () => {
       selectMode = !selectMode;
-      if (!selectMode) selectedIds.clear();
+      if (!selectMode) {
+        selectedIds.clear();
+        rangeSelectMode = false;
+        rangeSelectAnchor = null;
+      }
       rerenderAfterSelectChange();
       $p.find("#ms-btn-select").toggleClass("active", selectMode);
     });
@@ -6412,8 +6651,84 @@
       e.preventDefault();
     });
     $body.on("pointerdown.ms", ".ms-card", function (e) {
-      if (selectMode) return;
       if ($(e.target).closest(".ms-card-star,.ms-card-qbtn").length) return;
+      if (selectMode && rangeSelectMode) {
+        const lpPid = $(this).data("pid");
+        var $lpEl = $(this);
+        var lpSx = e.clientX || 0,
+          lpSy = e.clientY || 0;
+        var lpTimer = setTimeout(function () {
+          lpTimer = null;
+          $lpEl.data("ms-rng-lp-fired", true);
+          if (navigator.vibrate) navigator.vibrate(30);
+          var vis = getVisiblePromptIds();
+          var newAnchorIdx = vis.indexOf(lpPid);
+          var farEndIdx = -1;
+          if (
+            newAnchorIdx >= 0 &&
+            rangeSelectAnchorPids.length > 0 &&
+            selectedIds.size > 0
+          ) {
+            var anchorIndices = rangeSelectAnchorPids
+              .map(function (p) {
+                return vis.indexOf(p);
+              })
+              .filter(function (x) {
+                return x >= 0;
+              });
+            if (anchorIndices.length > 0) {
+              var anchorMin = Math.min.apply(null, anchorIndices);
+              var anchorMax = Math.max.apply(null, anchorIndices);
+              var selIndices = [];
+              selectedIds.forEach(function (pid) {
+                var i = vis.indexOf(pid);
+                if (i >= 0) selIndices.push(i);
+              });
+              if (selIndices.length > 0) {
+                var selMin = Math.min.apply(null, selIndices);
+                var selMax = Math.max.apply(null, selIndices);
+                if (selMin < anchorMin) farEndIdx = selMin;
+                else if (selMax > anchorMax) farEndIdx = selMax;
+              }
+            }
+          }
+          rangeSelectAnchor = lpPid;
+          rangeSelectAnchorPids = [lpPid];
+          selectedIds.clear();
+          if (farEndIdx >= 0 && newAnchorIdx >= 0) {
+            var lo = Math.min(newAnchorIdx, farEndIdx);
+            var hi = Math.max(newAnchorIdx, farEndIdx);
+            for (var i = lo; i <= hi; i++) selectedIds.add(vis[i]);
+          } else {
+            selectedIds.add(lpPid);
+          }
+          rerenderAfterSelectChange();
+          toast("info", "已设为新锚点");
+        }, 600);
+        var lpOnMove = function (ev) {
+          if (!lpTimer) return;
+          var dx = (ev.clientX || 0) - lpSx,
+            dy = (ev.clientY || 0) - lpSy;
+          if (dx * dx + dy * dy > 100) {
+            clearTimeout(lpTimer);
+            lpTimer = null;
+          }
+        };
+        var lpOnUp = function () {
+          if (lpTimer) {
+            clearTimeout(lpTimer);
+            lpTimer = null;
+          }
+          $p.off(
+            "pointermove.ms-rnglp pointerup.ms-rnglp pointercancel.ms-rnglp",
+          );
+        };
+        $p.off("pointermove.ms-rnglp pointerup.ms-rnglp pointercancel.ms-rnglp")
+          .on("pointermove.ms-rnglp", lpOnMove)
+          .on("pointerup.ms-rnglp pointercancel.ms-rnglp", lpOnUp);
+        return;
+      }
+      if (selectMode) return;
       const pid = $(this).data("pid");
       if (longPressTimer) {
         clearTimeout(longPressTimer);
@@ -6467,10 +6782,50 @@
         longPressTriggered = false;
         return;
       }
+      if ($(this).data("ms-rng-lp-fired")) {
+        $(this).removeData("ms-rng-lp-fired");
+        return;
+      }
       const pid = $(this).data("pid");
       if (selectMode) {
-        if (selectedIds.has(pid)) selectedIds.delete(pid);
-        else selectedIds.add(pid);
+        if (rangeSelectMode) {
+          var vis = getVisiblePromptIds();
+          var anchorValid = rangeSelectAnchorPids.some(function (p) {
+            return vis.indexOf(p) >= 0;
+          });
+          if (!rangeSelectAnchor || !anchorValid) {
+            rangeSelectAnchor = pid;
+            rangeSelectAnchorPids = [pid];
+            selectedIds.clear();
+            selectedIds.add(pid);
+          } else if (rangeSelectAnchor === pid) {
+            rangeSelectAnchor = null;
+            rangeSelectAnchorPids = [];
+            selectedIds.clear();
+          } else {
+            var anchorIdx = rangeSelectAnchorPids
+              .map(function (p) {
+                return vis.indexOf(p);
+              })
+              .filter(function (x) {
+                return x >= 0;
+              });
+            var yi = vis.indexOf(pid);
+            if (anchorIdx.length === 0 || yi < 0) {
+              rerenderAfterSelectChange();
+              return;
+            }
+            var anchorStart = Math.min.apply(null, anchorIdx);
+            var anchorEnd = Math.max.apply(null, anchorIdx);
+            var lo = Math.min(yi, anchorStart);
+            var hi = Math.max(yi, anchorEnd);
+            selectedIds.clear();
+            for (var i = lo; i <= hi; i++) selectedIds.add(vis[i]);
+          }
+        } else {
+          if (selectedIds.has(pid)) selectedIds.delete(pid);
+          else selectedIds.add(pid);
+        }
         rerenderAfterSelectChange();
         return;
       }
@@ -6487,13 +6842,159 @@
       $(this).find(".ms-series-arrow").toggleClass("open");
       $p.find("#" + sid).toggleClass("open");
     });
+    $body.on("pointerdown.ms", ".ms-series-check", function (e) {
+      if (!selectMode || !rangeSelectMode) return;
+      e.stopPropagation();
+      var $el = $(this);
+      var ids;
+      try {
+        ids = JSON.parse($el.attr("data-series-ids"));
+      } catch (ex) {
+        return;
+      }
+      var seriesKey = $el.attr("data-series-key");
+      if (!seriesKey) return;
+      var sx = e.clientX || 0,
+        sy = e.clientY || 0;
+      var lpTimer = setTimeout(function () {
+        lpTimer = null;
+        $el.data("ms-srng-lp-fired", true);
+        if (navigator.vibrate) navigator.vibrate(30);
+        var vis = getVisiblePromptIds();
+        var seriesIndices = ids
+          .map(function (p) {
+            return vis.indexOf(p);
+          })
+          .filter(function (x) {
+            return x >= 0;
+          });
+        if (seriesIndices.length === 0) return;
+        var newAnchorMin = Math.min.apply(null, seriesIndices);
+        var newAnchorMax = Math.max.apply(null, seriesIndices);
+        var farEndIdx = -1;
+        if (rangeSelectAnchorPids.length > 0 && selectedIds.size > 0) {
+          var anchorIndices = rangeSelectAnchorPids
+            .map(function (p) {
+              return vis.indexOf(p);
+            })
+            .filter(function (x) {
+              return x >= 0;
+            });
+          if (anchorIndices.length > 0) {
+            var anchorMin = Math.min.apply(null, anchorIndices);
+            var anchorMax = Math.max.apply(null, anchorIndices);
+            var selIndices = [];
+            selectedIds.forEach(function (pid) {
+              var i = vis.indexOf(pid);
+              if (i >= 0) selIndices.push(i);
+            });
+            if (selIndices.length > 0) {
+              var selMin = Math.min.apply(null, selIndices);
+              var selMax = Math.max.apply(null, selIndices);
+              if (selMin < anchorMin) farEndIdx = selMin;
+              else if (selMax > anchorMax) farEndIdx = selMax;
+            }
+          }
+        }
+        rangeSelectAnchor = "series:" + seriesKey;
+        rangeSelectAnchorPids = ids.slice();
+        selectedIds.clear();
+        if (farEndIdx >= 0) {
+          var lo = Math.min(newAnchorMin, farEndIdx);
+          var hi = Math.max(newAnchorMax, farEndIdx);
+          for (var i = lo; i <= hi; i++) selectedIds.add(vis[i]);
+        } else {
+          ids.forEach(function (id) {
+            selectedIds.add(id);
+          });
+        }
+        rerenderAfterSelectChange();
+        toast("info", "已设为新锚点");
+      }, 600);
+      var onMove = function (ev) {
+        if (!lpTimer) return;
+        var dx = (ev.clientX || 0) - sx,
+          dy = (ev.clientY || 0) - sy;
+        if (dx * dx + dy * dy > 100) {
+          clearTimeout(lpTimer);
+          lpTimer = null;
+        }
+      };
+      var $pp = $("#" + PANEL_ID);
+      var onUp = function () {
+        if (lpTimer) {
+          clearTimeout(lpTimer);
+          lpTimer = null;
+        }
+        $pp.off(
+          "pointermove.ms-srnglp pointerup.ms-srnglp pointercancel.ms-srnglp",
+        );
+      };
+      $pp
+        .off(
+          "pointermove.ms-srnglp pointerup.ms-srnglp pointercancel.ms-srnglp",
+        )
+        .on("pointermove.ms-srnglp", onMove)
+        .on("pointerup.ms-srnglp pointercancel.ms-srnglp", onUp);
+    });
+
     $body.on("click.ms", ".ms-series-check", function (e) {
       e.stopPropagation();
       if (!selectMode) return;
+      if ($(this).data("ms-srng-lp-fired")) {
+        $(this).removeData("ms-srng-lp-fired");
+        return;
+      }
       var ids;
       try {
         ids = JSON.parse($(this).attr("data-series-ids"));
       } catch (ex) {
+        return;
+      }
+      var seriesKey = $(this).attr("data-series-key");
+      if (rangeSelectMode && seriesKey) {
+        var vis = getVisiblePromptIds();
+        var anchorValid = rangeSelectAnchorPids.some(function (p) {
+          return vis.indexOf(p) >= 0;
+        });
+        var anchorKeyForSeries = "series:" + seriesKey;
+        if (!rangeSelectAnchor || !anchorValid) {
+          rangeSelectAnchor = anchorKeyForSeries;
+          rangeSelectAnchorPids = ids.slice();
+          selectedIds.clear();
+          ids.forEach(function (id) {
+            selectedIds.add(id);
+          });
+        } else if (rangeSelectAnchor === anchorKeyForSeries) {
+          rangeSelectAnchor = null;
+          rangeSelectAnchorPids = [];
+          selectedIds.clear();
+        } else {
+          var anchorIdx = rangeSelectAnchorPids
+            .map(function (p) {
+              return vis.indexOf(p);
+            })
+            .filter(function (x) {
+              return x >= 0;
+            });
+          var seriesIdx = ids
+            .map(function (p) {
+              return vis.indexOf(p);
+            })
+            .filter(function (x) {
+              return x >= 0;
+            });
+          if (anchorIdx.length === 0 || seriesIdx.length === 0) {
+            rerenderAfterSelectChange();
+            return;
+          }
+          var allIdx = anchorIdx.concat(seriesIdx);
+          var lo = Math.min.apply(null, allIdx);
+          var hi = Math.max.apply(null, allIdx);
+          selectedIds.clear();
+          for (var i = lo; i <= hi; i++) selectedIds.add(vis[i]);
+        }
+        rerenderAfterSelectChange();
         return;
       }
       var allSel = ids.every(function (id) {
@@ -6781,7 +7282,7 @@
       }),
     );
 
-    var bodyHtml = "";
+    var bodyHtml = buildRangeModeHint();
     var hasAnyCharBind = list.some(function (p) {
       return p.character && isLocalCharKey(p.character);
     });
@@ -7065,9 +7566,10 @@
       }),
     );
     $p.find("#ms-body").html(
-      list.length > 0
-        ? renderPromptCards(list, true)
-        : `<div class="ms-empty"><i class="fa-solid fa-star"></i>还没有收藏</div>`,
+      buildRangeModeHint() +
+        (list.length > 0
+          ? renderPromptCards(list, true)
+          : `<div class="ms-empty"><i class="fa-solid fa-star"></i>还没有收藏</div>`),
     );
     $p.find("#ms-footer")
       .html(
@@ -7321,9 +7823,10 @@
       }),
     );
     $p.find("#ms-body").html(
-      filtered.length > 0
-        ? renderGroupBodyWithSeries(filtered)
-        : `<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无内容</div>`,
+      buildRangeModeHint() +
+        (filtered.length > 0
+          ? renderGroupBodyWithSeries(filtered)
+          : `<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无内容</div>`),
     );
     var metaParts = [];
     if (charCg)
@@ -12067,39 +12570,274 @@
 
   function renderReorderList(opts) {
     const $p = setupPage(opts.title);
+    let multiMode = false;
+    const multiSelected = new Set();
+    let rangeMode = false;
+    let rangeAnchor = null;
+
+    $p.find("#ms-toolbar").append(
+      '<div class="ms-toolbar-actions">' +
+        '<button class="ms-tbtn" id="ms-reorder-range" title="范围选择模式" style="display:none;"><i class="fa-solid fa-arrows-left-right-to-line"></i></button>' +
+        '<button class="ms-tbtn" id="ms-reorder-multi" title="多选批量调序"><i class="fa-solid fa-check-double"></i></button>' +
+        "</div>",
+    );
+
+    function getItemId(item, i) {
+      return item.id !== undefined ? String(item.id) : "idx_" + i;
+    }
+
     function buildReorderBody() {
       let html = "";
-      opts.getList().forEach((item, i) => {
-        html += `<div class="ms-reorder-item" data-ridx="${i}">
-          <i class="fa-solid fa-grip-vertical ms-reorder-grip" data-ridx="${i}"></i>
-          ${opts.renderIcon(item)}
-          <span class="ms-reorder-name">${esc(item.name)}</span>
-          <div class="ms-reorder-arrows">
-            <button data-dir="up" data-ridx="${i}" ${i === 0 ? "disabled style='opacity:0.3;'" : ""}><i class="fa-solid fa-angle-up"></i></button>
-            <button data-dir="down" data-ridx="${i}" ${i === opts.getList().length - 1 ? "disabled style='opacity:0.3;'" : ""}><i class="fa-solid fa-angle-down"></i></button>
-          </div>
-        </div>`;
+      const list = opts.getList();
+      if (multiMode && rangeMode) {
+        html +=
+          '<div style="padding:8px 14px;background:rgba(var(--ms-accent-rgb),0.06);border-bottom:1px solid var(--SmartThemeBorderColor,#333);font-size:11px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;"><i class="fa-solid fa-arrows-left-right-to-line" style="color:var(--ms-accent);margin-right:4px;"></i>范围模式：' +
+          (rangeAnchor === null
+            ? "点选第一项确定锚点"
+            : "已锚定，再次点选可扩展或收缩范围") +
+          ' · <span style="opacity:0.75;">长按某条目可改锚点到该处</span>' +
+          "</div>";
+      }
+      list.forEach((item, i) => {
+        const itemId = getItemId(item, i);
+        const isAnchor = rangeMode && rangeAnchor === itemId;
+        if (multiMode) {
+          const isSelected = multiSelected.has(itemId);
+          const checkBg = isSelected
+            ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
+            : "";
+          const rowBg = isSelected
+            ? "background:rgba(var(--ms-accent-rgb),0.10);"
+            : "";
+          const anchorBadge = isAnchor
+            ? '<i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;margin-left:4px;" title="锚点"></i>'
+            : "";
+          html += `<div class="ms-reorder-item" data-ridx="${i}" data-rid="${itemId}" style="cursor:pointer;${rowBg}">
+            <div class="ms-gitem-check" style="${checkBg}"><i class="fa-solid fa-check"></i></div>
+            ${opts.renderIcon(item)}
+            <span class="ms-reorder-name">${esc(item.name)}${anchorBadge}</span>
+          </div>`;
+        } else {
+          html += `<div class="ms-reorder-item" data-ridx="${i}">
+            <i class="fa-solid fa-grip-vertical ms-reorder-grip" data-ridx="${i}"></i>
+            ${opts.renderIcon(item)}
+            <span class="ms-reorder-name">${esc(item.name)}</span>
+            <div class="ms-reorder-arrows">
+              <button data-dir="up" data-ridx="${i}" ${i === 0 ? "disabled style='opacity:0.3;'" : ""}><i class="fa-solid fa-angle-up"></i></button>
+              <button data-dir="down" data-ridx="${i}" ${i === list.length - 1 ? "disabled style='opacity:0.3;'" : ""}><i class="fa-solid fa-angle-down"></i></button>
+            </div>
+          </div>`;
+        }
       });
       return html;
     }
+
     var $body = $p.find("#ms-body");
+
+    function buildFooter() {
+      if (multiMode) {
+        const cnt = multiSelected.size;
+        const list = opts.getList();
+        const allSel =
+          list.length > 0 &&
+          list.every((item, i) => multiSelected.has(getItemId(item, i)));
+        const selIcon = allSel
+          ? "fa-solid fa-square-check"
+          : cnt === 0
+            ? "fa-regular fa-square"
+            : "fa-solid fa-square-minus";
+        const selLabel = allSel ? "取消全选" : "全选";
+        return `<div class="ms-batch-bar">
+          <span class="ms-batch-count"><i class="fa-solid fa-list-check"></i> ${cnt}</span>
+          <button class="ms-batch-btn" data-mbatch="selectall"><i class="${selIcon}"></i><span class="ms-btn-label"> ${selLabel}</span></button>
+          <button class="ms-batch-btn" data-mbatch="top"${cnt === 0 ? " disabled" : ""}><i class="fa-solid fa-angles-up"></i><span class="ms-btn-label"> 置顶</span></button>
+          <button class="ms-batch-btn" data-mbatch="up"${cnt === 0 ? " disabled" : ""}><i class="fa-solid fa-angle-up"></i><span class="ms-btn-label"> 上移</span></button>
+          <button class="ms-batch-btn" data-mbatch="down"${cnt === 0 ? " disabled" : ""}><i class="fa-solid fa-angle-down"></i><span class="ms-btn-label"> 下移</span></button>
+          <button class="ms-batch-btn" data-mbatch="bottom"${cnt === 0 ? " disabled" : ""}><i class="fa-solid fa-angles-down"></i><span class="ms-btn-label"> 置底</span></button>
+          <button class="ms-batch-btn" data-mbatch="insert"${cnt === 0 ? " disabled" : ""}><i class="fa-solid fa-arrow-right-to-bracket"></i><span class="ms-btn-label"> 插入到</span></button>
+        </div>`;
+      }
+      return `<span>拖拽或点击箭头调整顺序，右上角 <i class="fa-solid fa-check-double"></i> 进入批量模式</span>`;
+    }
+
     function refresh() {
       $body.html(buildReorderBody());
-      bindReorderDrag($body, function (fromEl, targetEl) {
-        var fromIdx = parseInt(fromEl.getAttribute("data-ridx"));
-        var targetIdx = parseInt(targetEl.getAttribute("data-ridx"));
-        if (isNaN(fromIdx) || isNaN(targetIdx)) return;
-        var list = opts.getList();
-        var moved = list.splice(fromIdx, 1)[0];
-        var insertIdx = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
-        list.splice(insertIdx, 0, moved);
-        if (opts.afterChange) opts.afterChange();
-        saveData();
-        refresh();
-      });
+      $p.find("#ms-footer").html(buildFooter()).show();
+      $p.find("#ms-reorder-multi").toggleClass("active", multiMode);
+      $p.find("#ms-reorder-range")
+        .toggleClass("active", rangeMode)
+        .toggle(multiMode);
+      if (!multiMode) {
+        bindReorderDrag($body, function (fromEl, targetEl) {
+          var fromIdx = parseInt(fromEl.getAttribute("data-ridx"));
+          var targetIdx = parseInt(targetEl.getAttribute("data-ridx"));
+          if (isNaN(fromIdx) || isNaN(targetIdx)) return;
+          var list = opts.getList();
+          var moved = list.splice(fromIdx, 1)[0];
+          var insertIdx = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
+          list.splice(insertIdx, 0, moved);
+          if (opts.afterChange) opts.afterChange();
+          saveData();
+          refresh();
+        });
+      } else {
+        if (bindReorderDrag._cleanup) {
+          bindReorderDrag._cleanup();
+          bindReorderDrag._cleanup = null;
+        }
+      }
     }
-    $p.find("#ms-footer").html(`<span>拖拽或点击箭头调整顺序</span>`).show();
+
     bindAllEvents();
+
+    $p.find("#ms-toolbar").on("click.ms", "#ms-reorder-multi", function () {
+      multiMode = !multiMode;
+      multiSelected.clear();
+      rangeMode = false;
+      rangeAnchor = null;
+      refresh();
+    });
+
+    $p.find("#ms-toolbar").on("click.ms", "#ms-reorder-range", function () {
+      rangeMode = !rangeMode;
+      if (rangeMode && multiSelected.size > 0) {
+        var list = opts.getList();
+        for (var i = 0; i < list.length; i++) {
+          var rid = getItemId(list[i], i);
+          if (multiSelected.has(rid)) {
+            rangeAnchor = rid;
+            break;
+          }
+        }
+      } else {
+        rangeAnchor = null;
+      }
+      refresh();
+    });
+
+    $p.find("#ms-body").on("pointerdown.ms", ".ms-reorder-item", function (e) {
+      if (!multiMode || !rangeMode) return;
+      if ($(e.target).closest(".ms-reorder-arrows, .ms-reorder-grip").length)
+        return;
+      var $el = $(this);
+      var rid = $el.attr("data-rid");
+      if (rid === undefined) return;
+      var sx = e.clientX || 0,
+        sy = e.clientY || 0;
+      var lpTimer = setTimeout(function () {
+        lpTimer = null;
+        $el.data("ms-ro-lp-fired", true);
+        if (navigator.vibrate) navigator.vibrate(30);
+        var list = opts.getList();
+        var newAnchorIdx = -1;
+        for (var idx = 0; idx < list.length; idx++) {
+          if (getItemId(list[idx], idx) === rid) {
+            newAnchorIdx = idx;
+            break;
+          }
+        }
+        var farEndIdx = -1;
+        if (
+          newAnchorIdx >= 0 &&
+          rangeAnchor !== null &&
+          multiSelected.size > 0
+        ) {
+          var oldAnchorIdx = -1;
+          for (var idx2 = 0; idx2 < list.length; idx2++) {
+            if (getItemId(list[idx2], idx2) === rangeAnchor) {
+              oldAnchorIdx = idx2;
+              break;
+            }
+          }
+          if (oldAnchorIdx >= 0) {
+            var selIdxArr = [];
+            for (var idx3 = 0; idx3 < list.length; idx3++) {
+              if (multiSelected.has(getItemId(list[idx3], idx3)))
+                selIdxArr.push(idx3);
+            }
+            if (selIdxArr.length > 0) {
+              var selMin = Math.min.apply(null, selIdxArr);
+              var selMax = Math.max.apply(null, selIdxArr);
+              if (selMin < oldAnchorIdx) farEndIdx = selMin;
+              else if (selMax > oldAnchorIdx) farEndIdx = selMax;
+            }
+          }
+        }
+        rangeAnchor = rid;
+        multiSelected.clear();
+        if (farEndIdx >= 0 && newAnchorIdx >= 0) {
+          var lo = Math.min(newAnchorIdx, farEndIdx);
+          var hi = Math.max(newAnchorIdx, farEndIdx);
+          for (var ii = lo; ii <= hi; ii++)
+            multiSelected.add(getItemId(list[ii], ii));
+        } else {
+          multiSelected.add(rid);
+        }
+        refresh();
+        toast("info", "已设为新锚点");
+      }, 600);
+      var onMove = function (ev) {
+        if (!lpTimer) return;
+        var dx = (ev.clientX || 0) - sx,
+          dy = (ev.clientY || 0) - sy;
+        if (dx * dx + dy * dy > 100) {
+          clearTimeout(lpTimer);
+          lpTimer = null;
+        }
+      };
+      var onUp = function () {
+        if (lpTimer) {
+          clearTimeout(lpTimer);
+          lpTimer = null;
+        }
+        $p.off("pointermove.ms-rolp pointerup.ms-rolp pointercancel.ms-rolp");
+      };
+      $p.off("pointermove.ms-rolp pointerup.ms-rolp pointercancel.ms-rolp")
+        .on("pointermove.ms-rolp", onMove)
+        .on("pointerup.ms-rolp pointercancel.ms-rolp", onUp);
+    });
+
+    $p.find("#ms-body").on("click.ms", ".ms-reorder-item", function (e) {
+      if (!multiMode) return;
+      if ($(this).data("ms-ro-lp-fired")) {
+        $(this).removeData("ms-ro-lp-fired");
+        return;
+      }
+      if ($(e.target).closest(".ms-reorder-arrows, .ms-reorder-grip").length)
+        return;
+      const rid = $(this).attr("data-rid");
+      if (rid === undefined) return;
+      const list = opts.getList();
+      if (rangeMode) {
+        if (
+          rangeAnchor === null ||
+          !list.some((it, i) => getItemId(it, i) === rangeAnchor)
+        ) {
+          rangeAnchor = rid;
+          multiSelected.clear();
+          multiSelected.add(rid);
+        } else if (rangeAnchor === rid) {
+          rangeAnchor = null;
+          multiSelected.clear();
+        } else {
+          const ai = list.findIndex(
+            (it, i) => getItemId(it, i) === rangeAnchor,
+          );
+          const yi = list.findIndex((it, i) => getItemId(it, i) === rid);
+          if (ai < 0 || yi < 0) return;
+          const lo = Math.min(ai, yi),
+            hi = Math.max(ai, yi);
+          multiSelected.clear();
+          for (let i = lo; i <= hi; i++)
+            multiSelected.add(getItemId(list[i], i));
+        }
+      } else {
+        if (multiSelected.has(rid)) multiSelected.delete(rid);
+        else multiSelected.add(rid);
+      }
+      refresh();
+    });
+
     $p.find("#ms-body").on(
       "click.ms",
       ".ms-reorder-arrows button",
@@ -12117,6 +12855,99 @@
         refresh();
       },
     );
+
+    $p.find("#ms-footer").on("click.ms", "[data-mbatch]", function () {
+      const action = $(this).data("mbatch");
+      var list = opts.getList();
+
+      if (action === "selectall") {
+        const allSel =
+          list.length > 0 &&
+          list.every((item, i) => multiSelected.has(getItemId(item, i)));
+        if (allSel) {
+          multiSelected.clear();
+          rangeAnchor = null;
+        } else {
+          multiSelected.clear();
+          list.forEach((item, i) => multiSelected.add(getItemId(item, i)));
+        }
+        refresh();
+        return;
+      }
+
+      if (multiSelected.size === 0) return;
+
+      if (action === "up") {
+        for (let i = 1; i < list.length; i++) {
+          if (
+            multiSelected.has(getItemId(list[i], i)) &&
+            !multiSelected.has(getItemId(list[i - 1], i - 1))
+          ) {
+            [list[i - 1], list[i]] = [list[i], list[i - 1]];
+          }
+        }
+      } else if (action === "down") {
+        for (let i = list.length - 2; i >= 0; i--) {
+          if (
+            multiSelected.has(getItemId(list[i], i)) &&
+            !multiSelected.has(getItemId(list[i + 1], i + 1))
+          ) {
+            [list[i], list[i + 1]] = [list[i + 1], list[i]];
+          }
+        }
+      } else if (action === "top") {
+        const selectedItems = list.filter((item, i) =>
+          multiSelected.has(getItemId(item, i)),
+        );
+        const otherItems = list.filter(
+          (item, i) => !multiSelected.has(getItemId(item, i)),
+        );
+        list.length = 0;
+        list.push(...selectedItems, ...otherItems);
+      } else if (action === "bottom") {
+        const selectedItems = list.filter((item, i) =>
+          multiSelected.has(getItemId(item, i)),
+        );
+        const otherItems = list.filter(
+          (item, i) => !multiSelected.has(getItemId(item, i)),
+        );
+        list.length = 0;
+        list.push(...otherItems, ...selectedItems);
+      } else if (action === "insert") {
+        const scopeItems = list.map((item, i) => ({
+          name: item.name,
+          isSelected: multiSelected.has(getItemId(item, i)),
+        }));
+        showInsertDialog({
+          title: "插入到指定位置",
+          scopeItems: scopeItems,
+          onConfirm: function (targetPos) {
+            const selectedItems = list.filter((item, i) =>
+              multiSelected.has(getItemId(item, i)),
+            );
+            const otherItems = list.filter(
+              (item, i) => !multiSelected.has(getItemId(item, i)),
+            );
+            const newList = [
+              ...otherItems.slice(0, targetPos),
+              ...selectedItems,
+              ...otherItems.slice(targetPos),
+            ];
+            list.length = 0;
+            list.push(...newList);
+            if (opts.afterChange) opts.afterChange();
+            saveData();
+            refresh();
+          },
+        });
+        return;
+      }
+
+      if (opts.afterChange) opts.afterChange();
+      saveData();
+      refresh();
+    });
+
     refresh();
   }
 
@@ -12164,12 +12995,21 @@
     var groupPrompts = data.prompts.filter(function (p) {
       return p.groupId === v.groupId;
     });
+
+    let multiMode = false;
+    const multiSelected = new Set();
+    let multiScope = null;
+    let rangeMode = false;
+    let rangeAnchor = null;
+
     $p.find("#ms-toolbar").html(
       '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button>' +
         '<span class="ms-form-title">调整 ' +
         esc(title) +
         " 内顺序</span>" +
         '<div class="ms-toolbar-actions">' +
+        '<button class="ms-tbtn" id="ms-reorder-prompts-range" title="范围选择模式" style="display:none;"><i class="fa-solid fa-arrows-left-right-to-line"></i></button>' +
+        '<button class="ms-tbtn" id="ms-reorder-prompts-multi" title="多选批量调序"><i class="fa-solid fa-check-double"></i></button>' +
         '<button class="ms-tbtn" id="ms-reorder-series-first" title="把所有系列条目自动排到前面"><i class="fa-solid fa-layer-group"></i> 系列优先</button>' +
         "</div>",
     );
@@ -12229,75 +13069,207 @@
       return blocks;
     }
 
+    function getScopeLabel(scope) {
+      if (!scope) return "未选定";
+      if (scope === "_all") return "全部";
+      if (scope.indexOf("::series::") >= 0) {
+        var parts = scope.split("::series::");
+        var section = parts[0];
+        var sn = parts[1];
+        var sectionLabel =
+          section === "_general"
+            ? "通用剧场"
+            : section.indexOf("char_") === 0
+              ? "角色「" + getCharDisplayName(section.substring(5)) + "」"
+              : section;
+        return sectionLabel + " · 系列「" + sn + "」内";
+      }
+      if (scope === "_general") return "通用剧场";
+      if (scope.indexOf("char_") === 0) {
+        return "角色「" + getCharDisplayName(scope.substring(5)) + "」";
+      }
+      return scope;
+    }
+
+    function getScopeOrderedRids(scope) {
+      var result = [];
+      if (!scope) return result;
+      if (scope.indexOf("::series::") >= 0) {
+        var partsS = scope.split("::series::");
+        var sectionListS = getListForSection(partsS[0]);
+        sectionListS.forEach(function (p) {
+          if (p.series && p.series.trim() === partsS[1]) {
+            result.push("c_" + p.id);
+          }
+        });
+      } else {
+        var sectionListT = getListForSection(scope);
+        var blocksT = buildBlocksFromList(sectionListT);
+        blocksT.forEach(function (block) {
+          if (block.type === "single") result.push("p_" + block.item.id);
+          if (block.type === "series")
+            result.push("s_" + scope + "_" + block.name);
+        });
+      }
+      return result;
+    }
+
     function renderBlocks(blocks, sectionKey) {
       var html = "";
       blocks.forEach(function (block, bi) {
         if (block.type === "single") {
-          html +=
-            '<div class="ms-reorder-item" data-ridx="' +
-            bi +
-            '" data-section="' +
-            esc(sectionKey) +
-            '" data-type="single" data-pid="' +
-            block.item.id +
-            '"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-ridx="' +
-            bi +
-            '" data-section="' +
-            esc(sectionKey) +
-            '"></i><span class="ms-reorder-name">' +
-            esc(block.item.title) +
-            '</span><div class="ms-reorder-arrows"><button data-dir="up" data-ridx="' +
-            bi +
-            '" data-section="' +
-            esc(sectionKey) +
-            '"' +
-            (bi === 0 ? " disabled style='opacity:0.3;'" : "") +
-            '><i class="fa-solid fa-angle-up"></i></button><button data-dir="down" data-ridx="' +
-            bi +
-            '" data-section="' +
-            esc(sectionKey) +
-            '"' +
-            (bi === blocks.length - 1 ? " disabled style='opacity:0.3;'" : "") +
-            '><i class="fa-solid fa-angle-down"></i></button></div></div>';
+          var rid = "p_" + block.item.id;
+          var scope = sectionKey;
+          if (multiMode) {
+            var inScope = !multiScope || scope === multiScope;
+            var isSel = multiSelected.has(rid);
+            var isAnchorP = rangeMode && rangeAnchor === rid;
+            var checkBg = isSel
+              ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
+              : "";
+            var rowBg = isSel
+              ? "background:rgba(var(--ms-accent-rgb),0.10);"
+              : "";
+            var rowOpa = inScope ? "" : "opacity:0.35;pointer-events:none;";
+            var anchorBadgeP = isAnchorP
+              ? ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>'
+              : "";
+            html +=
+              '<div class="ms-reorder-item" data-rid="' +
+              rid +
+              '" data-scope="' +
+              esc(scope) +
+              '" style="cursor:pointer;' +
+              rowBg +
+              rowOpa +
+              '">' +
+              '<div class="ms-gitem-check" style="' +
+              checkBg +
+              '"><i class="fa-solid fa-check"></i></div>' +
+              '<span class="ms-reorder-name">' +
+              esc(block.item.title) +
+              anchorBadgeP +
+              "</span>" +
+              "</div>";
+          } else {
+            html +=
+              '<div class="ms-reorder-item" data-ridx="' +
+              bi +
+              '" data-section="' +
+              esc(sectionKey) +
+              '" data-type="single" data-pid="' +
+              block.item.id +
+              '"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-ridx="' +
+              bi +
+              '" data-section="' +
+              esc(sectionKey) +
+              '"></i><span class="ms-reorder-name">' +
+              esc(block.item.title) +
+              '</span><div class="ms-reorder-arrows"><button data-dir="up" data-ridx="' +
+              bi +
+              '" data-section="' +
+              esc(sectionKey) +
+              '"' +
+              (bi === 0 ? " disabled style='opacity:0.3;'" : "") +
+              '><i class="fa-solid fa-angle-up"></i></button><button data-dir="down" data-ridx="' +
+              bi +
+              '" data-section="' +
+              esc(sectionKey) +
+              '"' +
+              (bi === blocks.length - 1
+                ? " disabled style='opacity:0.3;'"
+                : "") +
+              '><i class="fa-solid fa-angle-down"></i></button></div></div>';
+          }
         } else {
+          var sRid = "s_" + sectionKey + "_" + block.name;
+          var sScope = sectionKey;
+          var seriesScope = sectionKey + "::series::" + block.name;
           var sidKey = sectionKey + "||" + block.name;
           var isOpen = expandedSeries.has(sidKey);
           var sid = "ms-ro-series-" + simpleHash(sidKey);
-          html +=
-            '<div class="ms-reorder-item" data-ridx="' +
-            bi +
-            '" data-section="' +
-            esc(sectionKey) +
-            '" data-type="series" data-series-name="' +
-            esc(block.name) +
-            '" style="background:rgba(var(--ms-accent-rgb),0.04);"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-ridx="' +
-            bi +
-            '" data-section="' +
-            esc(sectionKey) +
-            '"></i><i class="fa-solid fa-angle-right ms-series-arrow' +
-            (isOpen ? " open" : "") +
-            '" data-ro-series="' +
-            sid +
-            '" data-sid-key="' +
-            esc(sidKey) +
-            '" style="cursor:pointer;font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;width:14px;transition:transform 0.2s;"></i><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:12px;flex-shrink:0;"></i><span class="ms-reorder-name" style="font-weight:500;">' +
-            esc(block.name) +
-            ' <span style="font-weight:400;font-size:11px;color:var(--SmartThemeQuoteColor,#777);">(' +
-            block.items.length +
-            " 条)</span></span>" +
-            '<div class="ms-reorder-arrows"><button data-dir="up" data-ridx="' +
-            bi +
-            '" data-section="' +
-            esc(sectionKey) +
-            '"' +
-            (bi === 0 ? " disabled style='opacity:0.3;'" : "") +
-            '><i class="fa-solid fa-angle-up"></i></button><button data-dir="down" data-ridx="' +
-            bi +
-            '" data-section="' +
-            esc(sectionKey) +
-            '"' +
-            (bi === blocks.length - 1 ? " disabled style='opacity:0.3;'" : "") +
-            '><i class="fa-solid fa-angle-down"></i></button></div></div>';
+
+          if (multiMode) {
+            var inScope2 = !multiScope || sScope === multiScope;
+            var isSel2 = multiSelected.has(sRid);
+            var isAnchorS = rangeMode && rangeAnchor === sRid;
+            var checkBg2 = isSel2
+              ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
+              : "";
+            var rowBg2 = isSel2
+              ? "background:rgba(var(--ms-accent-rgb),0.18);"
+              : "background:rgba(var(--ms-accent-rgb),0.04);";
+            var rowOpa2 = inScope2 ? "" : "opacity:0.35;pointer-events:none;";
+            var anchorBadgeS = isAnchorS
+              ? ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>'
+              : "";
+            html +=
+              '<div class="ms-reorder-item" data-rid="' +
+              sRid +
+              '" data-scope="' +
+              esc(sScope) +
+              '" style="cursor:pointer;' +
+              rowBg2 +
+              rowOpa2 +
+              '">' +
+              '<div class="ms-gitem-check" style="' +
+              checkBg2 +
+              '"><i class="fa-solid fa-check"></i></div>' +
+              '<i class="fa-solid fa-angle-right ms-series-arrow' +
+              (isOpen ? " open" : "") +
+              '" data-ro-series-toggle="' +
+              sid +
+              '" data-sid-key="' +
+              esc(sidKey) +
+              '" style="cursor:pointer;font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;width:14px;transition:transform 0.2s;"></i>' +
+              '<i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:12px;flex-shrink:0;"></i>' +
+              '<span class="ms-reorder-name" style="font-weight:500;">' +
+              esc(block.name) +
+              ' <span style="font-weight:400;font-size:11px;color:var(--SmartThemeQuoteColor,#777);">(' +
+              block.items.length +
+              " 条)</span>" +
+              anchorBadgeS +
+              "</span>" +
+              "</div>";
+          } else {
+            html +=
+              '<div class="ms-reorder-item" data-ridx="' +
+              bi +
+              '" data-section="' +
+              esc(sectionKey) +
+              '" data-type="series" data-series-name="' +
+              esc(block.name) +
+              '" style="background:rgba(var(--ms-accent-rgb),0.04);"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-ridx="' +
+              bi +
+              '" data-section="' +
+              esc(sectionKey) +
+              '"></i><i class="fa-solid fa-angle-right ms-series-arrow' +
+              (isOpen ? " open" : "") +
+              '" data-ro-series="' +
+              sid +
+              '" data-sid-key="' +
+              esc(sidKey) +
+              '" style="cursor:pointer;font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;width:14px;transition:transform 0.2s;"></i><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:12px;flex-shrink:0;"></i><span class="ms-reorder-name" style="font-weight:500;">' +
+              esc(block.name) +
+              ' <span style="font-weight:400;font-size:11px;color:var(--SmartThemeQuoteColor,#777);">(' +
+              block.items.length +
+              ' 条)</span></span><div class="ms-reorder-arrows"><button data-dir="up" data-ridx="' +
+              bi +
+              '" data-section="' +
+              esc(sectionKey) +
+              '"' +
+              (bi === 0 ? " disabled style='opacity:0.3;'" : "") +
+              '><i class="fa-solid fa-angle-up"></i></button><button data-dir="down" data-ridx="' +
+              bi +
+              '" data-section="' +
+              esc(sectionKey) +
+              '"' +
+              (bi === blocks.length - 1
+                ? " disabled style='opacity:0.3;'"
+                : "") +
+              '><i class="fa-solid fa-angle-down"></i></button></div></div>';
+          }
+
           html +=
             '<div id="' +
             sid +
@@ -12305,42 +13277,80 @@
             (isOpen ? "block" : "none") +
             ';border-left:2px solid rgba(var(--ms-accent-rgb),0.2);margin-left:14px;">';
           block.items.forEach(function (item, ii) {
-            html +=
-              '<div class="ms-reorder-item" data-type="series-child" data-pid="' +
-              item.id +
-              '" data-parent-series="' +
-              esc(block.name) +
-              '" data-parent-section="' +
-              esc(sectionKey) +
-              '" data-child-idx="' +
-              ii +
-              '"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-child-idx="' +
-              ii +
-              '" data-parent-series="' +
-              esc(block.name) +
-              '" data-parent-section="' +
-              esc(sectionKey) +
-              '"></i><span class="ms-reorder-name" style="font-size:12px;">' +
-              esc(item.title) +
-              '</span><div class="ms-reorder-arrows"><button data-sdir="up" data-child-idx="' +
-              ii +
-              '" data-parent-series="' +
-              esc(block.name) +
-              '" data-parent-section="' +
-              esc(sectionKey) +
-              '"' +
-              (ii === 0 ? " disabled style='opacity:0.3;'" : "") +
-              '><i class="fa-solid fa-angle-up"></i></button><button data-sdir="down" data-child-idx="' +
-              ii +
-              '" data-parent-series="' +
-              esc(block.name) +
-              '" data-parent-section="' +
-              esc(sectionKey) +
-              '"' +
-              (ii === block.items.length - 1
-                ? " disabled style='opacity:0.3;'"
-                : "") +
-              '><i class="fa-solid fa-angle-down"></i></button></div></div>';
+            var crid = "c_" + item.id;
+            var cscope = seriesScope;
+
+            if (multiMode) {
+              var inScopeC = !multiScope || cscope === multiScope;
+              var sParentRid = "s_" + sectionKey + "_" + block.name;
+              var isSelC =
+                multiSelected.has(crid) || multiSelected.has(sParentRid);
+              var isAnchorC = rangeMode && rangeAnchor === crid;
+              var checkBgC = isSelC
+                ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
+                : "";
+              var rowBgC = isSelC
+                ? "background:rgba(var(--ms-accent-rgb),0.10);"
+                : "";
+              var rowOpaC = inScopeC ? "" : "opacity:0.35;pointer-events:none;";
+              var anchorBadgeC = isAnchorC
+                ? ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>'
+                : "";
+              html +=
+                '<div class="ms-reorder-item" data-rid="' +
+                crid +
+                '" data-scope="' +
+                esc(cscope) +
+                '" style="cursor:pointer;' +
+                rowBgC +
+                rowOpaC +
+                '">' +
+                '<div class="ms-gitem-check" style="' +
+                checkBgC +
+                '"><i class="fa-solid fa-check"></i></div>' +
+                '<span class="ms-reorder-name" style="font-size:12px;">' +
+                esc(item.title) +
+                anchorBadgeC +
+                "</span>" +
+                "</div>";
+            } else {
+              html +=
+                '<div class="ms-reorder-item" data-type="series-child" data-pid="' +
+                item.id +
+                '" data-parent-series="' +
+                esc(block.name) +
+                '" data-parent-section="' +
+                esc(sectionKey) +
+                '" data-child-idx="' +
+                ii +
+                '"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-child-idx="' +
+                ii +
+                '" data-parent-series="' +
+                esc(block.name) +
+                '" data-parent-section="' +
+                esc(sectionKey) +
+                '"></i><span class="ms-reorder-name" style="font-size:12px;">' +
+                esc(item.title) +
+                '</span><div class="ms-reorder-arrows"><button data-sdir="up" data-child-idx="' +
+                ii +
+                '" data-parent-series="' +
+                esc(block.name) +
+                '" data-parent-section="' +
+                esc(sectionKey) +
+                '"' +
+                (ii === 0 ? " disabled style='opacity:0.3;'" : "") +
+                '><i class="fa-solid fa-angle-up"></i></button><button data-sdir="down" data-child-idx="' +
+                ii +
+                '" data-parent-series="' +
+                esc(block.name) +
+                '" data-parent-section="' +
+                esc(sectionKey) +
+                '"' +
+                (ii === block.items.length - 1
+                  ? " disabled style='opacity:0.3;'"
+                  : "") +
+                '><i class="fa-solid fa-angle-down"></i></button></div></div>';
+            }
           });
           html += "</div>";
         }
@@ -12352,12 +13362,40 @@
       if (groupPrompts.length === 0) {
         return '<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>该分组没有条目</div>';
       }
+      var prefix = "";
+      if (multiMode) {
+        var rangeHint = "";
+        if (rangeMode) {
+          rangeHint =
+            '<div style="margin-top:4px;padding-top:4px;border-top:1px dashed rgba(var(--ms-accent-rgb),0.25);font-size:10px;color:var(--ms-accent);"><i class="fa-solid fa-arrows-left-right-to-line" style="margin-right:3px;"></i>范围模式：' +
+            (rangeAnchor === null
+              ? "点选第一项确定锚点"
+              : "已锚定，再次点选可扩展或收缩范围") +
+            ' · <span style="opacity:0.85;">长按某条目可改锚点到该处</span>' +
+            "</div>";
+        }
+        var ipHint = "";
+        if (isIP) {
+          ipHint =
+            '<div style="margin-top:4px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.08);font-size:10px;color:var(--SmartThemeQuoteColor,#999);"><i class="fa-solid fa-circle-info" style="margin-right:3px;color:#f0a040;"></i>多选模式仅支持<strong>同一范围内</strong>移动，不支持跨角色移动条目。如需跨角色移动或交换角色顺序，请回到单选拖拽模式</div>';
+        }
+        prefix =
+          '<div style="padding:8px 14px;background:rgba(var(--ms-accent-rgb),0.06);border-bottom:1px solid var(--SmartThemeBorderColor,#333);font-size:11px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;"><i class="fa-solid fa-bullseye" style="color:var(--ms-accent);margin-right:4px;"></i>批量范围: <strong>' +
+          esc(getScopeLabel(multiScope)) +
+          "</strong>" +
+          (multiScope
+            ? " · 已选 <strong>" + multiSelected.size + "</strong> 项"
+            : " · 点选第一项以确定范围（其他范围的项会变灰）") +
+          ipHint +
+          rangeHint +
+          "</div>";
+      }
       if (!isIP) {
         var blocks = buildBlocksFromList(groupPrompts);
-        return renderBlocks(blocks, "_all");
+        return prefix + renderBlocks(blocks, "_all");
       }
       var parts = partitionByCharacter();
-      var html = "";
+      var html = prefix;
       if (parts.general.length > 0) {
         var generalCollapsed = collapsedSections.has("_general");
         html +=
@@ -12382,6 +13420,26 @@
           : '<i class="fa-solid fa-user" style="color:#b48cc8;font-size:13px;"></i>';
         var isCollapsed = collapsedSections.has("char_" + k);
         var sectionKey = "char_" + k;
+        var charGripHtml = multiMode
+          ? ""
+          : '<i class="fa-solid fa-grip-vertical ms-char-section-grip" data-char-key="' +
+            esc(k) +
+            '" data-char-idx="' +
+            ci +
+            '" style="cursor:grab;color:var(--SmartThemeQuoteColor,#888);font-size:12px;" title="拖动调整角色顺序"></i>';
+        var charArrowsHtml = multiMode
+          ? ""
+          : '<div class="ms-reorder-arrows"><button data-char-dir="up" data-char-idx="' +
+            ci +
+            '"' +
+            (ci === 0 ? " disabled style='opacity:0.3;'" : "") +
+            '><i class="fa-solid fa-angle-up"></i></button><button data-char-dir="down" data-char-idx="' +
+            ci +
+            '"' +
+            (ci === parts.orderedChars.length - 1
+              ? " disabled style='opacity:0.3;'"
+              : "") +
+            '><i class="fa-solid fa-angle-down"></i></button></div>';
         html +=
           '<div class="ms-reorder-section-header" data-section-key="' +
           esc(sectionKey) +
@@ -12389,11 +13447,9 @@
           esc(k) +
           '" data-char-idx="' +
           ci +
-          '" style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:rgba(180,140,200,0.08);border-top:1px solid rgba(255,255,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;user-select:none;"><i class="fa-solid fa-grip-vertical ms-char-section-grip" data-char-key="' +
-          esc(k) +
-          '" data-char-idx="' +
-          ci +
-          '" style="cursor:grab;color:var(--SmartThemeQuoteColor,#888);font-size:12px;" title="拖动调整角色顺序"></i><i class="fa-solid fa-angle-' +
+          '" style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:rgba(180,140,200,0.08);border-top:1px solid rgba(255,255,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;user-select:none;">' +
+          charGripHtml +
+          '<i class="fa-solid fa-angle-' +
           (isCollapsed ? "right" : "down") +
           '" style="font-size:10px;color:#b48cc8;width:12px;"></i>' +
           avH +
@@ -12401,17 +13457,9 @@
           esc(dn) +
           " (" +
           ps.length +
-          ' 条)</span><div class="ms-reorder-arrows"><button data-char-dir="up" data-char-idx="' +
-          ci +
-          '"' +
-          (ci === 0 ? " disabled style='opacity:0.3;'" : "") +
-          '><i class="fa-solid fa-angle-up"></i></button><button data-char-dir="down" data-char-idx="' +
-          ci +
-          '"' +
-          (ci === parts.orderedChars.length - 1
-            ? " disabled style='opacity:0.3;'"
-            : "") +
-          '><i class="fa-solid fa-angle-down"></i></button></div></div>';
+          " 条)</span>" +
+          charArrowsHtml +
+          "</div>";
         if (!isCollapsed) {
           var blocks3 = buildBlocksFromList(ps);
           html += renderBlocks(blocks3, sectionKey);
@@ -12475,9 +13523,77 @@
       });
     }
 
+    function buildFooter() {
+      if (!multiMode) {
+        return (
+          "<span>拖拽 / 箭头调序 · " +
+          (isIP ? "跨角色拖动会确认改绑 · " : "") +
+          '右上角 <i class="fa-solid fa-check-double"></i> 进入批量模式</span>'
+        );
+      }
+      var cnt = multiSelected.size;
+      var disabled = cnt === 0 ? " disabled" : "";
+      var allSel = false;
+      if (multiScope) {
+        var orderedRids = getScopeOrderedRids(multiScope);
+        allSel =
+          orderedRids.length > 0 &&
+          orderedRids.every(function (rid) {
+            return multiSelected.has(rid);
+          });
+      }
+      var selIcon = allSel
+        ? "fa-solid fa-square-check"
+        : cnt === 0
+          ? "fa-regular fa-square"
+          : "fa-solid fa-square-minus";
+      var selLabel = allSel ? "取消全选" : "全选范围";
+      return (
+        '<div class="ms-batch-bar">' +
+        '<span class="ms-batch-count"><i class="fa-solid fa-list-check"></i> ' +
+        cnt +
+        "</span>" +
+        '<button class="ms-batch-btn" data-pmbatch="selectall"><i class="' +
+        selIcon +
+        '"></i><span class="ms-btn-label"> ' +
+        selLabel +
+        "</span></button>" +
+        '<button class="ms-batch-btn" data-pmbatch="top"' +
+        disabled +
+        '><i class="fa-solid fa-angles-up"></i><span class="ms-btn-label"> 置顶</span></button>' +
+        '<button class="ms-batch-btn" data-pmbatch="up"' +
+        disabled +
+        '><i class="fa-solid fa-angle-up"></i><span class="ms-btn-label"> 上移</span></button>' +
+        '<button class="ms-batch-btn" data-pmbatch="down"' +
+        disabled +
+        '><i class="fa-solid fa-angle-down"></i><span class="ms-btn-label"> 下移</span></button>' +
+        '<button class="ms-batch-btn" data-pmbatch="bottom"' +
+        disabled +
+        '><i class="fa-solid fa-angles-down"></i><span class="ms-btn-label"> 置底</span></button>' +
+        '<button class="ms-batch-btn" data-pmbatch="insert"' +
+        disabled +
+        '><i class="fa-solid fa-arrow-right-to-bracket"></i><span class="ms-btn-label"> 插入到</span></button>' +
+        "</div>"
+      );
+    }
+
     var $body = $p.find("#ms-body");
     function refreshPrompts() {
       $body.html(buildReorderBody());
+      $p.find("#ms-footer").html(buildFooter()).show();
+      $p.find("#ms-reorder-prompts-multi").toggleClass("active", multiMode);
+      $p.find("#ms-reorder-prompts-range")
+        .toggleClass("active", rangeMode)
+        .toggle(multiMode);
+
+      if (multiMode) {
+        if (bindReorderDrag._cleanup) {
+          bindReorderDrag._cleanup();
+          bindReorderDrag._cleanup = null;
+        }
+        return;
+      }
+
       bindReorderDrag($body, function (fromEl, targetEl) {
         var fromType = fromEl.getAttribute("data-type");
         var targetType = targetEl.getAttribute("data-type");
@@ -12619,14 +13735,8 @@
       });
     }
 
-    $p.find("#ms-footer")
-      .html(
-        "<span>拖拽 / 箭头调序 · " +
-          (isIP ? "跨角色拖动会确认改绑" : "") +
-          "</span>",
-      )
-      .show();
     bindAllEvents();
+
     function doReorderSeriesFirst() {
       function sortSeriesFirst(list) {
         var s = [],
@@ -12679,6 +13789,40 @@
       },
     );
 
+    $p.find("#ms-toolbar").on(
+      "click.ms",
+      "#ms-reorder-prompts-multi",
+      function () {
+        multiMode = !multiMode;
+        multiSelected.clear();
+        multiScope = null;
+        rangeMode = false;
+        rangeAnchor = null;
+        refreshPrompts();
+      },
+    );
+
+    $p.find("#ms-toolbar").on(
+      "click.ms",
+      "#ms-reorder-prompts-range",
+      function () {
+        rangeMode = !rangeMode;
+        if (rangeMode && multiSelected.size > 0 && multiScope) {
+          var orderedRids = getScopeOrderedRids(multiScope);
+          rangeAnchor = null;
+          for (var i = 0; i < orderedRids.length; i++) {
+            if (multiSelected.has(orderedRids[i])) {
+              rangeAnchor = orderedRids[i];
+              break;
+            }
+          }
+        } else {
+          rangeAnchor = null;
+        }
+        refreshPrompts();
+      },
+    );
+
     $p.find("#ms-body").on(
       "click.ms",
       ".ms-reorder-section-header",
@@ -12717,6 +13861,7 @@
       "pointerdown.msdrag2",
       ".ms-char-section-grip",
       function (e) {
+        if (multiMode) return;
         var oe = e.originalEvent || e;
         if (oe.pointerType === "mouse" && oe.button !== 0) return;
         e.preventDefault();
@@ -12790,6 +13935,16 @@
       },
     );
 
+    $p.find("#ms-body").on("click.ms", "[data-ro-series-toggle]", function (e) {
+      e.stopPropagation();
+      var sid = $(this).data("ro-series-toggle");
+      var sidKey = $(this).data("sid-key");
+      $(this).toggleClass("open");
+      $p.find("#" + sid).toggle();
+      if (expandedSeries.has(sidKey)) expandedSeries.delete(sidKey);
+      else expandedSeries.add(sidKey);
+    });
+
     $p.find("#ms-body").on(
       "click.ms",
       ".ms-reorder-arrows button[data-dir]",
@@ -12854,6 +14009,338 @@
         refreshPrompts();
       },
     );
+    $p.find("#ms-body").on(
+      "pointerdown.ms",
+      ".ms-reorder-item[data-rid]",
+      function (e) {
+        if (!multiMode || !rangeMode) return;
+        if ($(e.target).closest("[data-ro-series-toggle]").length) return;
+        var $el = $(this);
+        var rid = $el.attr("data-rid");
+        var scope = $el.attr("data-scope");
+        if (!rid || !scope) return;
+        var sx = e.clientX || 0,
+          sy = e.clientY || 0;
+        var lpTimer = setTimeout(function () {
+          lpTimer = null;
+          $el.data("ms-rop-lp-fired", true);
+          if (navigator.vibrate) navigator.vibrate(30);
+          var farEndRid = null;
+          if (
+            multiScope === scope &&
+            rangeAnchor !== null &&
+            multiSelected.size > 0
+          ) {
+            var orderedRids = getScopeOrderedRids(scope);
+            var newAnchorIdx = orderedRids.indexOf(rid);
+            var oldAnchorIdx = orderedRids.indexOf(rangeAnchor);
+            if (newAnchorIdx >= 0 && oldAnchorIdx >= 0) {
+              var selIdxArr = [];
+              orderedRids.forEach(function (r, i) {
+                if (multiSelected.has(r)) selIdxArr.push(i);
+              });
+              if (selIdxArr.length > 0) {
+                var selMin = Math.min.apply(null, selIdxArr);
+                var selMax = Math.max.apply(null, selIdxArr);
+                var farIdx = -1;
+                if (selMin < oldAnchorIdx) farIdx = selMin;
+                else if (selMax > oldAnchorIdx) farIdx = selMax;
+                if (farIdx >= 0) farEndRid = orderedRids[farIdx];
+              }
+            }
+          }
+          multiScope = scope;
+          rangeAnchor = rid;
+          multiSelected.clear();
+          if (farEndRid !== null) {
+            var orderedRids2 = getScopeOrderedRids(scope);
+            var ai = orderedRids2.indexOf(rid);
+            var fi = orderedRids2.indexOf(farEndRid);
+            if (ai >= 0 && fi >= 0) {
+              var lo = Math.min(ai, fi);
+              var hi = Math.max(ai, fi);
+              for (var ii = lo; ii <= hi; ii++)
+                multiSelected.add(orderedRids2[ii]);
+            } else {
+              multiSelected.add(rid);
+            }
+          } else {
+            multiSelected.add(rid);
+          }
+          refreshPrompts();
+          toast("info", "已设为新锚点");
+        }, 600);
+        var onMove = function (ev) {
+          if (!lpTimer) return;
+          var dx = (ev.clientX || 0) - sx,
+            dy = (ev.clientY || 0) - sy;
+          if (dx * dx + dy * dy > 100) {
+            clearTimeout(lpTimer);
+            lpTimer = null;
+          }
+        };
+        var onUp = function () {
+          if (lpTimer) {
+            clearTimeout(lpTimer);
+            lpTimer = null;
+          }
+          $p.off(
+            "pointermove.ms-roplp pointerup.ms-roplp pointercancel.ms-roplp",
+          );
+        };
+        $p.off("pointermove.ms-roplp pointerup.ms-roplp pointercancel.ms-roplp")
+          .on("pointermove.ms-roplp", onMove)
+          .on("pointerup.ms-roplp pointercancel.ms-roplp", onUp);
+      },
+    );
+
+    $p.find("#ms-body").on(
+      "click.ms",
+      ".ms-reorder-item[data-rid]",
+      function (e) {
+        if (!multiMode) return;
+        if ($(this).data("ms-rop-lp-fired")) {
+          $(this).removeData("ms-rop-lp-fired");
+          return;
+        }
+        if ($(e.target).closest("[data-ro-series-toggle]").length) return;
+        var rid = $(this).attr("data-rid");
+        var scope = $(this).attr("data-scope");
+        if (!rid || !scope) return;
+
+        if (multiScope && scope !== multiScope) {
+          toast(
+            "info",
+            "当前批量范围是「" +
+              getScopeLabel(multiScope) +
+              "」，要选别的范围请先取消已选项",
+          );
+          return;
+        }
+
+        if (rangeMode) {
+          if (!multiScope) multiScope = scope;
+          var orderedRids = getScopeOrderedRids(scope);
+          if (rangeAnchor === null || orderedRids.indexOf(rangeAnchor) < 0) {
+            rangeAnchor = rid;
+            multiSelected.clear();
+            multiSelected.add(rid);
+          } else if (rangeAnchor === rid) {
+            rangeAnchor = null;
+            multiSelected.clear();
+            multiScope = null;
+          } else {
+            var ai = orderedRids.indexOf(rangeAnchor);
+            var yi = orderedRids.indexOf(rid);
+            if (ai < 0 || yi < 0) return;
+            var lo = Math.min(ai, yi),
+              hi = Math.max(ai, yi);
+            multiSelected.clear();
+            for (var i = lo; i <= hi; i++) multiSelected.add(orderedRids[i]);
+          }
+        } else {
+          if (multiSelected.has(rid)) {
+            multiSelected.delete(rid);
+            if (multiSelected.size === 0) multiScope = null;
+          } else {
+            if (!multiScope) multiScope = scope;
+            multiSelected.add(rid);
+          }
+        }
+        refreshPrompts();
+      },
+    );
+
+    $p.find("#ms-footer").on("click.ms", "[data-pmbatch]", function () {
+      var action = $(this).data("pmbatch");
+
+      if (action === "selectall") {
+        if (!multiScope) {
+          if (!isIP) {
+            multiScope = "_all";
+          } else {
+            var _ssParts = partitionByCharacter();
+            if (_ssParts.general.length > 0) {
+              multiScope = "_general";
+            } else if (_ssParts.orderedChars.length > 0) {
+              multiScope = "char_" + _ssParts.orderedChars[0];
+            } else {
+              return;
+            }
+          }
+        }
+        var orderedRids = getScopeOrderedRids(multiScope);
+        var allSel =
+          orderedRids.length > 0 &&
+          orderedRids.every(function (rid) {
+            return multiSelected.has(rid);
+          });
+        if (allSel) {
+          multiSelected.clear();
+          multiScope = null;
+          rangeAnchor = null;
+        } else {
+          orderedRids.forEach(function (rid) {
+            multiSelected.add(rid);
+          });
+        }
+        refreshPrompts();
+        return;
+      }
+
+      if (multiSelected.size === 0 || !multiScope) return;
+
+      function reorderArr(items, isSelectedFn, act, insertPos) {
+        if (act === "top") {
+          var sel = items.filter(isSelectedFn);
+          var others = items.filter(function (i) {
+            return !isSelectedFn(i);
+          });
+          return sel.concat(others);
+        }
+        if (act === "bottom") {
+          var sel = items.filter(isSelectedFn);
+          var others = items.filter(function (i) {
+            return !isSelectedFn(i);
+          });
+          return others.concat(sel);
+        }
+        if (act === "insert") {
+          var sel = items.filter(isSelectedFn);
+          var others = items.filter(function (i) {
+            return !isSelectedFn(i);
+          });
+          return others
+            .slice(0, insertPos)
+            .concat(sel)
+            .concat(others.slice(insertPos));
+        }
+        if (act === "up") {
+          var result = items.slice();
+          for (var i = 1; i < result.length; i++) {
+            if (isSelectedFn(result[i]) && !isSelectedFn(result[i - 1])) {
+              var t = result[i - 1];
+              result[i - 1] = result[i];
+              result[i] = t;
+            }
+          }
+          return result;
+        }
+        if (act === "down") {
+          var result = items.slice();
+          for (var i = result.length - 2; i >= 0; i--) {
+            if (isSelectedFn(result[i]) && !isSelectedFn(result[i + 1])) {
+              var t = result[i];
+              result[i] = result[i + 1];
+              result[i + 1] = t;
+            }
+          }
+          return result;
+        }
+        return items;
+      }
+
+      function applyReorder(act, insertPos) {
+        if (multiScope.indexOf("::series::") >= 0) {
+          var parts2 = multiScope.split("::series::");
+          var sectionKey2 = parts2[0];
+          var seriesName2 = parts2[1];
+          var sectionList3 = getListForSection(sectionKey2);
+          var seriesItems2 = sectionList3.filter(function (p) {
+            return p.series && p.series.trim() === seriesName2;
+          });
+          var reordered = reorderArr(
+            seriesItems2,
+            function (p) {
+              return multiSelected.has("c_" + p.id);
+            },
+            act,
+            insertPos,
+          );
+          var ridx = 0;
+          var newSectionList3 = sectionList3.map(function (p) {
+            if (p.series && p.series.trim() === seriesName2) {
+              return reordered[ridx++];
+            }
+            return p;
+          });
+          applySectionList(sectionKey2, newSectionList3);
+        } else {
+          var sectionKey3 = multiScope;
+          var sectionList4 = getListForSection(sectionKey3);
+          var blocks4 = buildBlocksFromList(sectionList4);
+          var reorderedBlocks = reorderArr(
+            blocks4,
+            function (block) {
+              if (block.type === "single")
+                return multiSelected.has("p_" + block.item.id);
+              if (block.type === "series")
+                return multiSelected.has("s_" + sectionKey3 + "_" + block.name);
+              return false;
+            },
+            act,
+            insertPos,
+          );
+          var newSectionList4 = [];
+          reorderedBlocks.forEach(function (b) {
+            if (b.type === "single") newSectionList4.push(b.item);
+            else
+              b.items.forEach(function (it) {
+                newSectionList4.push(it);
+              });
+          });
+          applySectionList(sectionKey3, newSectionList4);
+        }
+        syncGroupPrompts();
+        saveData();
+        refreshPrompts();
+      }
+
+      if (action === "insert") {
+        var scopeItems;
+        var selSet = multiSelected;
+        if (multiScope.indexOf("::series::") >= 0) {
+          var partsI = multiScope.split("::series::");
+          var sectionListI = getListForSection(partsI[0]);
+          scopeItems = sectionListI
+            .filter(function (p) {
+              return p.series && p.series.trim() === partsI[1];
+            })
+            .map(function (p) {
+              return {
+                name: p.title || "未命名",
+                isSelected: selSet.has("c_" + p.id),
+              };
+            });
+        } else {
+          var sectionListJ = getListForSection(multiScope);
+          var blocksJ = buildBlocksFromList(sectionListJ);
+          scopeItems = blocksJ.map(function (block) {
+            if (block.type === "single") {
+              return {
+                name: block.item.title || "未命名",
+                isSelected: selSet.has("p_" + block.item.id),
+              };
+            }
+            return {
+              name: block.name + " (" + block.items.length + " 条)",
+              iconClass: "fa-layer-group",
+              isSelected: selSet.has("s_" + multiScope + "_" + block.name),
+            };
+          });
+        }
+        showInsertDialog({
+          title: "插入到指定位置",
+          scopeItems: scopeItems,
+          onConfirm: function (insertPos) {
+            applyReorder("insert", insertPos);
+          },
+        });
+        return;
+      }
+
+      applyReorder(action);
+    });
 
     refreshPrompts();
   }
