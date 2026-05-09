@@ -4539,7 +4539,7 @@
 .ms-nav-sel-badge{font-size:9px;color:var(--ms-accent);flex-shrink:0;margin-left:4px;}
 .ms-card{display:flex;flex-wrap:wrap;align-items:center;padding:8px 14px;gap:6px;transition:background 0.12s;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.03);position:relative;}
 .ms-card:hover{background:rgba(255,255,255,0.04);}
-.ms-card.ms-just-viewed{animation:ms-flash-highlight 1.5s ease-out;}
+.ms-reorder-item.ms-just-viewed{animation:ms-flash-highlight 1.5s ease-out;}
 .ms-card.ms-stage-injecting{box-shadow:inset 3px 0 0 0 var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.06);}
 .ms-nav-item.ms-stage-injecting{box-shadow:inset 3px 0 0 0 var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.06);}
 .ms-series-group.ms-stage-injecting>.ms-series-header{box-shadow:inset 3px 0 0 0 var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.06);}
@@ -13371,11 +13371,11 @@
       );
     }
 
-    let multiMode = false;
-    const multiSelected = new Set();
-    let multiScope = null;
-    let rangeMode = false;
-    let rangeAnchor = null;
+    let multiMode = v._reorderMultiMode || false;
+    const multiSelected = new Set(v._reorderMultiSelected || []);
+    let multiScope = v._reorderMultiScope || null;
+    let rangeMode = v._reorderRangeMode || false;
+    let rangeAnchor = v._reorderRangeAnchor || null;
 
     $p.find("#ms-toolbar").html(
       '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button>' +
@@ -13390,8 +13390,8 @@
     );
 
     var isIP = g && isIPGroup(g);
-    var expandedSeries = new Set();
-    var collapsedSections = new Set();
+    var expandedSeries = new Set(v._reorderExpandedSeries || []);
+    var collapsedSections = new Set(v._reorderCollapsedSections || []);
 
     function partitionByCharacter() {
       var general = [];
@@ -13513,6 +13513,8 @@
             html +=
               '<div class="ms-reorder-item" data-rid="' +
               rid +
+              '" data-pid="' +
+              block.item.id +
               '" data-scope="' +
               esc(scope) +
               '" style="cursor:pointer;' +
@@ -13529,6 +13531,9 @@
                 false,
                 hideCharInBody,
               ) +
+              '<button class="ms-card-qbtn" data-preview-pid="' +
+              block.item.id +
+              '" title="查看预览" style="flex-shrink:0;"><i class="fa-solid fa-eye"></i></button>' +
               "</div>";
           } else {
             html +=
@@ -13544,6 +13549,9 @@
               esc(sectionKey) +
               '"></i>' +
               buildItemBody(block.item, "", false, false, hideCharInBody) +
+              '<button class="ms-card-qbtn" data-preview-pid="' +
+              block.item.id +
+              '" title="查看预览" style="flex-shrink:0;"><i class="fa-solid fa-eye"></i></button>' +
               '<div class="ms-reorder-arrows"><button data-dir="up" data-ridx="' +
               bi +
               '" data-section="' +
@@ -13678,6 +13686,8 @@
               html +=
                 '<div class="ms-reorder-item" data-rid="' +
                 crid +
+                '" data-pid="' +
+                item.id +
                 '" data-scope="' +
                 esc(cscope) +
                 '" style="cursor:pointer;' +
@@ -13688,6 +13698,9 @@
                 checkBgC +
                 '"><i class="fa-solid fa-check"></i></div>' +
                 buildItemBody(item, anchorBadgeC, true, true, hideCharInBody) +
+                '<button class="ms-card-qbtn" data-preview-pid="' +
+                item.id +
+                '" title="查看预览" style="flex-shrink:0;width:22px;height:22px;font-size:9px;"><i class="fa-solid fa-eye"></i></button>' +
                 "</div>";
             } else {
               html +=
@@ -13707,6 +13720,9 @@
                 esc(sectionKey) +
                 '"></i>' +
                 buildItemBody(item, "", true, true, hideCharInBody) +
+                '<button class="ms-card-qbtn" data-preview-pid="' +
+                item.id +
+                '" title="查看预览" style="flex-shrink:0;width:22px;height:22px;font-size:9px;"><i class="fa-solid fa-eye"></i></button>' +
                 '<div class="ms-reorder-arrows"><button data-sdir="up" data-child-idx="' +
                 ii +
                 '" data-parent-series="' +
@@ -13961,6 +13977,55 @@
       $p.find("#ms-reorder-prompts-range")
         .toggleClass("active", rangeMode)
         .toggle(multiMode);
+      if (v._lastViewedId) {
+        var lastId = v._lastViewedId;
+        delete v._lastViewedId;
+        setTimeout(function () {
+          var $target = $body.find('[data-pid="' + lastId + '"]').first();
+          if ($target.length) {
+            var $parentSeries = $target.closest('div[id^="ms-ro-series-"]');
+            if (
+              $parentSeries.length &&
+              $parentSeries.css("display") === "none"
+            ) {
+              var sid = $parentSeries.attr("id");
+              $parentSeries.show();
+              $body
+                .find(
+                  '[data-ro-series="' +
+                    sid +
+                    '"], [data-ro-series-toggle="' +
+                    sid +
+                    '"]',
+                )
+                .addClass("open");
+              var sidKey = $body
+                .find("[data-sid-key]")
+                .filter(function () {
+                  return $(this).is(
+                    '[data-ro-series="' +
+                      sid +
+                      '"], [data-ro-series-toggle="' +
+                      sid +
+                      '"]',
+                  );
+                })
+                .first()
+                .attr("data-sid-key");
+              if (sidKey) expandedSeries.add(sidKey);
+            }
+            $target.addClass("ms-just-viewed");
+            var elRect = $target[0].getBoundingClientRect();
+            var bodyRect = $body[0].getBoundingClientRect();
+            var relativeTop = elRect.top - bodyRect.top;
+            var elH = $target.outerHeight();
+            var bodyH = $body.height();
+            if (relativeTop < 0 || relativeTop + elH > bodyH) {
+              $body.scrollTop($body.scrollTop() + relativeTop - bodyH * 0.3);
+            }
+          }
+        }, 100);
+      }
 
       if (multiMode) {
         if (bindReorderDrag._cleanup) {
@@ -14758,6 +14823,24 @@
       }
 
       applyReorder(action);
+    });
+
+    $p.find("#ms-body").on("pointerdown.ms", "[data-preview-pid]", function (e) {
+      e.stopPropagation();
+    });
+    $p.find("#ms-body").on("click.ms", "[data-preview-pid]", function (e) {
+      e.stopPropagation();
+      var pid = $(this).attr("data-preview-pid");
+      if (!pid) return;
+      v._reorderMultiMode = multiMode;
+      v._reorderMultiSelected = Array.from(multiSelected);
+      v._reorderMultiScope = multiScope;
+      v._reorderRangeMode = rangeMode;
+      v._reorderRangeAnchor = rangeAnchor;
+      v._reorderExpandedSeries = Array.from(expandedSeries);
+      v._reorderCollapsedSections = Array.from(collapsedSections);
+      var orderedIds = groupPrompts.map(function (p) { return p.id; });
+      navigateTo({ name: "preview", promptId: pid, _siblingIds: orderedIds });
     });
 
     refreshPrompts();
