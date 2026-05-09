@@ -4,7 +4,7 @@
   const STORAGE_KEY = "miniStage_data";
   const PANEL_ID = "mini-stage-panel";
   const STYLE_ID = "mini-stage-styles";
-  const SCRIPT_VERSION = "3.1";
+  const SCRIPT_VERSION = "3.2";
   const GROUP_COLORS = [
     "#D6A2A2",
     "#DDAA90",
@@ -495,8 +495,56 @@
     var maxPos = otherItems.length + 1;
     var inputId = "ms-insert-pos-" + Math.random().toString(36).slice(2);
     var previewId = "ms-insert-preview-" + Math.random().toString(36).slice(2);
-
+    var expandedSet = new Set();
     function buildPreview(pos) {
+      function buildAvatarOrIcon(charKey, iconClass, sizePx) {
+        sizePx = sizePx || 16;
+        if (charKey) {
+          var ap = getCharAvatarPathSafe(charKey);
+          return ap
+            ? '<img src="' +
+                esc(ap) +
+                '" style="width:' +
+                sizePx +
+                "px;height:" +
+                sizePx +
+                'px;border-radius:3px;object-fit:cover;flex-shrink:0;" onerror="this.style.display=\'none\';this.onerror=null;">'
+            : '<i class="fa-solid fa-user" style="color:#b48cc8;font-size:' +
+                (sizePx - 5) +
+                "px;flex-shrink:0;width:" +
+                sizePx +
+                'px;text-align:center;"></i>';
+        }
+        if (iconClass) {
+          return (
+            '<i class="fa-solid ' +
+            iconClass +
+            '" style="color:var(--ms-accent);opacity:0.7;font-size:11px;flex-shrink:0;"></i>'
+          );
+        }
+        return "";
+      }
+      function buildTagsRow(tags, smaller) {
+        if (!Array.isArray(tags) || tags.length === 0) return "";
+        var th = "";
+        sortTagIds(tags)
+          .slice(0, 4)
+          .forEach(function (tid) {
+            var t = getTag(tid);
+            if (t)
+              th +=
+                '<span class="ms-tag-chip ms-tag-chip-sm" style="background:' +
+                t.color +
+                ";margin-right:3px;font-size:" +
+                (smaller ? "8px" : "9px") +
+                ';">' +
+                esc(t.name) +
+                "</span>";
+          });
+        return th
+          ? '<div style="margin-top:3px;line-height:1.4;">' + th + "</div>"
+          : "";
+      }
       var html = "";
       for (var i = 0; i <= otherItems.length; i++) {
         if (i === pos) {
@@ -507,21 +555,63 @@
         }
         if (i < otherItems.length) {
           var item = otherItems[i];
-          var iconHtml = item.iconClass
-            ? '<i class="fa-solid ' +
-              item.iconClass +
-              '" style="color:var(--ms-accent);opacity:0.7;font-size:11px;flex-shrink:0;"></i>'
+          var isSeries =
+            item.type === "series" &&
+            Array.isArray(item.children) &&
+            item.children.length > 0;
+          var iconHtml = buildAvatarOrIcon(item.charKey, item.iconClass, 30); // 主项头像大小，可调
+          var descH = item.desc
+            ? '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#777);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4;margin-top:1px;">' +
+              esc(item.desc) +
+              "</div>"
+            : "";
+          var tagsH = buildTagsRow(item.tags);
+          var expandH = isSeries
+            ? '<i class="fa-solid fa-angle-' +
+              (expandedSet.has(i) ? "down" : "right") +
+              '" data-toggle-i="' +
+              i +
+              '" style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);flex-shrink:0;width:12px;text-align:center;cursor:pointer;padding:2px;"></i>'
             : "";
           html +=
             '<div class="ms-insert-item" data-i="' +
             i +
-            '" title="点击：插入到此条目下面" style="padding:5px 10px;margin:2px 0;background:rgba(255,255,255,0.03);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:5px;font-size:12px;color:var(--SmartThemeBodyColor,#ccc);display:flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer;transition:background 0.12s,border-color 0.12s;"><span style="color:var(--SmartThemeQuoteColor,#666);font-size:10px;flex-shrink:0;width:24px;">' +
+            '" title="点击：插入到此条目下面" style="padding:4px 5px;margin:2px 0;background:rgba(255,255,255,0.03);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:5px;font-size:12px;color:var(--SmartThemeBodyColor,#ccc);display:flex;align-items:center;gap:4px;overflow:hidden;cursor:pointer;transition:background 0.12s,border-color 0.12s;">' +
+            '<span style="color:var(--SmartThemeQuoteColor,#666);font-size:10px;flex-shrink:0;width:18px;text-align:center;">' +
             (i + 1) +
             ".</span>" +
+            expandH +
             iconHtml +
-            '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+            '<div style="flex:1;min-width:0;overflow:hidden;margin-left:8px;">' + // margin-left 控制头像和文字之间的间距，可调
+            '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
             esc(item.name) +
-            "</span></div>";
+            "</div>" +
+            descH +
+            tagsH +
+            "</div>" +
+            "</div>";
+          if (isSeries && expandedSet.has(i)) {
+            item.children.forEach(function (child) {
+              var childIcon = buildAvatarOrIcon(child.charKey, null, 22); // 系列子项头像大小，可调
+              var childDescH = child.desc
+                ? '<div style="font-size:9px;color:var(--SmartThemeQuoteColor,#777);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;margin-top:1px;">' +
+                  esc(child.desc) +
+                  "</div>"
+                : "";
+              var childTagsH = buildTagsRow(child.tags, true);
+              html +=
+                '<div style="padding:6px 8px;margin:1px 0 1px 16px;background:rgba(var(--ms-accent-rgb),0.04);border-left:2px solid rgba(var(--ms-accent-rgb),0.3);border-radius:0 4px 4px 0;font-size:11px;color:var(--SmartThemeBodyColor,#ccc);display:flex;align-items:center;gap:7px;cursor:default;">' +
+                childIcon +
+                '<div style="flex:1;min-width:0;overflow:hidden;margin-left:5px;">' + // margin-left 控制子项头像和文字之间的间距，可调
+                '<div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+                esc(child.name) +
+                "</div>" +
+                childDescH +
+                childTagsH +
+                "</div>" +
+                "</div>";
+            });
+          }
         }
       }
       return html;
@@ -598,6 +688,14 @@
           }
         }
         $input.on("input.msi", update);
+        $preview.on("click.msi-toggle", "[data-toggle-i]", function (e) {
+          e.stopPropagation();
+          var idx = parseInt($(this).attr("data-toggle-i"));
+          if (isNaN(idx)) return;
+          if (expandedSet.has(idx)) expandedSet.delete(idx);
+          else expandedSet.add(idx);
+          update();
+        });
         setTimeout(update, 50);
         $preview.on("click.msi", ".ms-insert-item", function () {
           var clickedIdx = parseInt($(this).attr("data-i"));
@@ -2804,15 +2902,20 @@
     var ordered = sorted;
     if (v.name === "group" && v.groupId && !searchQuery) {
       var g = v.groupId !== "_ungrouped" ? getGroup(v.groupId) : null;
-      var hasAnyCharBind = !!g && sorted.some(function (p) {
-        return p.character && isLocalCharKey(p.character);
-      });
-      var usingPartitioned = hasAnyCharBind &&
+      var hasAnyCharBind =
+        !!g &&
+        sorted.some(function (p) {
+          return p.character && isLocalCharKey(p.character);
+        });
+      var usingPartitioned =
+        hasAnyCharBind &&
         filterState.includeTags.length === 0 &&
         filterState.excludeTags.length === 0 &&
         !filterState.onlyCurrentChar;
       if (usingPartitioned) {
-        var general = sorted.filter(function (p) { return !p.character; });
+        var general = sorted.filter(function (p) {
+          return !p.character;
+        });
         var byChar = {};
         sorted.forEach(function (p) {
           if (p.character) {
@@ -2823,7 +2926,10 @@
         var orderedKeys = [];
         var curKeyForOrder = getCurrentCharKeySafe();
         var userOrder = g ? getCharDisplayOrder(g) : [];
-        var hasUserOrder = g && Array.isArray(g.charDisplayOrder) && g.charDisplayOrder.length > 0;
+        var hasUserOrder =
+          g &&
+          Array.isArray(g.charDisplayOrder) &&
+          g.charDisplayOrder.length > 0;
         if (!hasUserOrder && curKeyForOrder && byChar[curKeyForOrder]) {
           orderedKeys.push(curKeyForOrder);
         }
@@ -2834,9 +2940,13 @@
           if (orderedKeys.indexOf(k) < 0) orderedKeys.push(k);
         });
         var visual = [];
-        _groupBySeriesVisual(general).forEach(function (p) { visual.push(p); });
+        _groupBySeriesVisual(general).forEach(function (p) {
+          visual.push(p);
+        });
         orderedKeys.forEach(function (k) {
-          _groupBySeriesVisual(byChar[k] || []).forEach(function (p) { visual.push(p); });
+          _groupBySeriesVisual(byChar[k] || []).forEach(function (p) {
+            visual.push(p);
+          });
         });
         ordered = visual;
       } else {
@@ -2844,11 +2954,18 @@
       }
     } else if (v.name === "character" && !searchQuery) {
       ordered = _groupBySeriesVisual(sorted);
-    } else if (v.name === "list" && filterState.groupId && filterState.groupId !== "_ungrouped" && !searchQuery) {
+    } else if (
+      v.name === "list" &&
+      filterState.groupId &&
+      filterState.groupId !== "_ungrouped" &&
+      !searchQuery
+    ) {
       ordered = _groupBySeriesVisual(sorted);
     }
 
-    var result = ordered.map(function (p) { return p.id; });
+    var result = ordered.map(function (p) {
+      return p.id;
+    });
     _visIdsCacheKey = cacheKey;
     _visIdsCache = result;
     return result;
@@ -4051,7 +4168,6 @@
     if (!$panel.hasClass("ms-focus-mode")) return;
     const el = $panel[0];
     $panel.removeClass("ms-focus-mode");
-    $panel.removeClass("ms-focus-mode");
     applyUICustomization();
     const saved = $panel.data("ms-focus-saved-pos");
     if (saved) {
@@ -5053,14 +5169,22 @@
     } else if (v.name === "group") {
       var $oldSearch = $p.find("#ms-search");
       var _searchWasFocused = $oldSearch.is(":focus");
-      var _searchStart = _searchWasFocused && $oldSearch[0] ? $oldSearch[0].selectionStart || 0 : 0;
-      var _searchEnd = _searchWasFocused && $oldSearch[0] ? $oldSearch[0].selectionEnd || 0 : 0;
+      var _searchStart =
+        _searchWasFocused && $oldSearch[0]
+          ? $oldSearch[0].selectionStart || 0
+          : 0;
+      var _searchEnd =
+        _searchWasFocused && $oldSearch[0]
+          ? $oldSearch[0].selectionEnd || 0
+          : 0;
       renderView();
       if (_searchWasFocused) {
         var $newSearch = $p.find("#ms-search");
         if ($newSearch.length) {
           $newSearch.focus();
-          try { $newSearch[0].setSelectionRange(_searchStart, _searchEnd); } catch (e) {}
+          try {
+            $newSearch[0].setSelectionRange(_searchStart, _searchEnd);
+          } catch (e) {}
         }
       }
       return;
@@ -5613,10 +5737,7 @@
         });
         if (seriesItems.length > 1) {
           var sid =
-            "ms-series-" +
-            simpleHash(
-              seriesName + "||" + (p.groupId || "") + "||" + seriesItems.length,
-            );
+            "ms-series-" + simpleHash(seriesName + "||" + (p.groupId || ""));
           var headerExtra = "";
           var anchorBadge = "";
           if (selectMode) {
@@ -5944,18 +6065,34 @@
       var p = getPrompt(pid);
       if (p) _selGroupIds.add(p.groupId || null);
     });
-    const seriesNames = [
-      ...new Set(
-        data.prompts
-          .filter(function (p) {
-            return _selGroupIds.has(p.groupId || null);
-          })
-          .map(function (p) {
-            return String(p.series || "").trim();
-          })
-          .filter(Boolean),
-      ),
-    ].sort();
+    var scopePrompts = data.prompts.filter(function (p) {
+      return _selGroupIds.has(p.groupId || null);
+    });
+    var sortedScope = sortPrompts(scopePrompts);
+
+    var seriesOptions = [];
+    var seenOptKey = new Set();
+    sortedScope.forEach(function (p) {
+      var sn = String(p.series || "").trim();
+      if (!sn) return;
+      var g = p.groupId ? getGroup(p.groupId) : null;
+      var isIP = g && isIPGroup(g);
+      var charKey =
+        isIP && p.character && isLocalCharKey(p.character) ? p.character : null;
+      var optKey = sn + "||" + (charKey || "_") + "||" + (p.groupId || "_");
+      if (seenOptKey.has(optKey)) return;
+      seenOptKey.add(optKey);
+      seriesOptions.push({ name: sn, charKey: charKey });
+    });
+    var seriesNames = [];
+    var seenNameKey = new Set();
+    sortedScope.forEach(function (p) {
+      var sn = String(p.series || "").trim();
+      if (!sn || seenNameKey.has(sn)) return;
+      seenNameKey.add(sn);
+      seriesNames.push(sn);
+    });
+
     let html =
       '<div style="padding:6px 12px;font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#888);border-bottom:1px solid var(--SmartThemeBorderColor,#444);">批量设置系列 · 已选 ' +
       selectedIds.size +
@@ -5964,13 +6101,33 @@
       '<div class="ms-dropdown-item" data-series-action="rename-existing" style="color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.06);"><i class="fa-solid fa-pen-to-square" style="margin-right:6px;font-size:11px;"></i>重命名已有系列…</div>';
     html +=
       '<div style="border-top:1px solid var(--SmartThemeBorderColor,#333);"></div>';
-    if (seriesNames.length > 0) {
-      seriesNames.forEach(function (name) {
+    if (seriesOptions.length > 0) {
+      seriesOptions.forEach(function (opt) {
+        var charPart = "";
+        var charDataAttr = "";
+        if (opt.charKey) {
+          var dn = getCharDisplayName(opt.charKey);
+          var ap = getCharAvatarPathSafe(opt.charKey);
+          var avH = ap
+            ? '<img src="' +
+              esc(ap) +
+              '" loading="lazy" style="width:12px;height:12px;border-radius:2px;object-fit:cover;vertical-align:middle;margin:0 4px 0 6px;" onerror="this.style.display=\'none\';this.onerror=null;">'
+            : '<i class="fa-solid fa-user" style="font-size:9px;margin:0 4px 0 6px;color:#b48cc8;opacity:0.7;"></i>';
+          charPart =
+            avH +
+            '<span style="font-size:10px;color:#b48cc8;opacity:0.85;">' +
+            esc(truncate(dn, 10)) +
+            "</span>";
+          charDataAttr = ' data-series-charkey="' + esc(opt.charKey) + '"';
+        }
         html +=
           '<div class="ms-dropdown-item" data-series-name="' +
-          esc(name) +
-          '"><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;margin-right:6px;font-size:11px;"></i>' +
-          esc(name) +
+          esc(opt.name) +
+          '"' +
+          charDataAttr +
+          '><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;margin-right:6px;font-size:11px;"></i>' +
+          esc(opt.name) +
+          charPart +
           "</div>";
       });
       html +=
@@ -5980,11 +6137,14 @@
       '<div class="ms-dropdown-item" data-series-action="custom" style="color:var(--ms-accent);"><i class="fa-solid fa-pen" style="margin-right:6px;font-size:11px;"></i>自定义系列名</div>';
     html +=
       '<div class="ms-dropdown-item" data-series-action="clear" style="color:var(--ms-danger);"><i class="fa-solid fa-xmark" style="margin-right:6px;font-size:11px;"></i>清除系列</div>';
+
     var $dd = openDropdown($p, html);
     if (!$dd) return;
     $dd.off("click").on("click.series", ".ms-dropdown-item", function () {
       const seriesName = $(this).data("series-name");
+      const charKey = $(this).attr("data-series-charkey");
       const action = $(this).data("series-action");
+
       if (action === "rename-existing") {
         closeActiveDropdown();
         if (seriesNames.length === 0) {
@@ -6094,15 +6254,25 @@
         saveData();
         toast("success", "已清除 " + selectedIds.size + " 项的系列");
       } else if (seriesName !== undefined) {
+        var charChanged = 0;
         selectedIds.forEach(function (pid) {
           const p = getPrompt(pid);
-          if (p) {
-            p.series = seriesName;
-            _invalidateLc(p);
+          if (!p) return;
+          p.series = seriesName;
+          _invalidateLc(p);
+          if (charKey) {
+            var pg = p.groupId ? getGroup(p.groupId) : null;
+            if (pg && isIPGroup(pg) && p.character !== charKey) {
+              p.character = charKey;
+              charChanged++;
+            }
           }
         });
+        if (charChanged > 0) _invalidateCharGroupCache();
         saveData();
-        toast("success", "已设置系列: " + seriesName);
+        var msg = "已设置系列: " + seriesName;
+        if (charChanged > 0) msg += "（" + charChanged + " 项已改绑到该角色）";
+        toast("success", msg);
       }
       closeActiveDropdown();
       refreshKeepingState();
@@ -8579,7 +8749,7 @@
         ? g.defaultAuthor
         : data.settings.defaultAuthor || ""
       : pr.author || "";
-    const series = isNew ? (v.defaultSeries || "") : pr.series || "";
+    const series = isNew ? v.defaultSeries || "" : pr.series || "";
     const promptTags = isNew ? [] : pr.tags || [];
     if (!v._savedEditState && !v._draftChecked) {
       v._draftChecked = true;
@@ -13118,6 +13288,89 @@
       return p.groupId === v.groupId;
     });
 
+    function buildItemBody(p, anchorBadge, smaller, hideSeries, hideCharacter) {
+      anchorBadge = anchorBadge || "";
+      var titleSize = smaller ? "12px" : "13px";
+      var preview = (p.content || "").replace(/\s+/g, " ").trim();
+      var previewH = preview
+        ? '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#777);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4;">' +
+          esc(truncate(preview, 60)) +
+          "</div>"
+        : "";
+      var metaParts = [];
+      if (!hideSeries && p.series && p.series.trim()) {
+        metaParts.push(
+          '<span style="color:var(--ms-accent);opacity:0.75;display:inline-flex;align-items:center;gap:2px;font-size:9px;"><i class="fa-solid fa-layer-group" style="font-size:8px;"></i>' +
+            esc(p.series.trim()) +
+            "</span>",
+        );
+      }
+      if (!hideCharacter && p.character && isLocalCharKey(p.character)) {
+        metaParts.push(
+          '<span style="color:#b48cc8;display:inline-flex;align-items:center;gap:2px;font-size:9px;"><i class="fa-solid fa-user" style="font-size:8px;"></i>' +
+            esc(getCharDisplayName(p.character)) +
+            "</span>",
+        );
+      }
+      var tagsH = "";
+      sortTagIds(p.tags || [])
+        .slice(0, 3)
+        .forEach(function (tid) {
+          var t = getTag(tid);
+          if (t)
+            tagsH +=
+              '<span class="ms-tag-chip ms-tag-chip-sm" style="background:' +
+              t.color +
+              ';">' +
+              esc(t.name) +
+              "</span>";
+        });
+      var ts =
+        p.updatedAt && p.updatedAt !== p.createdAt ? p.updatedAt : p.createdAt;
+      var tsH = "";
+      if (ts) {
+        var d = new Date(ts);
+        if (!isNaN(d.getTime())) {
+          var now = new Date();
+          var shortDate =
+            d.getFullYear() === now.getFullYear()
+              ? String(d.getMonth() + 1).padStart(2, "0") +
+                "/" +
+                String(d.getDate()).padStart(2, "0")
+              : String(d.getFullYear()).slice(2) +
+                "/" +
+                String(d.getMonth() + 1).padStart(2, "0") +
+                "/" +
+                String(d.getDate()).padStart(2, "0");
+          tsH =
+            '<span style="font-size:9px;color:var(--SmartThemeQuoteColor,#666);opacity:0.7;white-space:nowrap;flex-shrink:0;margin-left:auto;">' +
+            shortDate +
+            "</span>";
+        }
+      }
+      var bottomRow = "";
+      if (metaParts.length > 0 || tagsH || tsH) {
+        bottomRow =
+          '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">' +
+          metaParts.join("") +
+          tagsH +
+          tsH +
+          "</div>";
+      }
+      return (
+        '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;overflow:hidden;">' +
+        '<div style="font-size:' +
+        titleSize +
+        ';font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--SmartThemeBodyColor,#ddd);">' +
+        esc(p.title) +
+        anchorBadge +
+        "</div>" +
+        previewH +
+        bottomRow +
+        "</div>"
+      );
+    }
+
     let multiMode = false;
     const multiSelected = new Set();
     let multiScope = null;
@@ -13238,6 +13491,7 @@
 
     function renderBlocks(blocks, sectionKey) {
       var html = "";
+      var hideCharInBody = sectionKey && sectionKey.indexOf("char_") === 0;
       blocks.forEach(function (block, bi) {
         if (block.type === "single") {
           var rid = "p_" + block.item.id;
@@ -13268,10 +13522,13 @@
               '<div class="ms-gitem-check" style="' +
               checkBg +
               '"><i class="fa-solid fa-check"></i></div>' +
-              '<span class="ms-reorder-name">' +
-              esc(block.item.title) +
-              anchorBadgeP +
-              "</span>" +
+              buildItemBody(
+                block.item,
+                anchorBadgeP,
+                false,
+                false,
+                hideCharInBody,
+              ) +
               "</div>";
           } else {
             html +=
@@ -13285,9 +13542,9 @@
               bi +
               '" data-section="' +
               esc(sectionKey) +
-              '"></i><span class="ms-reorder-name">' +
-              esc(block.item.title) +
-              '</span><div class="ms-reorder-arrows"><button data-dir="up" data-ridx="' +
+              '"></i>' +
+              buildItemBody(block.item, "", false, false, hideCharInBody) +
+              '<div class="ms-reorder-arrows"><button data-dir="up" data-ridx="' +
               bi +
               '" data-section="' +
               esc(sectionKey) +
@@ -13430,10 +13687,7 @@
                 '<div class="ms-gitem-check" style="' +
                 checkBgC +
                 '"><i class="fa-solid fa-check"></i></div>' +
-                '<span class="ms-reorder-name" style="font-size:12px;">' +
-                esc(item.title) +
-                anchorBadgeC +
-                "</span>" +
+                buildItemBody(item, anchorBadgeC, true, true, hideCharInBody) +
                 "</div>";
             } else {
               html +=
@@ -13451,9 +13705,9 @@
                 esc(block.name) +
                 '" data-parent-section="' +
                 esc(sectionKey) +
-                '"></i><span class="ms-reorder-name" style="font-size:12px;">' +
-                esc(item.title) +
-                '</span><div class="ms-reorder-arrows"><button data-sdir="up" data-child-idx="' +
+                '"></i>' +
+                buildItemBody(item, "", true, true, hideCharInBody) +
+                '<div class="ms-reorder-arrows"><button data-sdir="up" data-child-idx="' +
                 ii +
                 '" data-parent-series="' +
                 esc(block.name) +
@@ -14421,6 +14675,20 @@
       if (action === "insert") {
         var scopeItems;
         var selSet = multiSelected;
+        var ctxSectionKey =
+          multiScope.indexOf("::series::") >= 0
+            ? multiScope.split("::series::")[0]
+            : multiScope;
+        var ctxCharKey =
+          ctxSectionKey && ctxSectionKey.indexOf("char_") === 0
+            ? ctxSectionKey.substring(5)
+            : null;
+        function _resolveCharKey(p) {
+          if (ctxCharKey) return ctxCharKey;
+          if (p && p.character && isLocalCharKey(p.character))
+            return p.character;
+          return null;
+        }
         if (multiScope.indexOf("::series::") >= 0) {
           var partsI = multiScope.split("::series::");
           var sectionListI = getListForSection(partsI[0]);
@@ -14430,7 +14698,14 @@
             })
             .map(function (p) {
               return {
+                type: "single",
                 name: p.title || "未命名",
+                desc: truncate(
+                  (p.content || "").replace(/\s+/g, " ").trim(),
+                  50,
+                ),
+                tags: p.tags || [],
+                charKey: _resolveCharKey(p),
                 isSelected: selSet.has("c_" + p.id),
               };
             });
@@ -14440,13 +14715,34 @@
           scopeItems = blocksJ.map(function (block) {
             if (block.type === "single") {
               return {
+                type: "single",
                 name: block.item.title || "未命名",
+                desc: truncate(
+                  (block.item.content || "").replace(/\s+/g, " ").trim(),
+                  50,
+                ),
+                tags: block.item.tags || [],
+                charKey: _resolveCharKey(block.item),
                 isSelected: selSet.has("p_" + block.item.id),
               };
             }
+            var children = block.items.map(function (it) {
+              return {
+                name: it.title || "未命名",
+                desc: truncate(
+                  (it.content || "").replace(/\s+/g, " ").trim(),
+                  40,
+                ),
+                tags: it.tags || [],
+                charKey: _resolveCharKey(it),
+              };
+            });
             return {
+              type: "series",
               name: block.name + " (" + block.items.length + " 条)",
               iconClass: "fa-layer-group",
+              charKey: ctxCharKey,
+              children: children,
               isSelected: selSet.has("s_" + multiScope + "_" + block.name),
             };
           });
