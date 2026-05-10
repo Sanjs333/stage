@@ -4899,7 +4899,7 @@
   .ms-batch-bar .ms-batch-count{font-size:11px;}
   .ms-batch-bar{gap:3px;}
   .ms-batch-btn{padding:4px 8px;font-size:10px;}
-  .ms-footer-btns{gap:5px;}.ms-footer-btns a{font-size:0px;}.ms-footer-btns a i{font-size:12px;}
+  .ms-footer-btns{gap:5px;}.ms-footer-btns a{font-size:0!important;}.ms-footer-btns a i{font-size:12px!important;}
   #${PANEL_ID}.ms-focus-mode{width:100vw!important;max-width:100vw!important;height:100dvh!important;max-height:100dvh!important;top:0!important;left:0!important;transform:none!important;border-radius:0!important;}
 }
 @media(max-width:500px){.ms-search{flex:1 1 100%;}}
