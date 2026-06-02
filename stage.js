@@ -990,6 +990,21 @@
     var $p = $("#" + PANEL_ID);
     if (!$p.length) return;
     var el = $p[0];
+
+    var isFullMode =
+      $p.hasClass("ms-focus-mode") ||
+      $p.hasClass("ms-bd-editor-mode") ||
+      $p.hasClass("ms-modal-expand-mode");
+
+    if (isFullMode) {
+      el.style.setProperty("zoom", "1", "important");
+      el.style.removeProperty("width");
+      el.style.removeProperty("max-width");
+      el.style.removeProperty("height");
+      el.style.removeProperty("max-height");
+      return;
+    }
+
     if (data.settings.uiCustomEnabled) {
       var _zoomScale = data.settings.uiFontSize / 14;
       el.style.setProperty("zoom", String(_zoomScale));
@@ -4860,8 +4875,9 @@
 .ms-find-input:focus{border-color:var(--SmartThemeQuoteColor,#666);}
 .ms-find-count{font-size:11px;color:var(--SmartThemeQuoteColor,#888);white-space:nowrap;min-width:32px;text-align:center;flex-shrink:0;}
 .ms-find-count.no-match{color:var(--ms-danger);}
-#${PANEL_ID}.ms-bd-editor-mode{width:96vw!important;max-width:96vw!important;height:90vh!important;max-height:90vh!important;left:50%!important;top:5vh!important;transform:translateX(-50%)!important;}
+#${PANEL_ID}.ms-bd-editor-mode{width:96vw!important;max-width:96vw!important;height:90vh!important;max-height:90vh!important;left:50%!important;top:5vh!important;right:auto!important;bottom:auto!important;transform:translateX(-50%)!important;}
 #${PANEL_ID}.ms-modal-expand-mode{width:96vw!important;max-width:96vw!important;height:90vh!important;max-height:90vh!important;left:50%!important;top:5vh!important;transform:translateX(-50%)!important;}
+#${PANEL_ID}.ms-focus-mode,#${PANEL_ID}.ms-bd-editor-mode,#${PANEL_ID}.ms-modal-expand-mode{zoom:1!important;}
 #${PANEL_ID}.ms-bd-editor-mode .ms-modal{width:680px!important;max-width:94vw!important;max-height:84vh!important;display:flex!important;flex-direction:column!important;}
 #${PANEL_ID}.ms-bd-editor-mode .ms-modal-body{flex:1 1 auto!important;min-height:0!important;overflow-y:auto!important;}
 #${PANEL_ID}.ms-bd-editor-mode .ms-modal-textarea{min-height:200px!important;height:30vh!important;max-height:45vh!important;resize:vertical!important;overflow-y:auto!important;scrollbar-width:none;-ms-overflow-style:none;}
@@ -4900,7 +4916,9 @@
   .ms-batch-bar{gap:3px;}
   .ms-batch-btn{padding:4px 8px;font-size:10px;}
   .ms-footer-btns{gap:5px;}.ms-footer-btns a{font-size:0!important;}.ms-footer-btns a i{font-size:12px!important;}
-  #${PANEL_ID}.ms-focus-mode{width:100vw!important;max-width:100vw!important;height:100dvh!important;max-height:100dvh!important;top:0!important;left:0!important;transform:none!important;border-radius:0!important;}
+  #${PANEL_ID}.ms-focus-mode,
+  #${PANEL_ID}.ms-bd-editor-mode,
+  #${PANEL_ID}.ms-modal-expand-mode{width:100vw!important;max-width:100vw!important;height:100dvh!important;max-height:100dvh!important;top:0!important;left:0!important;right:auto!important;bottom:auto!important;transform:none!important;border-radius:0!important;}
 }
 @media(max-width:500px){.ms-search{flex:1 1 100%;}}
 .ms-modal-overlay{position:absolute;inset:0;background:rgba(0,0,0,0.5);z-index:6000;display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity 0.18s ease;backdrop-filter:blur(2px);-webkit-backdrop-filter:blur(2px);}
@@ -8152,7 +8170,7 @@
       "[data-action='char-bd']",
       function () {
         var cur = (data.settings.charBirthdays || {})[key] || "";
-        msPrompt(
+        msBirthdayPrompt(
           "输入「" +
             displayName +
             "」的生日\n\n格式 MM-DD（如 03-21），留空可清除",
@@ -9449,6 +9467,7 @@
           $(this).removeClass("active");
           $(this).find("i").attr("class", "fa-solid fa-expand");
           $(this).attr("title", "专注编辑");
+          if (setupKeyboardAdapt.refresh) setTimeout(setupKeyboardAdapt.refresh, 80);
         } else {
           $panel.data("ms-focus-saved-pos", {
             left: el.style.getPropertyValue("left"),
@@ -9461,10 +9480,16 @@
           el.style.removeProperty("left");
           el.style.removeProperty("top");
           el.style.removeProperty("transform");
+          el.style.removeProperty("width");
+          el.style.removeProperty("max-width");
+          el.style.removeProperty("height");
+          el.style.removeProperty("max-height");
+          el.style.removeProperty("zoom");
           $panel.addClass("ms-focus-mode");
           $(this).addClass("active");
           $(this).find("i").attr("class", "fa-solid fa-compress");
           $(this).attr("title", "退出专注");
+          if (setupKeyboardAdapt.refresh) setTimeout(setupKeyboardAdapt.refresh, 80);
         }
         return;
       }
@@ -14825,9 +14850,13 @@
       applyReorder(action);
     });
 
-    $p.find("#ms-body").on("pointerdown.ms", "[data-preview-pid]", function (e) {
-      e.stopPropagation();
-    });
+    $p.find("#ms-body").on(
+      "pointerdown.ms",
+      "[data-preview-pid]",
+      function (e) {
+        e.stopPropagation();
+      },
+    );
     $p.find("#ms-body").on("click.ms", "[data-preview-pid]", function (e) {
       e.stopPropagation();
       var pid = $(this).attr("data-preview-pid");
@@ -14839,7 +14868,9 @@
       v._reorderRangeAnchor = rangeAnchor;
       v._reorderExpandedSeries = Array.from(expandedSeries);
       v._reorderCollapsedSections = Array.from(collapsedSections);
-      var orderedIds = groupPrompts.map(function (p) { return p.id; });
+      var orderedIds = groupPrompts.map(function (p) {
+        return p.id;
+      });
       navigateTo({ name: "preview", promptId: pid, _siblingIds: orderedIds });
     });
 
@@ -17655,6 +17686,7 @@
         $p[0].style.removeProperty("transform");
       }
       makeDraggable();
+      setupKeyboardAdapt();
       $p.off("click.ms-inject-ind").on(
         "click.ms-inject-ind",
         "#ms-inject-indicator",
@@ -17838,6 +17870,124 @@
     renderView();
     autoCheckSubscriptions();
     showBirthdayBannerIfAny();
+  }
+
+  function enterBirthdayPanelMode() {
+    var $p = $("#" + PANEL_ID);
+    if (!$p.length) return;
+
+    var depth = parseInt($p.data("ms-bd-mode-depth") || 0);
+    if (depth > 0) {
+      $p.data("ms-bd-mode-depth", depth + 1);
+      return;
+    }
+
+    var el = $p[0];
+    $p.data("ms-bd-mode-depth", 1);
+    $p.data("ms-bd-editor-saved-pos", {
+      left: el.style.getPropertyValue("left"),
+      top: el.style.getPropertyValue("top"),
+      right: el.style.getPropertyValue("right"),
+      bottom: el.style.getPropertyValue("bottom"),
+      width: el.style.getPropertyValue("width"),
+      maxWidth: el.style.getPropertyValue("max-width"),
+      height: el.style.getPropertyValue("height"),
+      maxHeight: el.style.getPropertyValue("max-height"),
+      transform: el.style.getPropertyValue("transform"),
+      zoom: el.style.getPropertyValue("zoom"),
+      panelPos: data.settings.panelPos
+        ? Object.assign({}, data.settings.panelPos)
+        : null,
+    });
+
+    el.style.removeProperty("left");
+    el.style.removeProperty("top");
+    el.style.removeProperty("right");
+    el.style.removeProperty("bottom");
+    el.style.removeProperty("width");
+    el.style.removeProperty("max-width");
+    el.style.removeProperty("height");
+    el.style.removeProperty("max-height");
+    el.style.removeProperty("transform");
+    el.style.removeProperty("zoom");
+
+    $p.addClass("ms-bd-editor-mode");
+
+    if (setupKeyboardAdapt.refresh) {
+      setTimeout(setupKeyboardAdapt.refresh, 50);
+      setTimeout(setupKeyboardAdapt.refresh, 250);
+    }
+  }
+
+  function exitBirthdayPanelMode() {
+    var $p = $("#" + PANEL_ID);
+    if (!$p.length) return;
+
+    var depth = parseInt($p.data("ms-bd-mode-depth") || 0);
+    if (depth > 1) {
+      $p.data("ms-bd-mode-depth", depth - 1);
+      return;
+    }
+
+    $p.removeData("ms-bd-mode-depth");
+    $p.removeClass("ms-bd-editor-mode");
+
+    var saved = $p.data("ms-bd-editor-saved-pos");
+    if (saved) {
+      var el = $p[0];
+
+      if (saved.left) el.style.setProperty("left", saved.left, "important");
+      else el.style.removeProperty("left");
+
+      if (saved.top) el.style.setProperty("top", saved.top, "important");
+      else el.style.removeProperty("top");
+
+      if (saved.right) el.style.setProperty("right", saved.right, "important");
+      else el.style.removeProperty("right");
+
+      if (saved.bottom)
+        el.style.setProperty("bottom", saved.bottom, "important");
+      else el.style.removeProperty("bottom");
+
+      if (saved.width) el.style.setProperty("width", saved.width, "important");
+      else el.style.removeProperty("width");
+
+      if (saved.maxWidth)
+        el.style.setProperty("max-width", saved.maxWidth, "important");
+      else el.style.removeProperty("max-width");
+
+      if (saved.height)
+        el.style.setProperty("height", saved.height, "important");
+      else el.style.removeProperty("height");
+
+      if (saved.maxHeight)
+        el.style.setProperty("max-height", saved.maxHeight, "important");
+      else el.style.removeProperty("max-height");
+
+      if (saved.transform)
+        el.style.setProperty("transform", saved.transform, "important");
+      else el.style.removeProperty("transform");
+
+      if (saved.zoom) el.style.setProperty("zoom", saved.zoom, "important");
+      else el.style.removeProperty("zoom");
+
+      data.settings.panelPos = saved.panelPos || null;
+      $p.removeData("ms-bd-editor-saved-pos");
+      saveData();
+    }
+
+    applyUICustomization();
+
+    if (setupKeyboardAdapt.refresh) {
+      setTimeout(setupKeyboardAdapt.refresh, 50);
+    }
+  }
+
+  function msBirthdayPrompt(message, options) {
+    enterBirthdayPanelMode();
+    return msPrompt(message, options).finally(function () {
+      exitBirthdayPanelMode();
+    });
   }
 
   function showBirthdayMessageEditor(charKey, charName, preferredYear) {
@@ -18156,21 +18306,7 @@
       });
     }
 
-    var $bdPanel = $("#" + PANEL_ID);
-    if ($bdPanel.length) {
-      $bdPanel.data("ms-bd-editor-saved-pos", {
-        left: $bdPanel[0].style.getPropertyValue("left"),
-        top: $bdPanel[0].style.getPropertyValue("top"),
-        transform: $bdPanel[0].style.getPropertyValue("transform"),
-        panelPos: data.settings.panelPos
-          ? Object.assign({}, data.settings.panelPos)
-          : null,
-      });
-      $bdPanel[0].style.removeProperty("left");
-      $bdPanel[0].style.removeProperty("top");
-      $bdPanel[0].style.removeProperty("transform");
-      $bdPanel.addClass("ms-bd-editor-mode");
-    }
+    enterBirthdayPanelMode();
 
     showModal({
       title: "为 " + charName + " 写祝福",
@@ -18231,29 +18367,7 @@
         bindEvents($overlay, close);
       },
     }).then(function () {
-      var $bdPanel2 = $("#" + PANEL_ID);
-      if ($bdPanel2.length) {
-        var saved = $bdPanel2.data("ms-bd-editor-saved-pos");
-        $bdPanel2.removeClass("ms-bd-editor-mode");
-        if (saved) {
-          if (saved.left)
-            $bdPanel2[0].style.setProperty("left", saved.left, "important");
-          else $bdPanel2[0].style.removeProperty("left");
-          if (saved.top)
-            $bdPanel2[0].style.setProperty("top", saved.top, "important");
-          else $bdPanel2[0].style.removeProperty("top");
-          if (saved.transform)
-            $bdPanel2[0].style.setProperty(
-              "transform",
-              saved.transform,
-              "important",
-            );
-          else $bdPanel2[0].style.removeProperty("transform");
-          data.settings.panelPos = saved.panelPos || null;
-          $bdPanel2.removeData("ms-bd-editor-saved-pos");
-          saveData();
-        }
-      }
+      exitBirthdayPanelMode();
     });
   }
 
@@ -18592,6 +18706,8 @@
       return html;
     }
 
+    enterBirthdayPanelMode();
+
     showModal({
       title: charName + " 的生日祝福 🎂",
       iconType: "success",
@@ -18635,6 +18751,8 @@
           }
         });
       },
+    }).then(function () {
+      exitBirthdayPanelMode();
     });
   }
 
@@ -19023,6 +19141,94 @@
   function togglePanel() {
     if (panelVisible) hidePanel();
     else showPanel();
+  }
+
+  function setupKeyboardAdapt() {
+    if (setupKeyboardAdapt._bound) return;
+    var vv = window.visualViewport || null;
+    setupKeyboardAdapt._bound = true;
+    var _kbRaf = null;
+
+    function clearKeyboardPatch(el) {
+      el.style.removeProperty("left");
+      el.style.removeProperty("top");
+      el.style.removeProperty("width");
+      el.style.removeProperty("max-width");
+      el.style.removeProperty("height");
+      el.style.removeProperty("max-height");
+      el.style.removeProperty("transform");
+      el.style.removeProperty("zoom");
+      el.removeAttribute("data-ms-kb");
+    }
+
+    function adapt() {
+      _kbRaf = null;
+      var el = document.getElementById(PANEL_ID);
+      if (!el) return;
+
+      var isFull =
+        el.classList.contains("ms-focus-mode") ||
+        el.classList.contains("ms-bd-editor-mode") ||
+        el.classList.contains("ms-modal-expand-mode");
+
+      var isMobileLike =
+        /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+        Math.min(window.innerWidth || 0, window.innerHeight || 0) <= 900 ||
+        Math.min(vv.width || 0, vv.height || 0) <= 900;
+
+      if (isFull && isMobileLike) {
+        var viewW = Math.round(vv.width || window.innerWidth || document.documentElement.clientWidth);
+        var viewH = Math.round(vv.height || window.innerHeight || document.documentElement.clientHeight);
+        var viewLeft = Math.round(vv.offsetLeft || 0);
+        var viewTop = Math.round(vv.offsetTop || 0);
+
+        el.style.setProperty("left", viewLeft + "px", "important");
+        el.style.setProperty("top", viewTop + "px", "important");
+        el.style.setProperty("width", viewW + "px", "important");
+        el.style.setProperty("max-width", viewW + "px", "important");
+        el.style.setProperty("height", viewH + "px", "important");
+        el.style.setProperty("max-height", viewH + "px", "important");
+        el.style.setProperty("transform", "none", "important");
+        el.style.setProperty("zoom", "1", "important");
+        el.style.setProperty("border-radius", "0", "important");
+        el.setAttribute("data-ms-kb", "1");
+        return;
+      }
+
+      if (el.getAttribute("data-ms-kb") === "1") {
+        clearKeyboardPatch(el);
+        el.style.removeProperty("border-radius");
+      }
+    }
+
+    function schedule() {
+      if (_kbRaf) return;
+      _kbRaf = requestAnimationFrame(adapt);
+    }
+
+    setupKeyboardAdapt.refresh = schedule;
+
+    if (vv) {
+      vv.addEventListener("resize", schedule);
+      vv.addEventListener("scroll", schedule);
+    }
+    window.addEventListener("resize", function () {
+      setTimeout(schedule, 80);
+    });
+
+    document.addEventListener("focusin", function (e) {
+      var t = e.target;
+      if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT")) {
+        setTimeout(schedule, 80);
+        setTimeout(schedule, 250);
+        setTimeout(schedule, 500);
+      }
+    });
+
+    document.addEventListener("focusout", function () {
+      setTimeout(schedule, 120);
+      setTimeout(schedule, 350);
+    });
   }
 
   function makeDraggable() {
