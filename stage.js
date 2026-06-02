@@ -4,7 +4,7 @@
   const STORAGE_KEY = "miniStage_data";
   const PANEL_ID = "mini-stage-panel";
   const STYLE_ID = "mini-stage-styles";
-  const SCRIPT_VERSION = "3.2";
+  const SCRIPT_VERSION = "3.3";
   const GROUP_COLORS = [
     "#D6A2A2",
     "#DDAA90",
@@ -27,7 +27,7 @@
     "#8b5b8c",
   ];
   const TAG_COLORS = GROUP_COLORS;
-  var GUIDE_VERSION = "3.2";
+  var GUIDE_VERSION = "3.3";
   var GUIDE_REMOTE_URLS = {
     guide:
       "https://gist.githubusercontent.com/Sanjs333/c45460dc2bb5908ff53b5769088b122d/raw/guide.md",
