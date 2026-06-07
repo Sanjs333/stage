@@ -2790,7 +2790,17 @@
     _invalidateCharGroupCache();
     saveData();
   }
-
+  function deleteGroupWithPrompts(gid) {
+    var ids = data.prompts
+      .filter(function (p) {
+        return p.groupId === gid;
+      })
+      .map(function (p) {
+        return p.id;
+      });
+    if (ids.length > 0) deletePrompts(ids);
+    deleteGroup(gid);
+  }
   function createPrompt(obj) {
     const p = {
       id: uid(),
@@ -5012,6 +5022,13 @@
 .ms-batch-btn.danger{color:var(--ms-danger);border-color:var(--ms-danger);}
 .ms-batch-btn.danger:hover{background:rgba(var(--ms-danger-rgb),0.12);}
 .ms-nav-item{display:flex;align-items:center;padding:10px 14px;cursor:pointer;gap:10px;transition:background 0.12s;border-bottom:1px solid rgba(255,255,255,0.03);}
+.ms-swipe-wrap{position:relative;overflow:hidden;}
+.ms-swipe-row{display:flex;transition:transform 0.25s cubic-bezier(0.25,0.8,0.25,1);will-change:transform;}
+.ms-swipe-wrap.ms-swiping .ms-swipe-row{transition:none;}
+.ms-swipe-content{flex:0 0 100%;width:100%;box-sizing:border-box;}
+.ms-swipe-del{flex:0 0 80px;width:80px;border:none;background:var(--ms-danger);color:#fff;font-size:12px;font-family:inherit;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;-webkit-tap-highlight-color:transparent;}
+.ms-swipe-del i{font-size:15px;}
+.ms-swipe-del:active{filter:brightness(0.88);}
 .ms-nav-item:hover{background:rgba(255,255,255,0.04);}
 .ms-nav-icon{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;contain:layout style paint;}
 .ms-nav-icon img{content-visibility:auto;}
@@ -5919,7 +5936,7 @@
         '<span class="ms-nav-cnt" style="display:inline-flex;align-items:center;gap:5px;font-size:10px;">' +
         cntParts.join('<span style="opacity:0.35;">·</span>') +
         "</span>";
-      html += `<div class="ms-nav-item${_gHasStage ? " ms-stage-injecting" : ""}" data-nav="group" data-gid="${g.id}">${_iconH}<div class="ms-nav-info"><div class="ms-nav-title">${esc(g.name)}</div>${noteH}</div>${selBadge}${cntHtml}<i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
+      html += `<div class="ms-swipe-wrap"><div class="ms-swipe-row"><div class="ms-nav-item ms-swipe-content${_gHasStage ? " ms-stage-injecting" : ""}" data-nav="group" data-gid="${g.id}">${_iconH}<div class="ms-nav-info"><div class="ms-nav-title">${esc(g.name)}</div>${noteH}</div>${selBadge}${cntHtml}<i class="ms-nav-chevron fa-solid fa-angle-right"></i></div><button class="ms-swipe-del" data-swipe-del-gid="${g.id}"><i class="fa-solid fa-trash"></i>删除</button></div></div>`;
     });
 
     const ungrouped = _gpBuckets["_ungrouped"] || [];
@@ -6215,7 +6232,7 @@
         cardHtml += `</div>`;
       } else {
         cardHtml +=
-          `<div class="ms-card${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><span class="ms-card-star ${starCls}" data-pid="${p.id}"><i class="${starIcon} fa-star"></i></span>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div><div class="ms-card-quick"><button class="ms-card-qbtn" data-qaction="send" data-pid="${p.id}" title="填入输入框"><i class="fa-solid fa-right-to-bracket"></i></button><button class="ms-card-qbtn" data-qaction="send-gen" data-pid="${p.id}" title="发送并生成"><i class="fa-solid fa-paper-plane"></i></button></div><i class="fa-solid fa-angle-right" style="color:var(--SmartThemeQuoteColor,#555);font-size:10px;flex-shrink:0;"></i>`;
+          `<div class="ms-card${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><span class="ms-card-star ${starCls}" data-pid="${p.id}"><i class="${starIcon} fa-star"></i></span>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div><div class="ms-card-quick"><button class="ms-card-qbtn" data-qaction="send" data-pid="${p.id}" title="填入输入框"><i class="fa-solid fa-right-to-bracket"></i></button><button class="ms-card-qbtn" data-qaction="send-gen" data-pid="${p.id}" title="发送并生成"><i class="fa-regular fa-paper-plane"></i></button></div><i class="fa-solid fa-angle-right" style="color:var(--SmartThemeQuoteColor,#555);font-size:10px;flex-shrink:0;"></i>`;
         if (_bottomRowH) cardHtml += _bottomRowH;
         cardHtml += `</div>`;
       }
@@ -7229,14 +7246,15 @@
     });
   }
 
-  function doRandomPick() {
-    const ids = getVisiblePromptIds();
-    if (ids.length === 0) {
-      toast("warning", "当前没有可选的剧场");
-      return;
-    }
-    const randomId = ids[Math.floor(Math.random() * ids.length)];
-    navigateTo({ name: "preview", promptId: randomId });
+  function closeAllSwipes(except) {
+    var $sp = $("#" + PANEL_ID);
+    $sp.find(".ms-swipe-wrap.ms-swiped").each(function () {
+      if (except && this === except[0]) return;
+      $(this)
+        .removeClass("ms-swiped")
+        .find(".ms-swipe-row")
+        .css("transform", "");
+    });
   }
 
   function bindAllEvents() {
@@ -7372,12 +7390,21 @@
     $body.on("pointerdown.ms", ".ms-nav-item[data-nav='group']", function (e) {
       if ($(e.target).closest("button, a, input").length) return;
       var gid = $(this).data("gid");
-      if (!gid || gid === "_ungrouped" || gid === "_builtin_guide_group") return;
-      $(this).data("ms-nav-press-time", Date.now());
+      if (!gid || gid === "_ungrouped") return;
+      if (selectMode) return;
       var $el = $(this);
+      var $row = $el.closest(".ms-swipe-row");
+      var $wrap = $el.closest(".ms-swipe-wrap");
+      var canSwipe = $row.length > 0 && $wrap.length > 0;
+      $el.data("ms-nav-press-time", Date.now());
       var sx = e.clientX || 0,
         sy = e.clientY || 0;
+      var swiping = false;
+      var dirLocked = false;
+      var startOffset = $wrap.hasClass("ms-swiped") ? -80 : 0;
       var navTimer = setTimeout(function () {
+        if (swiping) return;
+        if (gid === "_builtin_guide_group") return;
         $el.data("ms-nav-lp-fired", true);
         if (navigator.vibrate) navigator.vibrate(30);
         navigateTo({ name: "group-edit", groupId: gid });
@@ -7385,15 +7412,51 @@
       var onMove2 = function (ev) {
         var dx = (ev.clientX || 0) - sx,
           dy = (ev.clientY || 0) - sy;
-        if (dx * dx + dy * dy > 100) {
-          clearTimeout(navTimer);
-          navTimer = null;
+        if (!dirLocked) {
+          if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+            dirLocked = true;
+            if (canSwipe && Math.abs(dx) > Math.abs(dy)) {
+              swiping = true;
+              $wrap.addClass("ms-swiping");
+            }
+            if (navTimer) {
+              clearTimeout(navTimer);
+              navTimer = null;
+            }
+          }
+          return;
+        }
+        if (swiping) {
+          ev.preventDefault();
+          var off = startOffset + dx;
+          if (off > 0) off = 0;
+          if (off < -80) off = -80;
+          $row.css("transform", "translateX(" + off + "px)");
         }
       };
-      var onUp2 = function () {
+      var onUp2 = function (ev) {
         if (navTimer) {
           clearTimeout(navTimer);
           navTimer = null;
+        }
+        if (swiping) {
+          $wrap.removeClass("ms-swiping");
+          var dx =
+            (ev && typeof ev.clientX === "number" ? ev.clientX : sx) - sx;
+          var off = startOffset + dx;
+          var open = off < -40;
+          closeAllSwipes($wrap);
+          if (open) {
+            $wrap.addClass("ms-swiped");
+            $row.css("transform", "translateX(-80px)");
+          } else {
+            $wrap.removeClass("ms-swiped");
+            $row.css("transform", "");
+          }
+          $el.data("ms-swipe-just", true);
+          setTimeout(function () {
+            $el.removeData("ms-swipe-just");
+          }, 350);
         }
         $p.off("pointermove.msnlp pointerup.msnlp pointercancel.msnlp");
       };
@@ -7403,6 +7466,15 @@
     });
     $body.on("click.ms", ".ms-nav-item", function () {
       var nav = $(this).data("nav");
+      if ($(this).data("ms-swipe-just")) {
+        $(this).removeData("ms-swipe-just");
+        return;
+      }
+      var $swWrap = $(this).closest(".ms-swipe-wrap");
+      if ($swWrap.length && $swWrap.hasClass("ms-swiped")) {
+        closeAllSwipes();
+        return;
+      }
       if ($(this).data("ms-nav-lp-fired")) {
         $(this).removeData("ms-nav-lp-fired");
         return;
@@ -7418,6 +7490,42 @@
       else if (nav === "characters") navigateTo({ name: "characters" });
       else if (nav === "group")
         navigateTo({ name: "group", groupId: $(this).data("gid") });
+    });
+    $body.on("click.ms", ".ms-swipe-del", function (e) {
+      e.stopPropagation();
+      var gid = $(this).data("swipe-del-gid");
+      var g = getGroup(gid);
+      if (!g) return;
+      var cnt = getPromptsInGroup(gid).length;
+      var isGuide = gid === "_builtin_guide_group";
+      var msg;
+      if (isGuide) {
+        msg =
+          "确定删除「" +
+          g.name +
+          "」分组吗？\n\n这是内置使用指南，里面的说明文档会一起删除。\n删除后可在「设置 → 重新生成使用说明」里恢复。";
+      } else if (cnt > 0) {
+        msg =
+          "确定删除「" +
+          g.name +
+          "」分组吗？\n\n分组下的 " +
+          cnt +
+          " 条剧场会一起被删除，此操作不可撤销！";
+      } else {
+        msg = "确定删除「" + g.name + "」分组吗？";
+      }
+      msConfirm(msg, {
+        title: "删除分组",
+        dangerous: true,
+        okText: "删除",
+      }).then(function (ok) {
+        if (!ok) {
+          closeAllSwipes();
+          return;
+        }
+        deleteGroupWithPrompts(gid);
+        renderView();
+      });
     });
     $body.on("contextmenu.ms", ".ms-card", function (e) {
       e.preventDefault();
@@ -12651,7 +12759,7 @@
     });
     $p.find("#ms-body").on("click.ms", "#ms-regen-guide", function () {
       msConfirm(
-        "将重置「使用指南」分组下的4个内置文档（使用说明、注入指南、角色绑定指南、预览示例），并立即从云端拉取最新内容，确定吗？",
+        "将重置「使用指南」分组下的5个内置文档（预览示例、使用说明、注入功能指南、订阅功能指南、角色绑定指南、），并立即从云端拉取最新内容，确定吗？",
         { title: "重新生成使用说明", okText: "生成" },
       ).then(async function (ok) {
         if (!ok) return;
