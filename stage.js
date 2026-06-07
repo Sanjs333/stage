@@ -1631,40 +1631,6 @@
         saveData();
       }
 
-      var builtinGuideIds = [
-        "_builtin_preview",
-        "_builtin_guide",
-        "_builtin_inject_guide",
-        "_builtin_subscription_guide",
-        "_builtin_char_bind_guide",
-      ];
-      var builtinGuideMap = {};
-      data.prompts.forEach(function (p) {
-        if (builtinGuideIds.indexOf(p.id) >= 0) {
-          builtinGuideMap[p.id] = p;
-        }
-      });
-      var orderedBuiltinGuides = builtinGuideIds
-        .map(function (id) {
-          return builtinGuideMap[id];
-        })
-        .filter(Boolean);
-      if (orderedBuiltinGuides.length > 0) {
-        var needReorder = false;
-        for (var _gi = 0; _gi < orderedBuiltinGuides.length; _gi++) {
-          if (data.prompts[_gi] !== orderedBuiltinGuides[_gi]) {
-            needReorder = true;
-            break;
-          }
-        }
-        if (needReorder) {
-          data.prompts = data.prompts.filter(function (p) {
-            return builtinGuideIds.indexOf(p.id) < 0;
-          });
-          data.prompts = orderedBuiltinGuides.concat(data.prompts);
-          saveData();
-        }
-      }
       try {
         if (Array.isArray(data.settings.stageSelectedIds)) {
           var validPromptIds = new Set(
@@ -1803,7 +1769,9 @@
       return (
         p.id !== "_builtin_guide" &&
         p.id !== "_builtin_preview" &&
-        p.id !== "_builtin_inject_guide"
+        p.id !== "_builtin_inject_guide" &&
+        p.id !== "_builtin_char_bind_guide" &&
+        p.id !== "_builtin_subscription_guide"
       );
     });
     var now = Date.now();
@@ -7273,7 +7241,7 @@
 
   function bindAllEvents() {
     const $p = $("#" + PANEL_ID);
-    $p.find("#ms-body, #ms-toolbar, #ms-footer, #ms-filter-panel").off(".ms");
+    $p.find("#ms-body, #ms-toolbar, #ms-footer, #ms-filter-panel").off(".ms").off(".ms-gd");
     if (bindReorderDrag._cleanup) {
       bindReorderDrag._cleanup();
       bindReorderDrag._cleanup = null;
@@ -7404,7 +7372,7 @@
     $body.on("pointerdown.ms", ".ms-nav-item[data-nav='group']", function (e) {
       if ($(e.target).closest("button, a, input").length) return;
       var gid = $(this).data("gid");
-      if (!gid || gid === "_ungrouped") return;
+      if (!gid || gid === "_ungrouped" || gid === "_builtin_guide_group") return;
       $(this).data("ms-nav-press-time", Date.now());
       var $el = $(this);
       var sx = e.clientX || 0,
@@ -10840,6 +10808,11 @@
   function renderGroupEdit(v) {
     var g = v.groupId ? getGroup(v.groupId) : null,
       isNew = !g;
+    if (v.groupId === "_builtin_guide_group") {
+      toast("info", "使用指南是内置分组，不可编辑哦");
+      navigateBack();
+      return;
+    }
     if (!isNew && !Array.isArray(g.charKeys)) g.charKeys = [];
     var editCharKeys = isNew ? [] : g.charKeys.slice();
     var editColor = isNew
@@ -11187,6 +11160,8 @@
     var _gdSaveTimer = null;
     function _saveGroupEditNow() {
       if (!v.groupId) return false;
+      var _curView = currentView();
+      if (!_curView || _curView.name !== "group-edit" || _curView.groupId !== v.groupId) return false;
       var _g = getGroup(v.groupId);
       if (!_g) return false;
       var $name = $p.find("#ms-gedit-name");
