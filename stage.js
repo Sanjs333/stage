@@ -4,7 +4,7 @@
   const STORAGE_KEY = "miniStage_data";
   const PANEL_ID = "mini-stage-panel";
   const STYLE_ID = "mini-stage-styles";
-  const SCRIPT_VERSION = "3.3";
+  const SCRIPT_VERSION = "3.4";
   const GROUP_COLORS = [
     "#D6A2A2",
     "#DDAA90",
@@ -27,7 +27,7 @@
     "#8b5b8c",
   ];
   const TAG_COLORS = GROUP_COLORS;
-  var GUIDE_VERSION = "3.3";
+  var GUIDE_VERSION = "3.4";
   var GUIDE_REMOTE_URLS = {
     guide:
       "https://gist.githubusercontent.com/Sanjs333/c45460dc2bb5908ff53b5769088b122d/raw/guide.md",
@@ -89,6 +89,7 @@
     selectedTagIds = new Set();
   let editDirty = false;
   let editSnapshot = "";
+  let groupEditDirty = false;
   let activeDropdownCleanup = null;
   let longPressTimer = null;
   let _editDraftTimer = null;
@@ -100,6 +101,7 @@
   let _macroInjectBusy = false;
   let _macroBusyWarned = false;
   let _imgPreloaded = new Set();
+  let _inputAppendList = [];
 
   function preloadPanelImages() {
     try {
@@ -486,6 +488,112 @@
       },
     });
   }
+
+  function showFullscreenEditor(opts) {
+    var $p = $("#" + PANEL_ID);
+    var $sourceTa = $p.find(opts.targetSelector);
+    if (!$sourceTa.length) {
+      toast("error", "找不到要全屏编辑的内容");
+      return;
+    }
+    if ($p.find(".ms-fs-editor-overlay").length) return;
+    var originalValue = $sourceTa.val() || "";
+    var taId = "ms-fs-textarea-" + Math.random().toString(36).slice(2);
+    var el = $p[0];
+    $p.data("ms-fs-saved-pos", {
+      left: el.style.getPropertyValue("left"),
+      top: el.style.getPropertyValue("top"),
+      transform: el.style.getPropertyValue("transform"),
+      width: el.style.getPropertyValue("width"),
+      maxWidth: el.style.getPropertyValue("max-width"),
+      height: el.style.getPropertyValue("height"),
+      maxHeight: el.style.getPropertyValue("max-height"),
+      zoom: el.style.getPropertyValue("zoom"),
+      panelPos: data.settings.panelPos ? Object.assign({}, data.settings.panelPos) : null,
+      wasCollapsed: $p.hasClass("ms-collapsed"),
+    });
+    el.style.removeProperty("left");
+    el.style.removeProperty("top");
+    el.style.removeProperty("transform");
+    el.style.removeProperty("width");
+    el.style.removeProperty("max-width");
+    el.style.removeProperty("height");
+    el.style.removeProperty("max-height");
+    el.style.removeProperty("zoom");
+    $p.removeClass("ms-collapsed");
+    $p.addClass("ms-fs-editor-mode");
+    var stats = countStats(originalValue);
+    var overlayHtml =
+      '<div class="ms-fs-editor-overlay">' +
+      '<div class="ms-fs-header-bar">' +
+      '<i class="fa-solid fa-up-right-and-down-left-from-center" style="color:var(--ms-accent);font-size:13px;"></i>' +
+      '<span class="ms-fs-title-text">' + esc(opts.title || "全屏编辑") + "</span>" +
+      '<button class="ms-tbtn" id="ms-fs-cancel">取消</button>' +
+      '<button class="ms-tbtn" id="ms-fs-save" style="color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-floppy-disk" style="margin-right:3px;"></i>保存</button>' +
+      "</div>" +
+      '<div class="ms-fs-content-wrap">' +
+      '<textarea class="ms-fs-textarea" id="' + taId + '">' + esc(originalValue) + "</textarea>" +
+      "</div>" +
+      '<div class="ms-fs-footer-bar">' +
+      '<div class="ms-char-count">' + stats.chars + " 字 · " + stats.lines + " 行</div>" +
+      "</div>" +
+      "</div>";
+    $p.append(overlayHtml);
+    var $overlay = $p.find(".ms-fs-editor-overlay");
+    var $ta = $overlay.find("#" + taId);
+    var ta = $ta[0];
+    ta.focus();
+    ta.setSelectionRange(originalValue.length, originalValue.length);
+    function updateCount() {
+      var s = countStats(ta.value);
+      $overlay.find(".ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
+    }
+    function closeOverlay() {
+      var saved = $p.data("ms-fs-saved-pos");
+      $overlay.remove();
+      $p.removeClass("ms-fs-editor-mode");
+      if (saved) {
+        var elem = $p[0];
+        var keys = [
+          ["left", "left"],
+          ["top", "top"],
+          ["transform", "transform"],
+          ["width", "width"],
+          ["maxWidth", "max-width"],
+          ["height", "height"],
+          ["maxHeight", "max-height"],
+          ["zoom", "zoom"],
+        ];
+        keys.forEach(function (pair) {
+          var jsKey = pair[0], cssKey = pair[1];
+          if (saved[jsKey]) elem.style.setProperty(cssKey, saved[jsKey], "important");
+          else elem.style.removeProperty(cssKey);
+        });
+        data.settings.panelPos = saved.panelPos || null;
+        if (saved.wasCollapsed) $p.addClass("ms-collapsed");
+      }
+      $p.removeData("ms-fs-saved-pos");
+      applyUICustomization();
+    }
+    $overlay.on("click", "#ms-fs-cancel", function () { closeOverlay(); });
+    $overlay.on("click", "#ms-fs-save", function () {
+      $sourceTa.val(ta.value).trigger("input").trigger("change");
+      closeOverlay();
+    });
+    $ta.on("input", updateCount);
+    $ta.on("keydown", function (e) {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        $overlay.find("#ms-fs-save").trigger("click");
+      } else if (e.key === "Tab") {
+        e.preventDefault();
+        insertAtCursor(this, "  ");
+        updateCount();
+      }
+    });
+    if (setupKeyboardAdapt.refresh) setTimeout(setupKeyboardAdapt.refresh, 80);
+  }
+
   function showInsertDialog(opts) {
     var scopeItems = opts.scopeItems || [];
     var otherItems = scopeItems.filter(function (it) {
@@ -1139,6 +1247,8 @@
           data.settings.filterTagMode = "or";
         if (data.settings.subUpdatesPending === undefined)
           data.settings.subUpdatesPending = 0;
+        if (data.settings.lastSeenVersion === undefined)
+          data.settings.lastSeenVersion = "";
         if (data.settings.stageInjectEnabled === undefined)
           data.settings.stageInjectEnabled = false;
         if (!Array.isArray(data.settings.stageSelectedIds))
@@ -1176,7 +1286,13 @@
             excludedGroupIds: [],
             excludedSeries: [],
             excludedPromptIds: [],
+            multiEnabled: false,
+            multiCount: 2,
           };
+        if (data.settings.randomInject && data.settings.randomInject.multiEnabled === undefined)
+          data.settings.randomInject.multiEnabled = false;
+        if (data.settings.randomInject && data.settings.randomInject.multiCount === undefined)
+          data.settings.randomInject.multiCount = 2;
         if (
           data.settings.randomInject &&
           !Array.isArray(data.settings.randomInject.excludedCharGroupIds)
@@ -1339,11 +1455,30 @@
           if (g.note === undefined) g.note = "";
           if (g.defaultAuthor === undefined) g.defaultAuthor = "";
           if (g.stagePrefix === undefined) g.stagePrefix = "";
+          if (g.multiStagePrefix === undefined) g.multiStagePrefix = "";
           if (!Array.isArray(g.charKeys)) g.charKeys = [];
           if (g.iconMode === undefined) g.iconMode = "group";
           if (g.iconUrl === undefined) g.iconUrl = "";
           if (g.iconCharKey === undefined) g.iconCharKey = "";
           if (!Array.isArray(g.charDisplayOrder)) g.charDisplayOrder = [];
+          if (g.multiPrefixEnabled === undefined) g.multiPrefixEnabled = false;
+          if (!Array.isArray(g.prefixTemplates)) g.prefixTemplates = [];
+          if (!g.prefixAssignments || typeof g.prefixAssignments !== "object") g.prefixAssignments = {};
+          if (g.prefixOverrides && typeof g.prefixOverrides === "object" && Object.keys(g.prefixOverrides).length > 0) {
+            Object.keys(g.prefixOverrides).forEach(function (pid) {
+              var content = g.prefixOverrides[pid];
+              if (!content || !content.trim()) return;
+              var existing = g.prefixTemplates.find(function (t) { return t.content === content; });
+              if (existing) {
+                g.prefixAssignments[pid] = existing.id;
+              } else {
+                var newTpl = { id: uid(), name: '迁移模板 ' + (g.prefixTemplates.length + 1), content: content };
+                g.prefixTemplates.push(newTpl);
+                g.prefixAssignments[pid] = newTpl.id;
+              }
+            });
+            delete g.prefixOverrides;
+          }
         });
         data.subscriptions.forEach(function (s) {
           if (!Array.isArray(s.updateLog)) s.updateLog = [];
@@ -1570,6 +1705,33 @@
       console.warn("[小剧场] 云端指南加载失败:", url, e);
       return null;
     }
+  }
+
+  async function checkAndShowChangelog() {
+    if (!data.settings.lastSeenVersion) {
+      data.settings.lastSeenVersion = SCRIPT_VERSION;
+      saveData();
+      return;
+    }
+    if (data.settings.lastSeenVersion === SCRIPT_VERSION) return;
+    if (!GUIDE_REMOTE_URLS || !GUIDE_REMOTE_URLS.changelog) return;
+    try {
+      var content = await fetchRemoteGuide(GUIDE_REMOTE_URLS.changelog);
+      if (!content) return;
+      var fromVer = data.settings.lastSeenVersion;
+      showModal({
+        title: "小剧场 已更新到 v" + SCRIPT_VERSION,
+        iconType: "success",
+        modalStyle: "min-width:400px;max-width:94vw;width:600px;max-height:80vh;",
+        body: '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;padding:0 2px;"><i class="fa-solid fa-arrow-up-right-from-square" style="margin-right:4px;"></i>从 v' + esc(fromVer) + ' 升级而来</div><div class="ms-preview-content" style="padding:0;">' + renderMd(content) + '</div>',
+        buttons: [
+          { text: "知道了", cls: "primary", primary: true, value: true }
+        ],
+      }).then(function() {
+        data.settings.lastSeenVersion = SCRIPT_VERSION;
+        saveData();
+      });
+    } catch (e) {}
   }
 
   async function updateBuiltinGuidesFromRemote(forceAll) {
@@ -2555,6 +2717,63 @@
     return sorted;
   }
 
+  function _buildLocalNameIndex() {
+    var nameMap = {};
+    try {
+      if (typeof SillyTavern !== "undefined" && SillyTavern.characters) {
+        SillyTavern.characters.forEach(function (c) {
+          if (!c || !c.avatar) return;
+          var dn = getCharDisplayName(c.avatar);
+          if (!nameMap[dn]) nameMap[dn] = [];
+          nameMap[dn].push(c.avatar);
+        });
+      }
+    } catch (e) {}
+    return nameMap;
+  }
+
+  function _rebindPromptChar(p, nameMap) {
+    if (!p || !p.character) return;
+    if (isLocalCharKey(p.character)) return;
+    var exportedName = p.character_name;
+    if (
+      exportedName &&
+      nameMap &&
+      nameMap[exportedName] &&
+      nameMap[exportedName].length === 1
+    ) {
+      p.character = nameMap[exportedName][0];
+    }
+  }
+
+  function _rebindLostKeyByName(key, nameMap) {
+    if (!key || isLocalCharKey(key)) return key;
+    var dn = getCharDisplayName(key);
+    if (nameMap && nameMap[dn] && nameMap[dn].length === 1) {
+      return nameMap[dn][0];
+    }
+    return key;
+  }
+
+  function _buildIPGroupFromImport(icg) {
+    return {
+      id: uid(),
+      name: icg.name,
+      color: icg.color || GROUP_COLORS[data.groups.length % GROUP_COLORS.length],
+      note: icg.note || "",
+      defaultAuthor: icg.defaultAuthor || "",
+      stagePrefix: icg.stagePrefix || "",
+      multiStagePrefix: icg.multiStagePrefix || "",
+      iconMode: icg.iconMode || "group",
+      iconUrl: icg.iconUrl || "",
+      iconCharKey: icg.iconCharKey || "",
+      charKeys: [],
+      multiPrefixEnabled: icg.multiPrefixEnabled === true,
+      prefixTemplates: Array.isArray(icg.prefixTemplates) ? JSON.parse(JSON.stringify(icg.prefixTemplates)) : [],
+      prefixAssignments: icg.prefixAssignments && typeof icg.prefixAssignments === "object" ? Object.assign({}, icg.prefixAssignments) : {},
+    };
+  }
+
   function createGroup(name) {
     const g = {
       id: uid(),
@@ -3023,17 +3242,75 @@
     saveData();
     try {
       const $ta = $("#send_textarea");
-      if ($ta.length) {
-        var sids = data.settings.stageSelectedIds || [];
-        if (
-          data.settings.stageInjectEnabled &&
-          sids.length > 0 &&
-          sids.indexOf(id) >= 0
-        ) {
-          _setupInjectLock();
+      if (!$ta.length) {
+        toast("error", "找不到输入框");
+        return;
+      }
+      var sids = data.settings.stageSelectedIds || [];
+      if (
+        data.settings.stageInjectEnabled &&
+        sids.length > 0 &&
+        sids.indexOf(id) >= 0
+      ) {
+        _setupInjectLock();
+      }
+      var ta = $ta[0];
+      var oldVal = ta.value || "";
+      var start = ta.selectionStart || 0;
+      var end = ta.selectionEnd || 0;
+      if (_inputAppendList.length > 0) {
+        var lastItem = _inputAppendList[_inputAppendList.length - 1];
+        if (oldVal.indexOf(lastItem.content) < 0) {
+          _inputAppendList = [];
         }
-        $ta.val(p.content).trigger("input").trigger("focus");
-      } else toast("error", "找不到输入框");
+      }
+      var insertText;
+      var retroLabel = "";
+      var retroOldContent = "";
+      if (_inputAppendList.length === 0) {
+        insertText = p.content;
+      } else {
+        var num = _inputAppendList.length + 1;
+        var label = "【任务" + num + " | " + (p.title || "未命名") + "】\n";
+        var beforeChars = oldVal.substring(Math.max(0, start - 2), start);
+        var prefix;
+        if (start === 0) {
+          prefix = "";
+        } else if (beforeChars.endsWith("\n\n")) {
+          prefix = "";
+        } else if (beforeChars.endsWith("\n")) {
+          prefix = "\n";
+        } else {
+          prefix = "\n\n";
+        }
+        insertText = prefix + label + p.content;
+        if (_inputAppendList.length === 1) {
+          var firstItem = _inputAppendList[0];
+          var firstLabel = "【任务1 | " + (firstItem.title || "未命名") + "】\n";
+          if (firstItem.content && firstItem.content.indexOf(firstLabel) < 0) {
+            retroLabel = firstLabel;
+            retroOldContent = firstItem.content;
+          }
+        }
+      }
+      var workingVal = oldVal;
+      var workingStart = start;
+      var workingEnd = end;
+      if (retroLabel && retroOldContent) {
+        var firstIdx = workingVal.indexOf(retroOldContent);
+        if (firstIdx >= 0) {
+          workingVal = workingVal.substring(0, firstIdx) + retroLabel + workingVal.substring(firstIdx);
+          var labelLen = retroLabel.length;
+          if (workingStart >= firstIdx) workingStart += labelLen;
+          if (workingEnd >= firstIdx) workingEnd += labelLen;
+          _inputAppendList[0].content = retroLabel + retroOldContent;
+        }
+      }
+      var newVal = workingVal.substring(0, workingStart) + insertText + workingVal.substring(workingEnd);
+      $ta.val(newVal).trigger("input").trigger("focus");
+      var newCursor = workingStart + insertText.length;
+      ta.setSelectionRange(newCursor, newCursor);
+      _inputAppendList.push({ id: p.id, title: p.title, content: insertText });
     } catch (e) {
       toast("error", "操作失败");
     }
@@ -3231,30 +3508,31 @@
     h = h.replace(/(<\/(h[1-6]|blockquote|li|table)>)\s*(<br>)+/gi, "$1");
     h = h.replace(/(<hr[^>]*>)\s*(<br>)+/gi, "$1");
     eqBlocks.forEach(function (content, idx) {
-      h = h.replace(
-        "%%EQ" + idx + "%%",
-        '<span class="ms-quote-text">"' + esc(content) + '"</span>',
-      );
+      var _rep = '<span class="ms-quote-text">"' + esc(content) + '"</span>';
+      h = h.replace("%%EQ" + idx + "%%", function () {
+        return _rep;
+      });
     });
     cqBlocks.forEach(function (content, idx) {
-      h = h.replace(
-        "%%CQ" + idx + "%%",
-        '<span class="ms-quote-text">\u201c' + esc(content) + "\u201d</span>",
-      );
+      var _rep = '<span class="ms-quote-text">\u201c' + esc(content) + "\u201d</span>";
+      h = h.replace("%%CQ" + idx + "%%", function () {
+        return _rep;
+      });
     });
     inlineCodes.forEach(function (code, idx) {
-      h = h.replace(
-        "%%IC" + idx + "%%",
-        "<code class='ms-ic'>" + esc(code) + "</code>",
-      );
+      var _rep = "<code class='ms-ic'>" + esc(code) + "</code>";
+      h = h.replace("%%IC" + idx + "%%", function () {
+        return _rep;
+      });
     });
     codeBlocks.forEach(function (code, idx) {
-      h = h.replace(
-        "%%CB" + idx + "%%",
+      var _rep =
         "<pre class='ms-codeblock'><code>" +
-          esc(code).replace(/\n/g, "<br>") +
-          "</code></pre>",
-      );
+        esc(code).replace(/\n/g, "<br>") +
+        "</code></pre>";
+      h = h.replace("%%CB" + idx + "%%", function () {
+        return _rep;
+      });
     });
     var renderedDetailBlocks = [];
     for (var _dbIdx = 0; _dbIdx < detailBlocks.length; _dbIdx++) {
@@ -3278,7 +3556,10 @@
         "</div></details>";
     }
     for (var _dbIdx2 = detailBlocks.length - 1; _dbIdx2 >= 0; _dbIdx2--) {
-      h = h.replace("%%DB" + _dbIdx2 + "%%", renderedDetailBlocks[_dbIdx2]);
+      var _dbRep = renderedDetailBlocks[_dbIdx2];
+      h = h.replace("%%DB" + _dbIdx2 + "%%", function () {
+        return _dbRep;
+      });
     }
     if (originalText.length < 50000) {
       if (_renderMdCache.size >= 100) {
@@ -3467,6 +3748,7 @@
             note: cg.note || "",
             defaultAuthor: cg.defaultAuthor || "",
             stagePrefix: cg.stagePrefix || "",
+            multiStagePrefix: cg.multiStagePrefix || "",
             iconMode: cg.iconMode || "group",
             iconUrl: cg.iconUrl || "",
             iconCharKey: cg.iconCharKey || "",
@@ -3476,6 +3758,9 @@
                   return matchedKeys.indexOf(k) >= 0;
                 })
               : [],
+            multiPrefixEnabled: cg.multiPrefixEnabled === true,
+            prefixTemplates: Array.isArray(cg.prefixTemplates) ? JSON.parse(JSON.stringify(cg.prefixTemplates)) : [],
+            prefixAssignments: cg.prefixAssignments && typeof cg.prefixAssignments === "object" ? Object.assign({}, cg.prefixAssignments) : {},
           });
         }
       });
@@ -3619,53 +3904,20 @@
     ibdmsgs,
     ibddates,
   ) {
-    function buildLocalNameMap() {
-      var nameMap = {};
-      try {
-        if (typeof SillyTavern !== "undefined" && SillyTavern.characters) {
-          SillyTavern.characters.forEach(function (c) {
-            if (!c || !c.avatar) return;
-            var dn = getCharDisplayName(c.avatar);
-            if (!nameMap[dn]) nameMap[dn] = [];
-            nameMap[dn].push(c.avatar);
-          });
-        }
-      } catch (e) {}
-      return nameMap;
-    }
-    function smartRebindCharacter(p, nameMap) {
-      if (!p.character) return;
-      if (isLocalCharKey(p.character)) return;
-      var exportedName = p.character_name;
-      if (
-        exportedName &&
-        nameMap[exportedName] &&
-        nameMap[exportedName].length === 1
-      ) {
-        p.character = nameMap[exportedName][0];
-        return;
-      }
-    }
-
     icgs = icgs || [];
     ibdmsgs = ibdmsgs || {};
     ibddates = ibddates || {};
-    var _importNameMap = buildLocalNameMap();
+    var _importNameMap = _buildLocalNameIndex();
     var importBdDateConflicts = [];
     var importBdMsgConflicts = [];
     ip.forEach(function (p) {
-      smartRebindCharacter(p, _importNameMap);
+      _rebindPromptChar(p, _importNameMap);
     });
     if (icgs && icgs.length > 0) {
       icgs.forEach(function (icg) {
         if (!Array.isArray(icg.charKeys)) return;
         icg.charKeys = icg.charKeys.map(function (k) {
-          if (!k || isLocalCharKey(k)) return k;
-          var dn = getCharDisplayName(k);
-          if (_importNameMap[dn] && _importNameMap[dn].length === 1) {
-            return _importNameMap[dn][0];
-          }
-          return k;
+          return _rebindLostKeyByName(k, _importNameMap);
         });
       });
     }
@@ -3698,9 +3950,11 @@
             });
             if (existing.charKeys.indexOf(k) < 0) existing.charKeys.push(k);
           });
-          if (!existing.stagePrefix && icg.stagePrefix)
-            existing.stagePrefix = icg.stagePrefix;
-          if (mode !== "append") {
+              if (!existing.stagePrefix && icg.stagePrefix)
+                existing.stagePrefix = icg.stagePrefix;
+              if (!existing.multiStagePrefix && icg.multiStagePrefix)
+                existing.multiStagePrefix = icg.multiStagePrefix;
+              if (mode !== "append") {
             if (icg.color !== undefined) existing.color = icg.color;
             if (icg.note !== undefined) existing.note = icg.note;
             if (icg.defaultAuthor !== undefined)
@@ -3712,6 +3966,9 @@
             if (Array.isArray(icg.charDisplayOrder)) {
               existing.charDisplayOrder = icg.charDisplayOrder.slice();
             }
+            if (icg.multiPrefixEnabled !== undefined) existing.multiPrefixEnabled = icg.multiPrefixEnabled === true;
+            if (Array.isArray(icg.prefixTemplates)) existing.prefixTemplates = JSON.parse(JSON.stringify(icg.prefixTemplates));
+            if (icg.prefixAssignments && typeof icg.prefixAssignments === "object") existing.prefixAssignments = Object.assign({}, icg.prefixAssignments);
           } else {
             if (
               Array.isArray(icg.charDisplayOrder) &&
@@ -3726,20 +3983,7 @@
             }
           }
         } else {
-          var newG = {
-            id: uid(),
-            name: icg.name,
-            color:
-              icg.color ||
-              GROUP_COLORS[data.groups.length % GROUP_COLORS.length],
-            note: icg.note || "",
-            defaultAuthor: icg.defaultAuthor || "",
-            stagePrefix: icg.stagePrefix || "",
-            iconMode: icg.iconMode || "group",
-            iconUrl: icg.iconUrl || "",
-            iconCharKey: icg.iconCharKey || "",
-            charKeys: [],
-          };
+          var newG = _buildIPGroupFromImport(icg);
           importKeys.forEach(function (k) {
             data.groups.forEach(function (other) {
               if (!Array.isArray(other.charKeys)) return;
@@ -4020,14 +4264,37 @@
     }
     if (mode === "replace") applyImportCharGroups(true);
     else applyImportCharGroups(false);
-    function _rebindBdKey(k) {
-      if (!k || isLocalCharKey(k)) return k;
-      var dn = getCharDisplayName(k);
-      if (_importNameMap[dn] && _importNameMap[dn].length === 1) {
-        return _importNameMap[dn][0];
+    (function () {
+      var _expIdToLocal = {};
+      ip.forEach(function (p) {
+        var sid = p.sourceId || p.id;
+        var found = data.prompts.find(function (lp) {
+          return (sid && lp.sourceId === sid) || lp.id === p.id;
+        });
+        if (found) _expIdToLocal[p.id] = found.id;
+      });
+      function _remapAssign(localGroup, srcAssign) {
+        if (!localGroup || !srcAssign || typeof srcAssign !== "object") return;
+        if (!localGroup.prefixAssignments) localGroup.prefixAssignments = {};
+        Object.keys(srcAssign).forEach(function (oldPid) {
+          if (localGroup.prefixAssignments[oldPid] !== undefined && !_expIdToLocal[oldPid]) {
+            delete localGroup.prefixAssignments[oldPid];
+          }
+          var newPid = _expIdToLocal[oldPid];
+          if (newPid) localGroup.prefixAssignments[newPid] = srcAssign[oldPid];
+        });
       }
-      return k;
-    }
+      (ig || []).forEach(function (impG) {
+        if (!impG || !impG.prefixAssignments) return;
+        var localG = data.groups.find(function (g) { return g.name === impG.name; });
+        _remapAssign(localG, impG.prefixAssignments);
+      });
+      (icgs || []).forEach(function (icg) {
+        if (!icg || !icg.prefixAssignments) return;
+        var localG = data.groups.find(function (g) { return g.name === icg.name; });
+        _remapAssign(localG, icg.prefixAssignments);
+      });
+    })();
     var bdMsgKeys = Object.keys(ibdmsgs);
     if (bdMsgKeys.length > 0) {
       if (mode === "replace") {
@@ -4055,7 +4322,7 @@
         } else {
           return;
         }
-        var newKey = _rebindBdKey(k);
+        var newKey = _rebindLostKeyByName(k, _importNameMap);
         var existing = data.settings.charBirthdayMessages[newKey] || {
           versions: {},
         };
@@ -4101,7 +4368,7 @@
       bdDateKeys.forEach(function (k) {
         var d = ibddates[k];
         if (!d || !/^\d{2}-\d{2}$/.test(d)) return;
-        var newKey = _rebindBdKey(k);
+        var newKey = _rebindLostKeyByName(k, _importNameMap);
         if (mode === "merge" && data.settings.ownBirthdays[newKey] === true) {
           var _localBdDate2 = data.settings.charBirthdays[newKey];
           if (_localBdDate2 && _localBdDate2 !== d) {
@@ -4225,7 +4492,7 @@
           ? esc(truncate(getPrompt(sids[0]).title, 16))
           : "已选 " + sids.length + " 条";
       $ind
-        .html('<i class="fa-solid fa-syringe"></i><span>' + label + "</span>")
+        .html('<i class="fa-solid fa-syringe"></i><span>' + label + '</span><i class="fa-solid fa-xmark ms-inject-clear-btn" title="清除所有注入选择" style="margin-left:6px;font-size:10px;opacity:0.6;cursor:pointer;padding:2px 4px;border-radius:3px;"></i>')
         .addClass("visible");
     } else if (
       data.settings.randomInject &&
@@ -4275,6 +4542,28 @@
       return false;
     return true;
   }
+  function stripOuterTagIfMatchesShell(text, shellTagName) {
+    if (!text || !shellTagName) return text;
+    var trimmed = text.replace(/^\s+|\s+$/g, "");
+    if (!trimmed) return text;
+    var openMatch = trimmed.match(/^<([A-Za-z_][\w-]*)\b[^>]*>/);
+    if (!openMatch) return text;
+    if (openMatch[1].toLowerCase() !== shellTagName.toLowerCase()) return text;
+    var tagName = openMatch[1];
+    var closeRe = new RegExp("</\\s*" + tagName + "\\s*>$", "i");
+    var closeMatch = trimmed.match(closeRe);
+    if (!closeMatch) return text;
+    var inner = trimmed.substring(
+      openMatch[0].length,
+      trimmed.length - closeMatch[0].length
+    );
+    var openTagRe = new RegExp("<" + tagName + "\\b", "gi");
+    var closeTagRe = new RegExp("</" + tagName + "\\b", "gi");
+    var openCount = (inner.match(openTagRe) || []).length;
+    var closeCount = (inner.match(closeTagRe) || []).length;
+    if (openCount !== closeCount) return text;
+    return inner.replace(/^\n+/, "").replace(/\n+$/, "");
+  }
 
   function buildStageContent(stagePrompts) {
     if (stagePrompts.length === 0) return "";
@@ -4282,12 +4571,21 @@
       var pr = stagePrompts[0];
       var g = pr.groupId ? getGroup(pr.groupId) : null;
       var prefix = "";
-      if (g && g.stagePrefix) prefix = g.stagePrefix;
-      else if (data.settings.defaultStagePrefix)
-        prefix = data.settings.defaultStagePrefix;
+      if (g && g.multiPrefixEnabled && g.prefixAssignments && g.prefixAssignments[pr.id] && Array.isArray(g.prefixTemplates)) {
+        var _tpl = g.prefixTemplates.find(function (t) { return t.id === g.prefixAssignments[pr.id]; });
+        if (_tpl && _tpl.content && _tpl.content.trim()) prefix = _tpl.content;
+      }
+      if (!prefix) {
+        if (g && g.stagePrefix) prefix = g.stagePrefix;
+        else if (data.settings.defaultStagePrefix) prefix = data.settings.defaultStagePrefix;
+      }
       var result = "";
       if (prefix) {
-        if (/\{\{stage\}\}/i.test(prefix)) {
+        if (/\{\{stages\}\}/i.test(prefix)) {
+          result = prefix.replace(/\{\{stages\}\}/gi, function () {
+            return pr.content;
+          });
+        } else if (/\{\{stage\}\}/i.test(prefix)) {
           result = prefix.replace(/\{\{stage\}\}/gi, function () {
             return pr.content;
           });
@@ -4297,43 +4595,124 @@
       } else {
         result = pr.content;
       }
-      return result.replace(/\{\{stage_title\}\}/gi, pr.title || "");
-    }
-    var taskBlocks = [];
-    stagePrompts.forEach(function (pr, idx) {
-      var g = pr.groupId ? getGroup(pr.groupId) : null;
-      var rawPrefix = "";
-      if (g && g.stagePrefix) rawPrefix = g.stagePrefix;
-      else if (data.settings.defaultStagePrefix)
-        rawPrefix = data.settings.defaultStagePrefix;
-      var innerPrefix = rawPrefix
-        .replace(/^\s*<[A-Za-z_][\w-]*[^>]*>\s*\n?/, "")
-        .replace(/\n?\s*<\/[A-Za-z_][\w-]*>\s*$/, "");
-      var taskContent = "";
-      if (innerPrefix) {
-        if (/\{\{stage\}\}/i.test(innerPrefix)) {
-          taskContent = innerPrefix.replace(/\{\{stage\}\}/gi, function () {
-            return pr.content;
-          });
-        } else {
-          taskContent = innerPrefix + "\n" + pr.content;
-        }
-      } else {
-        taskContent = pr.content;
-      }
-      taskContent = taskContent.replace(/\{\{stage_title\}\}/gi, function () {
+      return result.replace(/\{\{stage_title\}\}/gi, function () {
         return pr.title || "";
       });
-      taskBlocks.push(
-        "\u3010\u4efb\u52a1" + (idx + 1) + "\u3011\n" + taskContent,
-      );
+    }
+    var wrapper = "";
+    var _firstGid = stagePrompts[0].groupId || null;
+    var _allSameGroup = stagePrompts.every(function (p) {
+      return (p.groupId || null) === _firstGid;
     });
-    var tasksStr = taskBlocks.join("\n\n---\n\n");
-    var wrapper = data.settings.multiStagePrefix || "";
+    if (_allSameGroup && _firstGid) {
+      var _firstG = getGroup(_firstGid);
+      if (_firstG && _firstG.multiStagePrefix && _firstG.multiStagePrefix.trim()) {
+        wrapper = _firstG.multiStagePrefix;
+      }
+    }
+    if (!wrapper) {
+      wrapper = data.settings.multiStagePrefix || "";
+    }
     if (!wrapper || wrapper.indexOf("{{stage_tasks}}") < 0) {
       wrapper =
         "<stage>\n\u4ee5\u4e0b\u5171\u6709 {{stage_count}} \u4e2a\u72ec\u7acb\u5c0f\u5267\u573a\u4efb\u52a1\uff0c\u8bf7\u5728\u6b63\u6587\u6700\u540e\u6309\u987a\u5e8f\u9010\u4e00\u5b8c\u6210\uff0c\u6bcf\u6761\u5267\u573a\u5355\u72ec\u4f7f\u7528\u5bf9\u5e94\u683c\u5f0f\u5305\u88f9\u3002\n\n{{stage_tasks}}\n</stage>";
     }
+    var shellTagName = (function () {
+      var _tw = wrapper.replace(/^\s+/, "");
+      var _tm = _tw.match(/^<([A-Za-z_][\w-]*)\b/);
+      return _tm ? _tm[1].toLowerCase() : null;
+    })();
+    var groupedByPrefix = {};
+    var prefixOrder = [];
+    stagePrompts.forEach(function (pr) {
+      var g = pr.groupId ? getGroup(pr.groupId) : null;
+      var rawPrefix = "";
+      if (g && g.multiPrefixEnabled && g.prefixAssignments && g.prefixAssignments[pr.id] && Array.isArray(g.prefixTemplates)) {
+        var _tpl = g.prefixTemplates.find(function (t) { return t.id === g.prefixAssignments[pr.id]; });
+        if (_tpl && _tpl.content && _tpl.content.trim()) rawPrefix = _tpl.content;
+      }
+      if (!rawPrefix) {
+        if (g && g.stagePrefix) rawPrefix = g.stagePrefix;
+        else if (data.settings.defaultStagePrefix) rawPrefix = data.settings.defaultStagePrefix;
+      }
+      var key = rawPrefix || "_no_prefix_";
+      if (!groupedByPrefix[key]) {
+        groupedByPrefix[key] = { rawPrefix: rawPrefix, prompts: [] };
+        prefixOrder.push(key);
+      }
+      groupedByPrefix[key].prompts.push(pr);
+    });
+    var taskBlocks = [];
+    var taskCounter = 0;
+    prefixOrder.forEach(function (key) {
+      var grp = groupedByPrefix[key];
+      var rawPrefix = grp.rawPrefix;
+      var innerPrefix = stripOuterTagIfMatchesShell(rawPrefix, shellTagName);
+      var hasStagesMacro = /\{\{stages\}\}/i.test(innerPrefix);
+      var hasStageMacro = /\{\{stage\}\}/i.test(innerPrefix);
+      if (hasStagesMacro) {
+        var subTasks = [];
+        var allTitles = [];
+        grp.prompts.forEach(function (pr) {
+          taskCounter++;
+          var _subHeader = "\u3010\u4efb\u52a1" + taskCounter;
+          if (pr.title && pr.title.trim()) {
+            _subHeader += " | " + pr.title.trim();
+          }
+          _subHeader += "\u3011";
+          subTasks.push(_subHeader + "\n" + pr.content);
+          allTitles.push(pr.title || "");
+        });
+        var stagesContent = subTasks.join("\n\n");
+        var processedPrefix = innerPrefix
+          .replace(/\{\{stage_title\}\}/gi, function () { return allTitles.join("\u3001"); })
+          .replace(/\{\{stages\}\}/gi, function () { return stagesContent; });
+        taskBlocks.push(processedPrefix);
+      } else if (!innerPrefix || hasStageMacro) {
+        grp.prompts.forEach(function (pr) {
+          taskCounter++;
+          var taskContent = "";
+          if (innerPrefix) {
+            if (hasStageMacro) {
+              taskContent = innerPrefix.replace(/\{\{stage\}\}/gi, function () {
+                return pr.content;
+              });
+            } else {
+              taskContent = innerPrefix + "\n" + pr.content;
+            }
+          } else {
+            taskContent = pr.content;
+          }
+          taskContent = taskContent.replace(/\{\{stage_title\}\}/gi, function () {
+            return pr.title || "";
+          });
+          var _taskHeader = "\u3010\u4efb\u52a1" + taskCounter;
+          if (pr.title && pr.title.trim()) {
+            _taskHeader += " | " + pr.title.trim();
+          }
+          _taskHeader += "\u3011";
+          taskBlocks.push(_taskHeader + "\n" + taskContent);
+        });
+      } else {
+        var subTasks = [];
+        var allTitles = [];
+        grp.prompts.forEach(function (pr) {
+          taskCounter++;
+          var _subHeader = "\u3010\u4efb\u52a1" + taskCounter;
+          if (pr.title && pr.title.trim()) {
+            _subHeader += " | " + pr.title.trim();
+          }
+          _subHeader += "\u3011";
+          subTasks.push(_subHeader + "\n" + pr.content);
+          allTitles.push(pr.title || "");
+        });
+        var processedPrefix = innerPrefix.replace(/\{\{stage_title\}\}/gi, function () {
+          return allTitles.join("\u3001");
+        });
+        taskBlocks.push(processedPrefix + "\n\n" + subTasks.join("\n\n"));
+      }
+    });
+    var tasksStr = taskBlocks.join("\n\n---\n\n");
     var allTitles = stagePrompts
       .map(function (p) {
         return p.title || "";
@@ -4382,6 +4761,104 @@
     return pool[Math.floor(Math.random() * pool.length)];
   }
 
+  function getRandomStagePrompts(count) {
+    var pool = data.prompts.filter(function (p) {
+      return isInRandomPool(p);
+    });
+    if (pool.length === 0) return [];
+    count = Math.min(Math.max(1, count), pool.length);
+    var now = Date.now();
+    var available = pool.slice();
+    var result = [];
+    while (result.length < count && available.length > 0) {
+      var weighted = available.map(function (p) {
+        var w = 1;
+        if (p.lastUsedAt) {
+          var hoursAgo = (now - p.lastUsedAt) / 3600000;
+          if (hoursAgo < 1) w = 0.1;
+          else if (hoursAgo < 6) w = 0.3;
+          else if (hoursAgo < 24) w = 0.6;
+          else if (hoursAgo < 72) w = 0.85;
+        }
+        return { p: p, w: w };
+      });
+      var totalW = 0;
+      weighted.forEach(function (it) {
+        totalW += it.w;
+      });
+      var r = Math.random() * totalW;
+      var acc = 0;
+      var picked = null;
+      for (var i = 0; i < weighted.length; i++) {
+        acc += weighted[i].w;
+        if (r <= acc) {
+          picked = weighted[i].p;
+          break;
+        }
+      }
+      if (!picked) picked = available[Math.floor(Math.random() * available.length)];
+      result.push(picked);
+      available = available.filter(function (p) {
+        return p.id !== picked.id;
+      });
+    }
+    return result;
+  }
+
+  var _pagedCtx = null;
+
+  function _clearPagedCtx() {
+    _pagedCtx = null;
+  }
+
+  function _buildPagedAnchor(rendered, total) {
+    return '<div id="ms-paged-anchor" style="padding:14px;text-align:center;font-size:11px;color:var(--SmartThemeQuoteColor,#888);background:rgba(var(--ms-accent-rgb),0.04);border-top:1px solid rgba(255,255,255,0.04);border-bottom:1px solid rgba(255,255,255,0.04);"><i class="fa-solid fa-arrow-down" style="margin-right:4px;color:var(--ms-accent);"></i>已显示 ' + rendered + ' / ' + total + ' · 继续向下滚动加载</div>';
+  }
+
+  function _applyPagedRender(blockHtmls, options) {
+    options = options || {};
+    var firstBatch = options.firstBatch || 80;
+    var batchSize = options.batchSize || 50;
+    if (!Array.isArray(blockHtmls) || blockHtmls.length <= firstBatch + 20) {
+      return blockHtmls.join("");
+    }
+    _pagedCtx = {
+      blocks: blockHtmls,
+      rendered: firstBatch,
+      batchSize: batchSize,
+      _lastLoad: 0,
+    };
+    return blockHtmls.slice(0, firstBatch).join("") + _buildPagedAnchor(firstBatch, blockHtmls.length);
+  }
+
+  function _loadMorePagedBlocks($body) {
+    if (!_pagedCtx) return;
+    var ctx = _pagedCtx;
+    var $anchor = $body.find("#ms-paged-anchor");
+    if (!$anchor.length) {
+      _pagedCtx = null;
+      return;
+    }
+    var bodyEl = $body[0];
+    if (!bodyEl) return;
+    var distToBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight;
+    if (distToBottom > 400) return;
+    var now = Date.now();
+    if (ctx._lastLoad && now - ctx._lastLoad < 80) return;
+    ctx._lastLoad = now;
+    var end = Math.min(ctx.rendered + ctx.batchSize, ctx.blocks.length);
+    var addHtml = "";
+    for (var i = ctx.rendered; i < end; i++) addHtml += ctx.blocks[i];
+    $anchor.before(addHtml);
+    ctx.rendered = end;
+    if (ctx.rendered >= ctx.blocks.length) {
+      $anchor.remove();
+      _pagedCtx = null;
+    } else {
+      $anchor.replaceWith(_buildPagedAnchor(ctx.rendered, ctx.blocks.length));
+    }
+  }
+
   function currentView() {
     return viewStack[viewStack.length - 1];
   }
@@ -4400,6 +4877,18 @@
         if (!ok) return;
         editDirty = false;
         clearDraft();
+        navigateTo(view, reset);
+      });
+      return;
+    }
+    if (currentView().name === "group-edit" && groupEditDirty) {
+      msConfirm("分组设置尚未保存，确定要离开吗？", {
+        title: "未保存的改动",
+        type: "warning",
+        okText: "离开",
+      }).then(function (ok) {
+        if (!ok) return;
+        groupEditDirty = false;
         navigateTo(view, reset);
       });
       return;
@@ -4466,6 +4955,18 @@
       });
       return;
     }
+    if (currentView().name === "group-edit" && groupEditDirty) {
+      msConfirm("分组设置尚未保存，确定要离开吗？", {
+        title: "未保存的改动",
+        type: "warning",
+        okText: "离开",
+      }).then(function (ok) {
+        if (!ok) return;
+        groupEditDirty = false;
+        navigateBack();
+      });
+      return;
+    }
     editDirty = false;
     closeActiveDropdown();
     $("#" + PANEL_ID).off("keydown.ms-preview-nav");
@@ -4520,7 +5021,7 @@
 .ms-search{flex:1;min-width:100px;padding:6px 10px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:8px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:13px;font-family:inherit;outline:none;}
 .ms-search:focus{border-color:var(--SmartThemeQuoteColor,#666);}
 .ms-toolbar-actions{display:flex;gap:4px;margin-left:auto;flex-shrink:0;}
-.ms-tbtn{padding:5px 10px;border:1px solid var(--SmartThemeBorderColor,#444);background:transparent;color:var(--SmartThemeBodyColor,#aaa);border-radius:8px;cursor:pointer;font-size:12px;font-family:inherit;white-space:nowrap;transition:background 0.15s,color 0.15s;}
+.ms-tbtn{padding:5px 10px;border:1px solid var(--SmartThemeBorderColor,#444);background:transparent;color:var(--SmartThemeBodyColor,#aaa);border-radius:8px;cursor:pointer;font-size:12px;font-family:inherit;white-space:nowrap;transition:background 0.15s,color 0.15s;box-sizing:border-box;}
 .ms-tbtn:hover{background:rgba(255,255,255,0.06);}
 .ms-tbtn.danger{color:var(--ms-danger);border-color:rgba(var(--ms-danger-rgb),0.3);}
 .ms-tbtn.danger:hover{background:rgba(var(--ms-danger-rgb),0.08);border-color:var(--ms-danger);}
@@ -4607,7 +5108,8 @@
 .ms-bd-cake{color:#e88aaa;font-size:18px;flex-shrink:0;display:inline-block;animation:ms-bd-cake-dance 1.6s ease-in-out infinite;transform-origin:bottom center;position:relative;z-index:1;}
 .ms-bd-text{flex:1;position:relative;z-index:1;line-height:1.5;min-width:0;}
 .ms-bd-text strong{background:linear-gradient(90deg,#e88aaa,var(--ms-accent),#ffb088,#e88aaa);background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;font-weight:700;animation:ms-bd-text-shimmer 3s linear infinite;}
-.ms-section-label{padding:10px 14px 4px;font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#666);text-transform:uppercase;letter-spacing:0.03em;}
+.ms-section-label{padding:14px 14px 6px 0;font-size:13px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);letter-spacing:0.02em;text-transform:none;display:flex;align-items:center;gap:8px;}
+.ms-section-label::before{content:"";display:inline-block;width:3px;height:14px;background:var(--ms-accent);border-radius:2px;flex-shrink:0;}
 .ms-divider{height:1px;background:var(--SmartThemeBorderColor,#333);margin:6px 14px;}
 .ms-hl{background:rgba(var(--ms-accent-rgb),0.3);color:inherit;padding:0 1px;border-radius:2px;}
 .ms-preview-content{padding:14px;line-height:1.7;font-size:13px;color:var(--SmartThemeBodyColor,#ccc);overflow-wrap:break-word;word-break:break-word;}
@@ -4837,7 +5339,8 @@
 .ms-stats-card .ms-stat-value{font-size:24px;font-weight:700;color:var(--SmartThemeBodyColor,#eee);line-height:1;}
 .ms-stats-card .ms-stat-label{font-size:10px;color:var(--SmartThemeQuoteColor,#888);text-transform:uppercase;letter-spacing:0.05em;}
 .ms-stats-card .ms-stat-icon{font-size:16px;margin-bottom:2px;opacity:0.5;}
-.ms-stats-section{padding:10px 14px 4px;font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#666);text-transform:uppercase;letter-spacing:0.03em;}
+.ms-stats-section{padding:14px 14px 6px 0;font-size:13px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);letter-spacing:0.02em;text-transform:none;display:flex;align-items:center;gap:8px;}
+.ms-stats-section::before{content:"";display:inline-block;width:3px;height:14px;background:var(--ms-accent);border-radius:2px;flex-shrink:0;}
 .ms-stats-rank{padding:0 14px;}
 .ms-stats-rank-item{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,0.04);}
 .ms-stats-rank-item:last-child{border-bottom:none;}
@@ -4875,6 +5378,18 @@
 .ms-find-input:focus{border-color:var(--SmartThemeQuoteColor,#666);}
 .ms-find-count{font-size:11px;color:var(--SmartThemeQuoteColor,#888);white-space:nowrap;min-width:32px;text-align:center;flex-shrink:0;}
 .ms-find-count.no-match{color:var(--ms-danger);}
+#${PANEL_ID}.ms-fs-editor-mode{width:96vw!important;max-width:96vw!important;height:90vh!important;max-height:90vh!important;left:50%!important;top:5vh!important;right:auto!important;bottom:auto!important;transform:translateX(-50%)!important;zoom:1!important;}
+.ms-fs-editor-overlay{position:absolute;inset:0;background:var(--SmartThemeBlurTintColor,#1a1a2e);z-index:5005;display:flex;flex-direction:column;padding:8px 10px;gap:6px;background-image:var(--ms-panel-bg-image,none)!important;background-size:var(--ms-panel-bg-size,cover)!important;background-position:var(--ms-panel-bg-position,center)!important;background-repeat:var(--ms-panel-bg-repeat,no-repeat)!important;background-attachment:var(--ms-panel-bg-attachment,fixed)!important;}
+.ms-fs-editor-overlay .ms-fs-header-bar{display:flex;align-items:center;gap:8px;padding:2px 4px 6px;border-bottom:1px solid var(--SmartThemeBorderColor,#333);flex-shrink:0;}
+.ms-fs-editor-overlay .ms-fs-title-text{font-size:13px;font-weight:600;flex:1;color:var(--SmartThemeBodyColor,#ddd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ms-fs-editor-overlay .ms-md-toolbar{flex-shrink:0;}
+.ms-fs-editor-overlay .ms-fs-content-wrap{flex:1;display:flex;flex-direction:column;min-height:0;position:relative;}
+.ms-fs-editor-overlay .ms-fs-textarea{flex:1;min-height:0;resize:none;padding:10px 12px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-top:none;border-radius:0 0 8px 8px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:13px;font-family:Consolas,"Courier New",monospace;line-height:1.6;outline:none;width:100%;box-sizing:border-box;}
+.ms-fs-editor-overlay .ms-fs-preview-pane{flex:1;overflow-y:auto;min-height:0;border:1px solid var(--SmartThemeBorderColor,#444);border-top:none;border-radius:0 0 8px 8px;padding:14px;}
+.ms-fs-editor-overlay .ms-fs-footer-bar{display:flex;align-items:center;gap:8px;padding:4px 0;flex-shrink:0;}
+.ms-fs-editor-overlay .ms-fs-footer-bar .ms-char-count{flex:1;text-align:left;padding:0;}
+.ms-fs-editor-overlay .ms-fs-qp-popup{margin-bottom:0;border-radius:8px;border-top:1px solid var(--SmartThemeBorderColor,#444);}
+@media(max-width:768px){#${PANEL_ID}.ms-fs-editor-mode{width:100vw!important;max-width:100vw!important;height:100dvh!important;max-height:100dvh!important;top:0!important;left:0!important;transform:none!important;border-radius:0!important;}}
 #${PANEL_ID}.ms-bd-editor-mode{width:96vw!important;max-width:96vw!important;height:90vh!important;max-height:90vh!important;left:50%!important;top:5vh!important;right:auto!important;bottom:auto!important;transform:translateX(-50%)!important;}
 #${PANEL_ID}.ms-modal-expand-mode{width:96vw!important;max-width:96vw!important;height:90vh!important;max-height:90vh!important;left:50%!important;top:5vh!important;transform:translateX(-50%)!important;}
 #${PANEL_ID}.ms-focus-mode,#${PANEL_ID}.ms-bd-editor-mode,#${PANEL_ID}.ms-modal-expand-mode{zoom:1!important;}
@@ -4983,6 +5498,8 @@
 .ms-switch-slider:before{content:"";position:absolute;height:10px;width:10px;left:2px;bottom:2px;background:#fff;border-radius:50%;transition:0.25s;}
 .ms-switch input:checked+.ms-switch-slider{background:var(--ms-accent);}
 .ms-switch input:checked+.ms-switch-slider:before{transform:translateX(14px);}
+#${PANEL_ID} .ms-form div[style*="font-size:13px"] .ms-switch{order:2;margin-left:auto;}
+#${PANEL_ID} .ms-form div[style*="font-size:13px"]>span{order:1;}
 .ms-filter-mode-btn{padding:1px 8px;border:1px solid var(--SmartThemeBorderColor,#444);background:rgba(var(--ms-accent-rgb),0.08);color:var(--ms-accent);border-radius:4px;cursor:pointer;font-size:10px;font-family:inherit;transition:all 0.15s;line-height:1.4;}
 .ms-filter-mode-btn:hover{background:rgba(var(--ms-accent-rgb),0.18);border-color:var(--ms-accent);}
 .ms-inject-indicator{display:none;align-items:center;gap:4px;font-size:11px;color:var(--ms-accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;flex-shrink:1;min-width:0;}
@@ -5032,6 +5549,7 @@
       bindReorderDrag._cleanup();
       bindReorderDrag._cleanup = null;
     }
+    _clearPagedCtx();
     const $p = $("#" + PANEL_ID);
     if (!$p.length) return;
     $p.find("#ms-count").text(data.prompts.length + " 条");
@@ -5152,6 +5670,7 @@
   function renderBodyOnly() {
     const $p = $("#" + PANEL_ID);
     if (!$p.length) return;
+    _clearPagedCtx();
     const v = currentView(),
       $body = $p.find("#ms-body");
     var _openSeries = [];
@@ -5210,12 +5729,10 @@
       let f = sortPrompts(
         filterPrompts(searchPrompts(getStarredPrompts(), searchQuery)),
       );
-      $body.html(
-        buildRangeModeHint() +
-          (f.length > 0
-            ? renderPromptCards(f, true)
-            : `<div class="ms-empty"><i class="fa-solid fa-star"></i>还没有收藏</div>`),
-      );
+      var _sf = f.length > 0
+        ? _applyPagedRender(getPromptCardBlocks(f, true))
+        : `<div class="ms-empty"><i class="fa-solid fa-star"></i>还没有收藏</div>`;
+      $body.html(buildRangeModeHint() + _sf);
 
       $p.find("#ms-footer")
         .html(
@@ -5226,12 +5743,10 @@
       const list = sortPrompts(
         filterPrompts(searchPrompts(getRecentPrompts(), searchQuery)),
       );
-      $body.html(
-        buildRangeModeHint() +
-          (list.length > 0
-            ? renderPromptCards(list, true)
-            : `<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>还没有记录</div>`),
-      );
+      var _rf = list.length > 0
+        ? _applyPagedRender(getPromptCardBlocks(list, true))
+        : `<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>还没有记录</div>`;
+      $body.html(buildRangeModeHint() + _rf);
 
       $p.find("#ms-footer")
         .find("span:first")
@@ -5328,15 +5843,17 @@
       );
       if (list.length > 0) {
         html += `<div class="ms-section-label">${searchQuery ? "搜索" : "筛选"}结果 (${list.length})</div>`;
+        var _searchBlocks;
         if (
           !searchQuery &&
           filterState.groupId &&
           filterState.groupId !== "_ungrouped"
         ) {
-          html += renderGroupBodyWithSeries(list);
+          _searchBlocks = getGroupBodySeriesBlocks(list);
         } else {
-          html += renderPromptCards(list, true);
+          _searchBlocks = getPromptCardBlocks(list, true);
         }
+        html += _applyPagedRender(_searchBlocks);
       } else
         html = `<div class="ms-empty"><i class="fa-solid fa-magnifying-glass"></i>没有找到匹配的内容</div>`;
       return html;
@@ -5592,10 +6109,9 @@
     return html;
   }
 
-  function renderPromptCards(list, showGroupLabel) {
-    if (list.length === 0)
-      return `<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无</div>`;
-    const _parts = [];
+  function getPromptCardBlocks(list, showGroupLabel) {
+    if (list.length === 0) return [];
+    var blocks = [];
     list.forEach((p) => {
       const starCls = p.starred ? "active" : "",
         starIcon = p.starred ? "fa-solid" : "fa-regular",
@@ -5723,27 +6239,33 @@
         _bottomRowH =
           '<div class="ms-card-tags-row">' + (tagsH || "") + _tsH + "</div>";
       }
+      var cardHtml = "";
       if (selectMode) {
-        _parts.push(
-          `<div class="ms-card ${isSel ? "selected" : ""}${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><div class="ms-card-check"><i class="fa-solid fa-check"></i></div>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}${anchorH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div>`,
-        );
-        if (_bottomRowH) _parts.push(_bottomRowH);
-        _parts.push(`</div>`);
+        cardHtml +=
+          `<div class="ms-card ${isSel ? "selected" : ""}${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><div class="ms-card-check"><i class="fa-solid fa-check"></i></div>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}${anchorH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div>`;
+        if (_bottomRowH) cardHtml += _bottomRowH;
+        cardHtml += `</div>`;
       } else {
-        _parts.push(
-          `<div class="ms-card${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><span class="ms-card-star ${starCls}" data-pid="${p.id}"><i class="${starIcon} fa-star"></i></span>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div><div class="ms-card-quick"><button class="ms-card-qbtn" data-qaction="send" data-pid="${p.id}" title="填入输入框"><i class="fa-solid fa-right-to-bracket"></i></button><button class="ms-card-qbtn" data-qaction="send-gen" data-pid="${p.id}" title="发送并生成"><i class="fa-solid fa-paper-plane"></i></button></div><i class="fa-solid fa-angle-right" style="color:var(--SmartThemeQuoteColor,#555);font-size:10px;flex-shrink:0;"></i>`,
-        );
-        if (_bottomRowH) _parts.push(_bottomRowH);
-        _parts.push(`</div>`);
+        cardHtml +=
+          `<div class="ms-card${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><span class="ms-card-star ${starCls}" data-pid="${p.id}"><i class="${starIcon} fa-star"></i></span>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div><div class="ms-card-quick"><button class="ms-card-qbtn" data-qaction="send" data-pid="${p.id}" title="填入输入框"><i class="fa-solid fa-right-to-bracket"></i></button><button class="ms-card-qbtn" data-qaction="send-gen" data-pid="${p.id}" title="发送并生成"><i class="fa-solid fa-paper-plane"></i></button></div><i class="fa-solid fa-angle-right" style="color:var(--SmartThemeQuoteColor,#555);font-size:10px;flex-shrink:0;"></i>`;
+        if (_bottomRowH) cardHtml += _bottomRowH;
+        cardHtml += `</div>`;
       }
+      blocks.push(cardHtml);
     });
-    return _parts.join("");
+    return blocks;
   }
 
-  function renderGroupBodyWithSeries(list) {
-    if (searchQuery) return renderPromptCards(list, true);
+  function renderPromptCards(list, showGroupLabel) {
+    if (list.length === 0)
+      return `<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无</div>`;
+    return getPromptCardBlocks(list, showGroupLabel).join("");
+  }
+
+  function getGroupBodySeriesBlocks(list) {
+    if (searchQuery) return getPromptCardBlocks(list, true);
     var rendered = new Set();
-    var html = "";
+    var blocks = [];
     list.forEach(function (p) {
       if (rendered.has(p.id)) return;
       if (p.series && p.series.trim()) {
@@ -5792,7 +6314,7 @@
             seriesItems.some(function (si) {
               return (data.settings.stageSelectedIds || []).indexOf(si.id) >= 0;
             });
-          html +=
+          blocks.push(
             '<div class="ms-series-group' +
             (_seriesHasStage ? " ms-stage-injecting" : "") +
             '"><div class="ms-series-header" data-series-id="' +
@@ -5810,7 +6332,8 @@
             sid +
             '">' +
             renderPromptCards(seriesItems, false) +
-            "</div></div>";
+            "</div></div>"
+          );
           seriesItems.forEach(function (q) {
             rendered.add(q.id);
           });
@@ -5847,7 +6370,7 @@
               }
               var _singleHasStage =
                 (data.settings.stageSelectedIds || []).indexOf(p.id) >= 0;
-              html +=
+              blocks.push(
                 '<div class="ms-series-group' +
                 (_singleHasStage ? " ms-stage-injecting" : "") +
                 '"><div class="ms-series-header" data-series-id="' +
@@ -5867,20 +6390,27 @@
                 sid2 +
                 '">' +
                 renderPromptCards([p], false) +
-                "</div></div>";
+                "</div></div>"
+              );
               rendered.add(p.id);
               return;
             }
           }
-          html += renderPromptCards([p], false);
+          var _singleBlocks1 = getPromptCardBlocks([p], false);
+          if (_singleBlocks1.length > 0) blocks.push(_singleBlocks1[0]);
           rendered.add(p.id);
         }
       } else {
-        html += renderPromptCards([p], false);
+        var _singleBlocks2 = getPromptCardBlocks([p], false);
+        if (_singleBlocks2.length > 0) blocks.push(_singleBlocks2[0]);
         rendered.add(p.id);
       }
     });
-    return html;
+    return blocks;
+  }
+
+  function renderGroupBodyWithSeries(list) {
+    return getGroupBodySeriesBlocks(list).join("");
   }
 
   function openDropdown($p, html, position) {
@@ -7396,6 +7926,7 @@
         var distToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
         if (distToBottom > 150) $btnBottom.addClass("visible");
         else $btnBottom.removeClass("visible");
+        _loadMorePagedBlocks($body);
       });
     });
     $p.off("click.ms-scroll-top").on(
@@ -7694,7 +8225,7 @@
           "</div></div>";
       });
     } else {
-      bodyHtml += renderGroupBodyWithSeries(filtered);
+      bodyHtml += _applyPagedRender(getGroupBodySeriesBlocks(filtered));
     }
 
     $p.find("#ms-body").html(bodyHtml);
@@ -7839,12 +8370,10 @@
         random: list.length > 0,
       }),
     );
-    $p.find("#ms-body").html(
-      buildRangeModeHint() +
-        (list.length > 0
-          ? renderPromptCards(list, true)
-          : `<div class="ms-empty"><i class="fa-solid fa-star"></i>还没有收藏</div>`),
-    );
+    var _starredHtml = list.length > 0
+      ? _applyPagedRender(getPromptCardBlocks(list, true))
+      : `<div class="ms-empty"><i class="fa-solid fa-star"></i>还没有收藏</div>`;
+    $p.find("#ms-body").html(buildRangeModeHint() + _starredHtml);
     $p.find("#ms-footer")
       .html(
         selectMode ? buildBatchFooter() : `<span>${list.length} 条收藏</span>`,
@@ -7858,11 +8387,10 @@
       list = searchPrompts(getRecentPrompts(), searchQuery);
     $p.find("#ms-title").text("最近使用");
     $p.find("#ms-toolbar").html(buildToolbar({ back: true, search: true }));
-    $p.find("#ms-body").html(
-      list.length > 0
-        ? renderPromptCards(list, true)
-        : `<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>还没有记录</div>`,
-    );
+    var _recentHtml = list.length > 0
+      ? _applyPagedRender(getPromptCardBlocks(list, true))
+      : `<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>还没有记录</div>`;
+    $p.find("#ms-body").html(_recentHtml);
     $p.find("#ms-footer")
       .html(
         `<span>${list.length} 条</span><div class="ms-footer-btns">${list.length > 0 ? '<a data-action="clear-recent"><i class="fa-solid fa-broom"></i> 清空记录</a>' : ""}</div>`,
@@ -8096,12 +8624,10 @@
         addId: "ms-btn-new-in-char",
       }),
     );
-    $p.find("#ms-body").html(
-      buildRangeModeHint() +
-        (filtered.length > 0
-          ? renderGroupBodyWithSeries(filtered)
-          : `<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无内容</div>`),
-    );
+    var _charHtml = filtered.length > 0
+      ? _applyPagedRender(getGroupBodySeriesBlocks(filtered))
+      : `<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无内容</div>`;
+    $p.find("#ms-body").html(buildRangeModeHint() + _charHtml);
     var metaParts = [];
     if (charCg)
       metaParts.push(
@@ -10111,7 +10637,7 @@
       (isNew ? "新建" : "编辑") + "快捷短语",
     );
     $p.find("#ms-body").html(
-      `<div class="ms-form"><div class="ms-field"><label>标题</label><input type="text" id="ms-qpe-title" value="${esc(qp ? qp.title : "")}"></div><div class="ms-field"><label>内容</label><textarea id="ms-qpe-content" style="min-height:140px;">${esc(qp ? qp.content : "")}</textarea></div><div class="ms-form-btns"><button class="ms-btn" id="ms-qpe-cancel">取消</button><button class="ms-btn primary" id="ms-qpe-save">保存</button></div></div>`,
+      `<div class="ms-form"><div class="ms-field"><label>标题</label><input type="text" id="ms-qpe-title" value="${esc(qp ? qp.title : "")}"></div><div class="ms-field"><label>内容 <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-qpe-content" data-fs-title="编辑快捷短语内容" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-qpe-content" style="min-height:140px;">${esc(qp ? qp.content : "")}</textarea></div><div class="ms-form-btns"><button class="ms-btn" id="ms-qpe-cancel">取消</button><button class="ms-btn primary" id="ms-qpe-save">保存</button></div></div>`,
     );
     $p.find("#ms-footer").hide();
     bindAllEvents();
@@ -10544,7 +11070,77 @@
         }
         charSectionH += "</div>";
       }
-
+      var multiPrefixSectionH = "";
+      if (!isNew && v.groupId) {
+        var groupPrompts = getPromptsInGroup(v.groupId);
+        var multiPrefixEnabled = g && g.multiPrefixEnabled;
+        var prefixTemplates = (g && Array.isArray(g.prefixTemplates)) ? g.prefixTemplates : [];
+        var prefixAssignments = (g && g.prefixAssignments) || {};
+        multiPrefixSectionH +=
+          '<div class="ms-section-label" style="display:flex;align-items:center;gap:8px;padding:8px 14px 4px;">' +
+          '<label class="ms-switch" style="margin:0;"><input type="checkbox" id="ms-gedit-multi-prefix-toggle" ' +
+          (multiPrefixEnabled ? "checked" : "") +
+          '><span class="ms-switch-slider"></span></label>' +
+          '<span style="font-weight:600;text-transform:none;letter-spacing:0;font-size:11px;color:var(--SmartThemeQuoteColor,#888);">多前缀模式</span>' +
+          '<span style="font-size:9px;font-weight:normal;opacity:0.6;text-transform:none;letter-spacing:0;">(创建多套前缀模板，适用于分组内多条剧场不同前缀)</span>' +
+          "</div>";
+        if (multiPrefixEnabled) {
+          var tplToPrompts = {};
+          Object.keys(prefixAssignments).forEach(function (pid) {
+            var tid = prefixAssignments[pid];
+            if (!tplToPrompts[tid]) tplToPrompts[tid] = [];
+            tplToPrompts[tid].push(pid);
+          });
+          multiPrefixSectionH +=
+            '<div style="padding:4px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;line-height:1.6;">' +
+            '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>没被任何模板勾选的剧场，会自动用上方「注入前缀指令」作为分组默认' +
+            "</div>";
+          multiPrefixSectionH +=
+            '<div style="padding:4px 14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+            '<button class="ms-tbtn" id="ms-gedit-add-template" style="font-size:11px;padding:4px 10px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:3px;"></i>添加前缀模板</button>' +
+            '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">' + prefixTemplates.length + ' 个模板，' + groupPrompts.length + ' 条剧场</span>' +
+            "</div>";
+          if (prefixTemplates.length === 0) {
+            multiPrefixSectionH +=
+              '<div class="ms-empty" style="padding:14px;font-size:11px;"><i class="fa-solid fa-file-lines"></i>还没有模板，点上面「添加前缀模板」开始创建</div>';
+          } else {
+            multiPrefixSectionH +=
+              '<div id="ms-gedit-template-list" style="padding:0 14px;display:flex;flex-direction:column;gap:10px;">';
+            prefixTemplates.forEach(function (tpl, tplIdx) {
+              var assignedIds = tplToPrompts[tpl.id] || [];
+              multiPrefixSectionH +=
+                '<div class="ms-prefix-tpl-item" data-tpl-id="' + tpl.id + '" style="padding:6px 0 10px;border-bottom:1px dashed rgba(255,255,255,0.06);">' +
+                '<div style="display:flex;align-items:center;gap:4px;margin-bottom:5px;">' +
+                '<span style="font-size:10px;color:var(--ms-accent);font-weight:600;flex-shrink:0;min-width:28px;">#' + (tplIdx + 1) + '</span>' +
+                '<input type="text" class="ms-prefix-tpl-name" data-tpl-id="' + tpl.id + '" value="' + esc(tpl.name || "未命名模板") + '" placeholder="模板名" style="flex:1;min-width:0;padding:3px 8px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:4px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:12px;outline:none;">' +
+                '<i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-tpl-content-' + tpl.id + '" data-fs-title="编辑模板「' + esc(truncate(tpl.name || "未命名模板", 20)) + '」" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
+                '<i class="fa-solid fa-trash ms-prefix-tpl-del" data-tpl-id="' + tpl.id + '" title="删除模板" style="cursor:pointer;color:var(--ms-danger);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
+                "</div>" +
+                '<textarea class="ms-prefix-tpl-content" id="ms-tpl-content-' + tpl.id + '" data-tpl-id="' + tpl.id + '" style="min-height:54px;width:100%;font-family:Consolas,monospace;font-size:11px;line-height:1.5;resize:vertical;box-sizing:border-box;margin-bottom:6px;" placeholder="模板内容，可用 {\u200B{stage}}、{\u200B{stage_title}} 等宏">' +
+                esc(tpl.content || "") +
+                "</textarea>";
+              if (groupPrompts.length === 0) {
+                multiPrefixSectionH += '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;padding-left:32px;">本分组还没有剧场</div>';
+              } else {
+                multiPrefixSectionH +=
+                  '<button class="ms-tbtn ms-prefix-tpl-config" data-tpl-id="' + tpl.id + '" style="width:100%;text-align:center;font-size:11px;padding:5px 10px;display:flex;align-items:center;justify-content:center;gap:6px;">' +
+                  '<i class="fa-solid fa-list-check" style="color:var(--ms-accent);"></i>' +
+                  '<span>配置适用剧场</span>' +
+                  (assignedIds.length > 0
+                    ? '<span style="font-size:11px;color:var(--ms-accent);font-weight:600;">已选 ' + assignedIds.length + ' 条</span>'
+                    : '<span style="font-size:10px;opacity:0.55;">未配置</span>') +
+                  '</button>';
+              }
+              multiPrefixSectionH += "</div>";
+            });
+            multiPrefixSectionH += "</div>";
+          }
+          if (groupPrompts.length === 0 && prefixTemplates.length > 0) {
+            multiPrefixSectionH +=
+              '<div class="ms-empty" style="padding:14px;font-size:11px;margin:6px 14px 0;"><i class="fa-solid fa-folder-open"></i>本分组还没有剧场，添加剧场后再来分配模板</div>';
+          }
+        }
+      }
       var toggleCharSectionH =
         '<button class="ms-tbtn" id="ms-gedit-toggle-charsection" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-' +
         (showCharSection ? "chevron-up" : "layer-group") +
@@ -10565,15 +11161,21 @@
         '<div class="ms-field"><label>默认作者</label><input type="text" id="ms-gedit-author" placeholder="该分组下新建时自动填入" value="' +
         esc(g ? g.defaultAuthor || "" : "") +
         '"></div>' +
-        '<div class="ms-field"><label>注入前缀指令 <span style="font-weight:350;opacity:0.5;">(可选，留空用全局默认，用  标记剧场插入位置)</span></label><textarea id="ms-gedit-prefix" style="min-height:50px;resize:vertical;" placeholder="该分组的剧场注入时使用此前缀">' +
+        '<div class="ms-field"><label>注入前缀指令 <span style="font-weight:350;opacity:0.5;">(可选，留空用全局默认，用 {\u200B{stage}} 标记剧场插入位置)</span> <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-gedit-prefix" data-fs-title="编辑分组前缀指令" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-gedit-prefix" style="min-height:50px;resize:vertical;" placeholder="该分组的剧场注入时使用此前缀">' +
         esc(g ? g.stagePrefix || "" : "") +
         "</textarea></div>" +
+        '<div class="ms-field"><label>多条外壳模板（本组）<span style="font-weight:350;opacity:0.5;">(选多条本组剧场时的整体结构，留空使用全局默认；用 {\u200B{stage_count}} 表示数量、{\u200B{stage_tasks}} 表示所有任务块)</span> <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-gedit-multi-shell" data-fs-title="编辑分组多条外壳模板" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-gedit-multi-shell" style="min-height:60px;resize:vertical;" placeholder="留空使用全局默认；多条剧场全在本组时才生效">' +
+        esc(g ? g.multiStagePrefix || "" : "") +
+        "</textarea></div>" +
+        multiPrefixSectionH +
         toggleCharSectionH +
         charSectionH +
         (!isNew
-          ? '<div class="ms-divider"></div><button class="ms-tbtn" id="ms-group-set-all-author" style="width:100%;text-align:center;"><i class="fa-solid fa-user-pen"></i> 批量设置本组作者</button>'
+          ? '<button class="ms-tbtn" id="ms-group-set-all-author" style="width:100%;text-align:center;"><i class="fa-solid fa-user-pen"></i> 批量设置本组作者</button>'
           : "") +
-        '<div class="ms-form-btns"><button class="ms-btn" id="ms-gedit-cancel">取消</button><button class="ms-btn primary" id="ms-gedit-save">保存</button></div>' +
+        (isNew
+          ? '<div class="ms-form-btns"><button class="ms-btn" id="ms-gedit-cancel">取消</button><button class="ms-btn primary" id="ms-gedit-save">保存</button></div>'
+          : "") +
         "</div>"
       );
     }
@@ -10581,6 +11183,92 @@
     $p.find("#ms-body").html(buildBody());
     $p.find("#ms-footer").hide();
     bindAllEvents();
+    groupEditDirty = false;
+    var _gdSaveTimer = null;
+    function _saveGroupEditNow() {
+      if (!v.groupId) return false;
+      var _g = getGroup(v.groupId);
+      if (!_g) return false;
+      var $name = $p.find("#ms-gedit-name");
+      if (!$name.length) return false;
+      var name = ($name.val() || "").trim();
+      if (!name) return false;
+      _collectMultiPrefixFromUI();
+      var stagePrefix = $p.find("#ms-gedit-prefix").val() || "";
+      var multiStagePrefix = $p.find("#ms-gedit-multi-shell").val() || "";
+      var finalIconUrl = $p.find("#ms-gedit-icon-url").length
+        ? $p.find("#ms-gedit-icon-url").val().trim()
+        : editIconUrl;
+      var payload = {
+        name: name,
+        note: ($p.find("#ms-gedit-note").val() || "").trim(),
+        color: editColor,
+        defaultAuthor: ($p.find("#ms-gedit-author").val() || "").trim(),
+        stagePrefix: stagePrefix,
+        multiStagePrefix: multiStagePrefix,
+        iconMode: editIconMode,
+        iconUrl: editIconMode === "custom" ? finalIconUrl : "",
+        iconCharKey: editIconMode === "char" ? editIconCharKey : "",
+        charKeys: editCharKeys.slice(),
+        multiPrefixEnabled: editMultiPrefixEnabled,
+        prefixTemplates: editPrefixTemplates,
+        prefixAssignments: editPrefixAssignments,
+      };
+      data.groups.forEach(function (og) {
+        if (og.id === v.groupId) return;
+        if (!Array.isArray(og.charKeys)) return;
+        og.charKeys = og.charKeys.filter(function (k) {
+          return editCharKeys.indexOf(k) < 0;
+        });
+      });
+      updateGroup(v.groupId, payload);
+      _invalidateCharGroupCache();
+      return true;
+    }
+    function _saveGroupEditDebounced() {
+      if (_gdSaveTimer) clearTimeout(_gdSaveTimer);
+      _gdSaveTimer = setTimeout(function () {
+        _gdSaveTimer = null;
+        _saveGroupEditNow();
+      }, 350);
+    }
+    if (isNew) {
+      $p.find("#ms-body").on("input.ms-gd change.ms-gd", "input, textarea, select", function () {
+        groupEditDirty = true;
+      });
+      $p.find("#ms-body").on(
+        "click.ms-gd",
+        "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-toggle-charsection, #ms-gedit-add-template, .ms-prefix-tpl-del, .ms-gedit-char-cb",
+        function () {
+          groupEditDirty = true;
+        }
+      );
+    } else {
+      $p.find("#ms-body").on("input.ms-gd", "input, textarea", function () {
+        _saveGroupEditDebounced();
+      });
+      $p.find("#ms-body").on("change.ms-gd", "input, textarea, select", function () {
+        if (_gdSaveTimer) {
+          clearTimeout(_gdSaveTimer);
+          _gdSaveTimer = null;
+        }
+        _saveGroupEditNow();
+      });
+      $p.find("#ms-body").on("focusout.ms-gd", "input, textarea", function () {
+        if (_gdSaveTimer) {
+          clearTimeout(_gdSaveTimer);
+          _gdSaveTimer = null;
+        }
+        _saveGroupEditNow();
+      });
+      $p.find("#ms-body").on(
+        "click.ms-gd",
+        "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-add-template, .ms-prefix-tpl-del, .ms-gedit-char-cb",
+        function () {
+          setTimeout(_saveGroupEditNow, 0);
+        }
+      );
+    }
 
     function refreshBody() {
       var $body = $p.find("#ms-body");
@@ -10628,7 +11316,284 @@
         }
       });
     }
+    var editMultiPrefixEnabled = !isNew && g && g.multiPrefixEnabled;
+    var editPrefixTemplates = !isNew && g && Array.isArray(g.prefixTemplates) ? JSON.parse(JSON.stringify(g.prefixTemplates)) : [];
+    var editPrefixAssignments = !isNew && g && g.prefixAssignments ? Object.assign({}, g.prefixAssignments) : {};
+    function _collectMultiPrefixFromUI() {
+      $p.find(".ms-prefix-tpl-name").each(function () {
+        var tid = $(this).data("tpl-id");
+        var tpl = editPrefixTemplates.find(function (t) { return t.id === tid; });
+        if (tpl) tpl.name = $(this).val();
+      });
+      $p.find(".ms-prefix-tpl-content").each(function () {
+        var tid = $(this).data("tpl-id");
+        var tpl = editPrefixTemplates.find(function (t) { return t.id === tid; });
+        if (tpl) tpl.content = $(this).val();
+      });
+    }
+    function _syncMultiPrefixToGroup() {
+      if (!g) return;
+      g.multiPrefixEnabled = editMultiPrefixEnabled;
+      g.prefixTemplates = editPrefixTemplates;
+      g.prefixAssignments = editPrefixAssignments;
+    }
+    function _refreshMultiPrefixUI() {
+      _collectMultiPrefixFromUI();
+      var $body = $p.find("#ms-body");
+      var sc = $body.scrollTop();
+      _syncMultiPrefixToGroup();
+      $body.html(buildBody());
+      $body.scrollTop(sc);
+    }
+    $p.find("#ms-body").on("change.ms", "#ms-gedit-multi-prefix-toggle", function () {
+      editMultiPrefixEnabled = $(this).is(":checked");
+      _refreshMultiPrefixUI();
+    });
+    $p.find("#ms-body").on("click.ms", "#ms-gedit-add-template", function () {
+      _collectMultiPrefixFromUI();
+      var newTpl = {
+        id: uid(),
+        name: "模板 " + (editPrefixTemplates.length + 1),
+        content: "",
+      };
+      editPrefixTemplates.push(newTpl);
+      _refreshMultiPrefixUI();
+    });
+    $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-name", function () {
+      var tid = $(this).data("tpl-id");
+      var tpl = editPrefixTemplates.find(function (t) { return t.id === tid; });
+      if (tpl) tpl.name = $(this).val();
+    });
+    $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-content", function () {
+      var tid = $(this).data("tpl-id");
+      var tpl = editPrefixTemplates.find(function (t) { return t.id === tid; });
+      if (tpl) tpl.content = $(this).val();
+    });
+    $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-del", function () {
+      var tid = $(this).data("tpl-id");
+      var tpl = editPrefixTemplates.find(function (t) { return t.id === tid; });
+      if (!tpl) return;
+      var usedCount = 0;
+      Object.keys(editPrefixAssignments).forEach(function (pid) {
+        if (editPrefixAssignments[pid] === tid) usedCount++;
+      });
+      var msg = usedCount > 0
+        ? "确定删除模板「" + (tpl.name || "未命名") + "」吗？\n\n有 " + usedCount + " 条剧场分配了这个模板，删除后会自动改用分组默认前缀。"
+        : "确定删除模板「" + (tpl.name || "未命名") + "」吗？";
+      msConfirm(msg, { title: "删除模板", dangerous: true, okText: "删除" }).then(function (ok) {
+        if (!ok) return;
+        editPrefixTemplates = editPrefixTemplates.filter(function (t) { return t.id !== tid; });
+        Object.keys(editPrefixAssignments).forEach(function (pid) {
+          if (editPrefixAssignments[pid] === tid) delete editPrefixAssignments[pid];
+        });
+        _refreshMultiPrefixUI();
+      });
+    });
+    $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-config", function () {
+      var tid = $(this).data("tpl-id");
+      if (!tid) return;
+      var tpl = editPrefixTemplates.find(function (t) { return t.id === tid; });
+      if (!tpl) return;
+      _collectMultiPrefixFromUI();
+      var groupPromptsForCfg = getPromptsInGroup(v.groupId);
+      var workingAssignments = Object.assign({}, editPrefixAssignments);
+      var cfgSearchKw = "";
 
+      function buildTplCfgModalBody() {
+        var lkw = cfgSearchKw.toLowerCase();
+        var filtered = groupPromptsForCfg.filter(function (p) {
+          if (!lkw) return true;
+          return (p.title || "").toLowerCase().indexOf(lkw) >= 0 ||
+                 (p.content || "").toLowerCase().indexOf(lkw) >= 0;
+        });
+        var assignedToThisCount = 0;
+        var occupiedByOthersCount = 0;
+        groupPromptsForCfg.forEach(function (p) {
+          if (workingAssignments[p.id] === tid) assignedToThisCount++;
+          else if (workingAssignments[p.id]) occupiedByOthersCount++;
+        });
+        var html = "";
+        html += '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;line-height:1.6;">';
+        html += '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>';
+        html += '勾选要使用「<strong>' + esc(tpl.name || "未命名") + '</strong>」前缀的剧场。被其他模板占用的会显示灰色，可点击以更改至当前模板。';
+        html += "</div>";
+        html += '<input type="text" class="ms-modal-search" id="ms-tpl-cfg-search" placeholder="搜索剧场..." value="' + esc(cfgSearchKw) + '">';
+        html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px;flex-wrap:wrap;">';
+        html += '<span style="color:var(--SmartThemeQuoteColor,#888);flex:1;min-width:0;">共 ' + groupPromptsForCfg.length + ' 条 · 当前模板已选 <strong style="color:var(--ms-accent);">' + assignedToThisCount + '</strong> 条' + (occupiedByOthersCount > 0 ? ' · <span style="color:var(--ms-accent);opacity:0.85;">' + occupiedByOthersCount + ' 条被其他模板占用</span>' : "") + '</span>';
+        html += '<button class="ms-tbtn" data-tpl-cfg-action="select-free" style="font-size:10px;padding:3px 8px;flex-shrink:0;" title="只勾选未被任何模板占用的剧场">勾选空闲</button>';
+        html += '<button class="ms-tbtn" data-tpl-cfg-action="clear" style="font-size:10px;padding:3px 8px;color:var(--ms-danger);border-color:var(--ms-danger);flex-shrink:0;" title="把当前模板下的剧场全部释放">清空</button>';
+        html += "</div>";
+        if (filtered.length === 0) {
+          html += '<div class="ms-empty" style="padding:20px;font-size:11px;"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的剧场</div>';
+        } else {
+          html += '<div id="ms-tpl-cfg-list" style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:3px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;padding:6px;">';
+          filtered.forEach(function (p) {
+            var assignedTo = workingAssignments[p.id];
+            var isAssignedToThis = assignedTo === tid;
+            var isAssignedToOther = assignedTo && assignedTo !== tid;
+            var otherTpl = isAssignedToOther
+              ? editPrefixTemplates.find(function (t) { return t.id === assignedTo; })
+              : null;
+            var rowBg = isAssignedToThis
+              ? "background:rgba(var(--ms-accent-rgb),0.12);"
+              : isAssignedToOther
+                ? "background:rgba(255,255,255,0.02);opacity:0.6;"
+                : "";
+            var checkBg = isAssignedToThis
+              ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
+              : "";
+            var noteH = "";
+            if (isAssignedToOther && otherTpl) {
+              noteH = '<span style="font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.12);padding:1px 6px;border-radius:3px;flex-shrink:0;" title="点击会更改到当前模板">已属于「' + esc(truncate(otherTpl.name || "未命名", 12)) + '」</span>';
+            }
+            var seriesH = "";
+            if (p.series && String(p.series).trim()) {
+              seriesH = '<div style="font-size:9px;color:var(--ms-accent);opacity:0.75;display:flex;align-items:center;gap:3px;line-height:1.3;margin-bottom:2px;"><i class="fa-solid fa-layer-group" style="font-size:8px;"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(String(p.series).trim()) + '</span></div>';
+            }
+            html += '<div class="ms-tpl-cfg-row" data-pid="' + p.id + '" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;transition:background 0.12s;' + rowBg + '">';
+            html += '<div class="ms-gitem-check" style="' + checkBg + '"><i class="fa-solid fa-check"></i></div>';
+            html += '<div style="flex:1;min-width:0;overflow:hidden;">';
+            html += seriesH;
+            html += '<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--SmartThemeBodyColor,#ddd);">' + esc(p.title || "未命名") + '</div>';
+            html += '</div>';
+            html += noteH;
+            html += '<button class="ms-card-qbtn ms-tpl-cfg-preview" data-pid="' + p.id + '" title="预览剧场内容" style="flex-shrink:0;width:24px;height:24px;font-size:10px;"><i class="fa-solid fa-eye"></i></button>';
+            html += "</div>";
+          });
+          html += "</div>";
+        }
+        return html;
+      }
+
+       function refreshTplCfgBody($overlay, keepFocus) {
+        var $oldInput = $overlay.find("#ms-tpl-cfg-search");
+        var caretPos = -1;
+        if (keepFocus && $oldInput.is(":focus") && $oldInput[0]) {
+          caretPos = $oldInput[0].selectionStart || 0;
+        }
+        var $oldList = $overlay.find("#ms-tpl-cfg-list"); var savedScroll = $oldList.length ? $oldList[0].scrollTop : 0;
+        $overlay.find(".ms-modal-body").html(buildTplCfgModalBody());
+        var $newList = $overlay.find("#ms-tpl-cfg-list");
+        if ($newList.length && savedScroll > 0) {
+          $newList[0].scrollTop = savedScroll;
+        }
+        if (caretPos >= 0) {
+          var $newInput = $overlay.find("#ms-tpl-cfg-search");
+          if ($newInput.length) {
+            $newInput.focus();
+            try { $newInput[0].setSelectionRange(caretPos, caretPos); } catch (e) {}
+          }
+        }
+      }
+
+      showModal({
+        title: "配置「" + truncate(tpl.name || "未命名", 18) + "」的适用剧场",
+        iconType: "info",
+        icon: "fa-list-check",
+        modalStyle: "min-width:380px;max-width:94vw;width:520px;",
+        body: buildTplCfgModalBody(),
+        buttons: [
+          { text: "取消", value: null },
+          {
+            text: "保存",
+            cls: "primary",
+            primary: true,
+            action: function () {
+              editPrefixAssignments = workingAssignments;
+              _refreshMultiPrefixUI();
+              groupEditDirty = true;
+              return true;
+            },
+          },
+        ],
+        cancelValue: null,
+        onShow: function ($overlay) {
+          $overlay.on("input", "#ms-tpl-cfg-search", function () {
+            cfgSearchKw = $(this).val();
+            refreshTplCfgBody($overlay, true);
+          });
+          $overlay.on("click", ".ms-tpl-cfg-preview", function (e) {
+            e.stopPropagation();
+            var pid = $(this).data("pid");
+            if (!pid) return;
+            var pp = getPrompt(pid);
+            if (!pp) return;
+            showModal({
+              title: "预览：" + truncate(pp.title || "未命名", 24),
+              iconType: "info",
+              icon: "fa-eye",
+              modalStyle: "min-width:340px;max-width:92vw;width:480px;max-height:80vh;",
+              body: '<div class="ms-preview-content" style="padding:0;font-size:13px;">' + renderMd(pp.content || "") + '</div>',
+              buttons: [{ text: "关闭", cls: "primary", primary: true, value: true }],
+            });
+          });
+          $overlay.on("click", ".ms-tpl-cfg-row", function () {
+            var pid = $(this).data("pid");
+            if (!pid) return;
+            if (workingAssignments[pid] === tid) {
+              delete workingAssignments[pid];
+            } else {
+              workingAssignments[pid] = tid;
+            }
+            refreshTplCfgBody($overlay, false);
+          });
+          $overlay.on("click", '[data-tpl-cfg-action="select-free"]', function () {
+            groupPromptsForCfg.forEach(function (p) {
+              if (!workingAssignments[p.id]) {
+                workingAssignments[p.id] = tid;
+              }
+            });
+            refreshTplCfgBody($overlay, false);
+          });
+          $overlay.on("click", '[data-tpl-cfg-action="clear"]', function () {
+            groupPromptsForCfg.forEach(function (p) {
+              if (workingAssignments[p.id] === tid) {
+                delete workingAssignments[p.id];
+              }
+            });
+            refreshTplCfgBody($overlay, false);
+          });
+        },
+      });
+    });
+    $p.find("#ms-body").on("change.ms", ".ms-prefix-assign-sel", function () {
+      var pid = $(this).data("pid");
+      var val = $(this).val();
+      if (val) editPrefixAssignments[pid] = val;
+      else delete editPrefixAssignments[pid];
+      var tid = val;
+      var $row = $(this).closest(".ms-prefix-assign-item");
+      $row.css("background", val ? "rgba(var(--ms-accent-rgb),0.06)" : "rgba(255,255,255,0.02)");
+      var $tplList = $p.find("#ms-gedit-template-list");
+      if ($tplList.length) {
+        editPrefixTemplates.forEach(function (tpl) {
+          var usedCount = 0;
+          Object.keys(editPrefixAssignments).forEach(function (ppid) {
+            if (editPrefixAssignments[ppid] === tpl.id) usedCount++;
+          });
+          var $badge = $tplList.find('.ms-prefix-tpl-item[data-tpl-id="' + tpl.id + '"] span').first();
+          if ($badge.length) {
+            $badge.text(usedCount > 0 ? "已用 " + usedCount : "未使用");
+            $badge.css("color", usedCount > 0 ? "var(--ms-accent)" : "var(--SmartThemeQuoteColor,#666)");
+            $badge.css("background", "rgba(var(--ms-accent-rgb)," + (usedCount > 0 ? "0.12" : "0.04") + ")");
+          }
+        });
+      }
+    });
+    $p.find("#ms-body").on("click.ms", "[data-bulk-assign]", function () {
+      var target = $(this).data("bulk-assign");
+      var groupPrompts = getPromptsInGroup(v.groupId);
+      if (target === "default") {
+        groupPrompts.forEach(function (p) {
+          delete editPrefixAssignments[p.id];
+        });
+      } else {
+        groupPrompts.forEach(function (p) {
+          editPrefixAssignments[p.id] = target;
+        });
+      }
+      _refreshMultiPrefixUI();
+    });
     $p.find("#ms-body").on("click.ms", "#ms-gedit-cancel", navigateBack);
 
     $p.find("#ms-body").on("click.ms", "[data-gedit-color]", function () {
@@ -10722,19 +11687,25 @@
         return;
       }
       var stagePrefix = $p.find("#ms-gedit-prefix").val() || "";
+      var multiStagePrefix = $p.find("#ms-gedit-multi-shell").val() || "";
       var finalIconUrl = $p.find("#ms-gedit-icon-url").length
         ? $p.find("#ms-gedit-icon-url").val().trim()
         : editIconUrl;
+      _collectMultiPrefixFromUI();
       var payload = {
         name: n,
         note: note,
         color: editColor,
         defaultAuthor: defAuthor,
         stagePrefix: stagePrefix,
+        multiStagePrefix: multiStagePrefix,
         iconMode: editIconMode,
         iconUrl: editIconMode === "custom" ? finalIconUrl : "",
         iconCharKey: editIconMode === "char" ? editIconCharKey : "",
         charKeys: editCharKeys.slice(),
+        multiPrefixEnabled: editMultiPrefixEnabled,
+        prefixTemplates: editPrefixTemplates,
+        prefixAssignments: editPrefixAssignments,
       };
       data.groups.forEach(function (og) {
         if (v.groupId && og.id === v.groupId) return;
@@ -10750,6 +11721,7 @@
         updateGroup(ng.id, payload);
       }
       _invalidateCharGroupCache();
+      groupEditDirty = false;
       navigateBack();
     });
   }
@@ -11518,12 +12490,28 @@
   function renderSettings() {
     const $p = setupPage("设置");
     $p.find("#ms-body").html(
-      `<div class="ms-form"><div class="ms-field"><label>默认作者署名</label><input type="text" id="ms-default-author" placeholder="新建时自动填入" value="${esc(data.settings.defaultAuthor || "")}"></div><div class="ms-divider"></div><div class="ms-section-label">注入设置</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-inject-enabled-toggle" ${data.settings.stageInjectEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">启用注入功能</span></div><div style="padding:4px 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);line-height:1.5;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>选中剧场后，内容会随下一次发送注入到 AI 提示词中</div><div id="ms-inject-details" style="${data.settings.stageInjectEnabled ? "" : "display:none;"}"><div class="ms-inject-settings-row"><label class="ms-inject-radio${data.settings.stageInjectMode === "depth" ? " active" : ""}" data-mode="depth"><input type="radio" name="ms-inject-mode" value="depth" ${data.settings.stageInjectMode === "depth" ? "checked" : ""}><i class="fa-solid fa-layer-group" style="margin-right:3px;font-size:11px;"></i>深度注入</label><label class="ms-inject-radio${data.settings.stageInjectMode === "macro" ? " active" : ""}" data-mode="macro"><input type="radio" name="ms-inject-mode" value="macro" ${data.settings.stageInjectMode === "macro" ? "checked" : ""}><i class="fa-solid fa-code" style="margin-right:3px;font-size:11px;"></i>自定义宏 {{stage}}</label></div><div class="ms-macro-info"><div class="ms-macro-info-title"><i class="fa-solid fa-wand-magic-sparkles" style="margin-right:4px;color:var(--ms-accent);"></i>可用宏</div><div><code>{{stage}}</code><span class="ms-macro-desc">剧场原始内容</span></div><div><code>{{stage_title}}</code><span class="ms-macro-desc">剧场标题</span></div><div><code>{{stage_count}}</code><span class="ms-macro-desc">选中的剧场总数</span></div><div><code>{{stage_tasks}}</code><span class="ms-macro-desc">所有任务块的拼接体</span></div><div><code>{{stage_prompt}}</code><span class="ms-macro-desc">前缀指令+剧场内容（完整注入体）</span></div></div><div id="ms-depth-opts" style="${data.settings.stageInjectMode === "depth" ? "" : "display:none;"}padding:0 14px;"><div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>注入深度</label><input type="number" id="ms-inject-depth" min="0" max="999" value="${data.settings.stageInjectDepth || 0}" style="width:100%;"></div><div class="ms-field" style="flex:1;"><label>消息角色</label><select id="ms-inject-role" style="width:100%;"><option value="system"${data.settings.stageInjectRole === "system" ? " selected" : ""}>System</option><option value="user"${data.settings.stageInjectRole === "user" ? " selected" : ""}>User</option><option value="assistant"${data.settings.stageInjectRole === "assistant" ? " selected" : ""}>Assistant</option></select></div></div></div><div class="ms-field" style="padding:6px 14px 0;"><label>默认前缀指令 <span style="font-weight:350;opacity:0.5;">(用 {{stage}} 标记剧场插入位置，不写则拼接在末尾)</span></label><textarea id="ms-default-prefix" style="min-height:120px;resize:vertical;" placeholder="例：在正文最后输出以下剧场内容...">${esc(data.settings.defaultStagePrefix || "")}</textarea></div><div class="ms-field" style="padding:6px 14px 0;"><label>多条外壳模板 <span style="font-weight:350;opacity:0.5;">(选多条剧场时的整体结构，用 {{stage_count}} 表示数量，{{stage_tasks}} 表示所有任务块)</span></label><textarea id="ms-multi-prefix" style="min-height:80px;resize:vertical;" placeholder="留空使用内置默认模板">${esc(data.settings.multiStagePrefix || "")}</textarea><div style="padding:4px 2px;font-size:10px;color:var(--ms-danger);line-height:1.5;"><i class="fa-solid fa-triangle-exclamation" style="margin-right:3px;"></i>多条外壳模板中必须包含 \{\{stage_tasks\}\}，否则会自动回退使用内置默认模板</div></div><div class="ms-section-label" style="margin-top:6px;">生成后行为</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-clear-after-gen-toggle" ${data.settings.clearStageAfterGeneration ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">生成完成后自动清除选中的注入</span></div><div style="padding:4px 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);line-height:1.5;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>开启后每次成功生成会自动取消已选注入；API 报错、空回复或用户中止时不会清除，方便直接重试</div><div class="ms-section-label" style="margin-top:6px;">随机注入</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-random-toggle" ${data.settings.randomInject && data.settings.randomInject.enabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">没有手动选中时，自动从随机池中抽取</span></div><button class="ms-tbtn" id="ms-go-random-pool" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-sliders"></i> 管理随机池</button></div><div class="ms-divider"></div><button class="ms-tbtn" id="ms-go-qp" style="width:100%;text-align:center;"><i class="fa-solid fa-bolt"></i> 管理快捷短语(${data.quickPhrases.length})</button><button class="ms-tbtn" id="ms-go-stats" style="width:100%;text-align:center;"><i class="fa-solid fa-chart-bar"></i> 使用统计</button><button class="ms-tbtn" id="ms-go-subs" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-rss"></i> 订阅管理 (${data.subscriptions.length})</button><div class="ms-divider"></div><div class="ms-section-label">订阅设置</div><div class="ms-field"><label>自动检查间隔 <span style="font-weight:350;opacity:0.5;">(打开面板时，超过此时间未检查的订阅会自动静默检查)</span></label><div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-auto-check-interval" min="0" max="168" step="1" value="${data.settings.autoCheckInterval || 6}" style="width:80px;"><span style="font-size:12px;color:var(--SmartThemeQuoteColor,#888);">小时（设为 0 关闭自动检查）</span></div></div><div class="ms-divider"></div><div class="ms-section-label">界面自定义</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-ui-custom-toggle" ${data.settings.uiCustomEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">启用自定义字号和面板尺寸</span></div><div id="ms-ui-custom-details" style="${data.settings.uiCustomEnabled ? "" : "display:none;"}padding:4px 14px;"><div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>字号 (px)</label><input type="number" id="ms-ui-font-size" min="10" max="24" value="${data.settings.uiFontSize}"></div><div class="ms-field" style="flex:1;"><label>面板宽度 (px)</label><input type="number" id="ms-ui-panel-width" min="320" max="1400" value="${data.settings.uiPanelWidth}"></div><div class="ms-field" style="flex:1;"><label>最大高度 (vh)</label><input type="number" id="ms-ui-panel-height" min="40" max="100" value="${data.settings.uiPanelHeight}"></div></div></div><div class="ms-divider"></div><div class="ms-section-label">使用说明</div><button class="ms-tbtn" id="ms-regen-guide" style="width:100%;text-align:center;"><i class="fa-solid fa-book"></i> 重新生成使用说明</button><div class="ms-divider"></div><div class="ms-section-label">脚本更新 <span style="font-weight:400;opacity:0.6;text-transform:none;letter-spacing:0;margin-left:4px;">当前 v${SCRIPT_VERSION}</span></div><button class="ms-tbtn" id="ms-update-script" style="width:100%;text-align:center;"><i class="fa-solid fa-arrows-rotate"></i> 检查脚本更新</button>
-<button class="ms-tbtn" id="ms-view-changelog" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-clipboard-list"></i> 查看更新日志</button><div style="font-size:10px;color:var(--SmartThemeQuoteColor,#555);padding:4px 14px;line-height:1.5;">刷新浏览器缓存并重载脚本，获取最新版本。</div><div class="ms-divider"></div><div class="ms-section-label">数据管理</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-history-warn-toggle" ${data.settings.historyWarnEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">历史超过30条时在底栏变红提醒</span></div><button class="ms-tbtn" id="ms-go-history-list" style="width:100%;text-align:center;margin-bottom:6px;"><i class="fa-solid fa-clock-rotate-left"></i> 查看有历史记录的剧场(${
+      `<div class="ms-form"><div class="ms-field"><label>默认作者署名</label><input type="text" id="ms-default-author" placeholder="新建时自动填入" value="${esc(data.settings.defaultAuthor || "")}"></div><div class="ms-section-label">注入设置</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-inject-enabled-toggle" ${data.settings.stageInjectEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">启用注入功能</span></div><div style="padding:4px 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);line-height:1.5;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>选中剧场后，内容会随下一次发送注入到AI提示词中</div><div id="ms-inject-details" style="${data.settings.stageInjectEnabled ? "" : "display:none;"}"><div class="ms-inject-settings-row"><label class="ms-inject-radio${data.settings.stageInjectMode === "depth" ? " active" : ""}" data-mode="depth"><input type="radio" name="ms-inject-mode" value="depth" ${data.settings.stageInjectMode === "depth" ? "checked" : ""}><i class="fa-solid fa-layer-group" style="margin-right:3px;font-size:11px;"></i>深度注入</label><label class="ms-inject-radio${data.settings.stageInjectMode === "macro" ? " active" : ""}" data-mode="macro"><input type="radio" name="ms-inject-mode" value="macro" ${data.settings.stageInjectMode === "macro" ? "checked" : ""}><i class="fa-solid fa-code" style="margin-right:3px;font-size:11px;"></i>自定义宏 {{stage}}</label></div><div class="ms-macro-info">
+  <div class="ms-macro-info-title"><i class="fa-solid fa-wand-magic-sparkles" style="margin-right:4px;color:var(--ms-accent);"></i>可用宏</div>
+  
+  <div style="font-size:10px;color:var(--ms-accent);font-weight:600;margin:4px 0 2px;opacity:0.85;">全局宏（预设、世界书、聊天历史等任何地方都能用）</div>
+  <div><code>{\u200B{stage}}</code><span class="ms-macro-desc">剧场原始内容</span></div>
+  <div><code>{\u200B{stage_title}}</code><span class="ms-macro-desc">剧场标题</span></div>
+  <div><code>{\u200B{stage_prompt}}</code><span class="ms-macro-desc">前缀+剧场内容的完整注入体</span></div>
+  
+  <div style="font-size:10px;color:var(--ms-accent);font-weight:600;margin:6px 0 2px;opacity:0.85;">脚本宏（仅在「前缀指令」「多条外壳模板」框里有效，写进预设无效）</div>
+  <div><code>{\u200B{stages}}</code><span class="ms-macro-desc">多条任务合并插入</span></div>
+  <div><code>{\u200B{stage_count}}</code><span class="ms-macro-desc">剧场总数</span></div>
+  <div><code>{\u200B{stage_tasks}}</code><span class="ms-macro-desc">所有任务块拼接</span></div>
+  
+  <div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-top:6px;border-top:1px dashed rgba(255,255,255,0.08);padding-top:6px;">
+    ⚠️ <code style="font-style:normal;">{\u200B{stage}}</code> 与 <code style="font-style:normal;">{\u200B{stages}}</code> 的多任务行为不同，<a href="#" id="ms-goto-inject-guide" style="color:var(--ms-accent);cursor:pointer;">查看使用说明</a>
+  </div>
+</div><div id="ms-depth-opts" style="${data.settings.stageInjectMode === "depth" ? "" : "display:none;"}padding:0 14px;"><div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>注入深度</label><input type="number" id="ms-inject-depth" min="0" max="999" value="${data.settings.stageInjectDepth || 0}" style="width:100%;"></div><div class="ms-field" style="flex:1;"><label>消息角色</label><select id="ms-inject-role" style="width:100%;"><option value="system"${data.settings.stageInjectRole === "system" ? " selected" : ""}>System</option><option value="user"${data.settings.stageInjectRole === "user" ? " selected" : ""}>User</option><option value="assistant"${data.settings.stageInjectRole === "assistant" ? " selected" : ""}>Assistant</option></select></div></div></div><div class="ms-field" style="padding:6px 14px 0;"><label>默认前缀指令 <span style="font-weight:350;opacity:0.5;">(用 {\u200B{stage}} 标记剧场插入位置，不写则拼接在末尾)</span><i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-default-prefix" data-fs-title="编辑默认前缀指令" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-default-prefix" style="min-height:120px;resize:vertical;" placeholder="例：在正文最后输出以下剧场内容...">${esc(data.settings.defaultStagePrefix || "")}</textarea></div><div class="ms-field" style="padding:6px 14px 0;"><label>多条外壳模板 <span style="font-weight:350;opacity:0.5;">(选多条剧场时的整体结构，用 {\u200B{stage_count}} 表示数量，{\u200B{stage_tasks}} 表示所有任务块)</span> <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-multi-prefix" data-fs-title="编辑多条外壳模板" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-multi-prefix" style="min-height:80px;resize:vertical;" placeholder="留空使用内置默认模板">${esc(data.settings.multiStagePrefix || "")}</textarea><div style="padding:4px 2px;font-size:10px;color:var(--ms-danger);line-height:1.5;"><i class="fa-solid fa-triangle-exclamation" style="margin-right:3px;"></i>多条外壳模板中必须包含 {\u200B{stage_tasks}}，否则会自动回退使用内置默认模板</div></div><div class="ms-section-label" style="margin-top:6px;">生成后行为</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-clear-after-gen-toggle" ${data.settings.clearStageAfterGeneration ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">生成完成后自动清除选中的注入</span></div><div style="padding:4px 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);line-height:1.5;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>开启后每次成功生成会自动取消已选注入；API 报错、空回复或用户中止时不会清除，方便直接重试</div><div class="ms-section-label" style="margin-top:6px;">随机注入</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-random-toggle" ${data.settings.randomInject && data.settings.randomInject.enabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">没有手动选中时，自动从随机池中抽取</span></div><div id="ms-random-multi-wrap" style="${data.settings.randomInject && data.settings.randomInject.enabled ? "" : "display:none;"}"><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-random-multi-toggle" ${data.settings.randomInject && data.settings.randomInject.multiEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">随机抽取多条剧场</span></div><div id="ms-random-multi-count-wrap" style="${data.settings.randomInject && data.settings.randomInject.multiEnabled ? "" : "display:none;"}padding:4px 14px;"><div class="ms-field"><label>每次随机抽取的数量</label><div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-random-multi-count" min="1" max="10" step="1" value="${(data.settings.randomInject && data.settings.randomInject.multiCount) || 2}" style="width:80px;"><span style="font-size:12px;color:var(--SmartThemeQuoteColor,#888);">条（建议 2-5 条，过多会污染上下文）</span></div></div></div></div><button class="ms-tbtn" id="ms-go-random-pool" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-sliders"></i> 管理随机池</button></div><button class="ms-tbtn" id="ms-go-qp" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-bolt"></i> 管理快捷短语 (${data.quickPhrases.length})</button><button class="ms-tbtn" id="ms-go-stats" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-chart-bar"></i> 使用统计</button><div class="ms-section-label">订阅设置</div><div class="ms-field"><label>自动检查间隔 <span style="font-weight:350;opacity:0.5;">(打开面板时，超过此时间未检查的订阅会自动静默检查)</span></label><div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-auto-check-interval" min="0" max="168" step="1" value="${data.settings.autoCheckInterval || 6}" style="width:80px;"><span style="font-size:12px;color:var(--SmartThemeQuoteColor,#888);">小时（设为 0 关闭自动检查）</span></div></div><button class="ms-tbtn" id="ms-go-subs" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-rss"></i> 订阅管理 (${data.subscriptions.length})</button><div class="ms-section-label">界面自定义</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-ui-custom-toggle" ${data.settings.uiCustomEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">启用自定义字号和面板尺寸</span></div><div id="ms-ui-custom-details" style="${data.settings.uiCustomEnabled ? "" : "display:none;"}padding:4px 14px;"><div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>字号 (px)</label><input type="number" id="ms-ui-font-size" min="10" max="24" value="${data.settings.uiFontSize}"></div><div class="ms-field" style="flex:1;"><label>面板宽度 (px)</label><input type="number" id="ms-ui-panel-width" min="320" max="1400" value="${data.settings.uiPanelWidth}"></div><div class="ms-field" style="flex:1;"><label>最大高度 (vh)</label><input type="number" id="ms-ui-panel-height" min="40" max="100" value="${data.settings.uiPanelHeight}"></div></div></div><div class="ms-section-label">使用说明</div><button class="ms-tbtn" id="ms-regen-guide" style="width:100%;text-align:center;"><i class="fa-solid fa-book"></i> 重新生成使用说明</button><div class="ms-section-label">脚本更新 <span style="font-weight:400;opacity:0.6;text-transform:none;letter-spacing:0;margin-left:4px;">当前 v${SCRIPT_VERSION}</span></div><button class="ms-tbtn" id="ms-update-script" style="width:100%;text-align:center;"><i class="fa-solid fa-arrows-rotate"></i> 检查脚本更新</button>
+<button class="ms-tbtn" id="ms-view-changelog" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-clipboard-list"></i> 查看更新日志</button><div style="font-size:10px;color:var(--SmartThemeQuoteColor,#555);padding:4px 14px;line-height:1.5;">刷新浏览器缓存并重载脚本，获取最新版本。</div><div class="ms-section-label">数据管理</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-history-warn-toggle" ${data.settings.historyWarnEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">历史超过30条时在底栏变红提醒</span></div><button class="ms-tbtn" id="ms-go-history-list" style="width:100%;text-align:center;margin-bottom:6px;"><i class="fa-solid fa-clock-rotate-left"></i> 查看有历史记录的剧场(${
         data.prompts.filter(function (p) {
           return p.history && p.history.length > 0;
         }).length
-      } 条)</button><button class="ms-tbtn" id="ms-clean-lost-chars" style="width:100%;text-align:center;margin-bottom:6px;"><i class="fa-solid fa-user-slash"></i> 处理失联角色（重绑/解绑）</button><button class="ms-tbtn danger" id="ms-clear-all-history" style="width:100%;text-align:center;"><i class="fa-solid fa-broom"></i> 清空全部版本历史</button><button class="ms-tbtn danger" id="ms-wipe-all-data" style="width:100%;text-align:center;margin-top:6px;background:rgba(var(--ms-danger-rgb),0.12);border-color:var(--ms-danger);"><i class="fa-solid fa-skull-crossbones"></i> 彻底清空所有本地数据</button><div class="ms-divider"></div><div style="padding:6px 14px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);" id="ms-data-size-info"></div></div>`,
+      } 条)</button><button class="ms-tbtn" id="ms-clean-lost-chars" style="width:100%;text-align:center;margin-bottom:6px;"><i class="fa-solid fa-user-slash"></i> 处理失联角色（重绑/解绑）</button><button class="ms-tbtn danger" id="ms-clear-all-history" style="width:100%;text-align:center;"><i class="fa-solid fa-broom"></i> 清空全部版本历史</button><button class="ms-tbtn danger" id="ms-wipe-all-data" style="width:100%;text-align:center;margin-top:6px;background:rgba(var(--ms-danger-rgb),0.12);border-color:var(--ms-danger);"><i class="fa-solid fa-skull-crossbones"></i> 彻底清空所有本地数据</button><div style="padding:6px 14px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);" id="ms-data-size-info"></div></div>`,
     );
     $p.find("#ms-footer").hide();
     bindAllEvents();
@@ -11550,7 +12538,14 @@
           warnH,
       );
     } catch (e) {}
-
+    $p.find("#ms-body").on("click.ms", "#ms-goto-inject-guide", function (e) {
+      e.preventDefault();
+      if (getPrompt("_builtin_inject_guide")) {
+        navigateTo({ name: "preview", promptId: "_builtin_inject_guide" });
+      } else {
+        toast("warning", "找不到注入功能指南，可在设置里重新生成使用说明");
+      }
+    });
     $p.find("#ms-body").on(
       "change.ms",
       "#ms-inject-enabled-toggle",
@@ -11604,10 +12599,27 @@
           excludedGroupIds: [],
           excludedSeries: [],
           excludedPromptIds: [],
+          multiEnabled: false,
+          multiCount: 2,
         };
       data.settings.randomInject.enabled = $(this).is(":checked");
       saveData();
       updateInjectIndicator();
+      $p.find("#ms-random-multi-wrap").toggle($(this).is(":checked"));
+    });
+    $p.find("#ms-body").on("change.ms", "#ms-random-multi-toggle", function () {
+      if (!data.settings.randomInject) return;
+      data.settings.randomInject.multiEnabled = $(this).is(":checked");
+      saveData();
+      $p.find("#ms-random-multi-count-wrap").toggle($(this).is(":checked"));
+    });
+    $p.find("#ms-body").on("input.ms", "#ms-random-multi-count", function () {
+      var val = parseInt($(this).val());
+      if (isNaN(val) || val < 1) val = 1;
+      if (val > 10) val = 10;
+      if (!data.settings.randomInject) return;
+      data.settings.randomInject.multiCount = val;
+      saveData();
     });
     $p.find("#ms-body").on("click.ms", "#ms-go-random-pool", function () {
       navigateTo({ name: "random-pool" });
@@ -14897,6 +15909,12 @@
         }),
       groups: (imported.groups || [])
         .map(function (g) {
+          var sortedAssignments = {};
+          if (g.prefixAssignments && typeof g.prefixAssignments === "object") {
+            Object.keys(g.prefixAssignments).sort().forEach(function (k) {
+              sortedAssignments[k] = g.prefixAssignments[k];
+            });
+          }
           return {
             id: g.id,
             name: g.name || "",
@@ -14904,6 +15922,12 @@
             note: g.note || "",
             defaultAuthor: g.defaultAuthor || "",
             stagePrefix: g.stagePrefix || "",
+            multiStagePrefix: g.multiStagePrefix || "",
+            multiPrefixEnabled: g.multiPrefixEnabled === true,
+            prefixTemplates: Array.isArray(g.prefixTemplates) ? g.prefixTemplates.map(function (t) {
+              return { id: t.id || "", name: t.name || "", content: t.content || "" };
+            }) : [],
+            prefixAssignments: sortedAssignments,
           };
         })
         .sort(function (a, b) {
@@ -14918,17 +15942,29 @@
         }),
       charGroups: (imported.charGroups || [])
         .map(function (cg) {
+          var sortedAssignments = {};
+          if (cg.prefixAssignments && typeof cg.prefixAssignments === "object") {
+            Object.keys(cg.prefixAssignments).sort().forEach(function (k) {
+              sortedAssignments[k] = cg.prefixAssignments[k];
+            });
+          }
           return {
             name: cg.name || "",
             color: cg.color || "",
             note: cg.note || "",
             defaultAuthor: cg.defaultAuthor || "",
             stagePrefix: cg.stagePrefix || "",
+            multiStagePrefix: cg.multiStagePrefix || "",
             iconMode: cg.iconMode || "group",
             iconUrl: cg.iconUrl || "",
             iconCharKey: cg.iconCharKey || "",
             charKeys: (cg.charKeys || []).slice().sort(),
             charDisplayOrder: (cg.charDisplayOrder || []).slice(),
+            multiPrefixEnabled: cg.multiPrefixEnabled === true,
+            prefixTemplates: Array.isArray(cg.prefixTemplates) ? cg.prefixTemplates.map(function (t) {
+              return { id: t.id || "", name: t.name || "", content: t.content || "" };
+            }) : [],
+            prefixAssignments: sortedAssignments,
           };
         })
         .sort(function (a, b) {
@@ -14971,40 +16007,16 @@
     var ip = imported.prompts || [];
     var itags = imported.tags || [];
     var conflicts = [];
+    var _subNameMap = _buildLocalNameIndex();
     try {
-      var _subNameMap = {};
-      if (typeof SillyTavern !== "undefined" && SillyTavern.characters) {
-        SillyTavern.characters.forEach(function (c) {
-          if (!c || !c.avatar) return;
-          var dn = getCharDisplayName(c.avatar);
-          if (!_subNameMap[dn]) _subNameMap[dn] = [];
-          _subNameMap[dn].push(c.avatar);
-        });
-      }
       ip.forEach(function (p) {
-        if (!p.character || isLocalCharKey(p.character)) {
-          return;
-        }
-        var exportedName = p.character_name;
-        if (
-          exportedName &&
-          _subNameMap[exportedName] &&
-          _subNameMap[exportedName].length === 1
-        ) {
-          p.character = _subNameMap[exportedName][0];
-        }
+        _rebindPromptChar(p, _subNameMap);
       });
-
       if (Array.isArray(imported.charGroups)) {
         imported.charGroups.forEach(function (icg) {
           if (!Array.isArray(icg.charKeys)) return;
           icg.charKeys = icg.charKeys.map(function (k) {
-            if (!k || isLocalCharKey(k)) return k;
-            var dn = getCharDisplayName(k);
-            if (_subNameMap[dn] && _subNameMap[dn].length === 1) {
-              return _subNameMap[dn][0];
-            }
-            return k;
+            return _rebindLostKeyByName(k, _subNameMap);
           });
         });
       }
@@ -15038,6 +16050,11 @@
             if (g.note !== undefined) ex.note = g.note;
             if (g.defaultAuthor !== undefined)
               ex.defaultAuthor = g.defaultAuthor;
+            if (g.stagePrefix !== undefined) ex.stagePrefix = g.stagePrefix;
+            if (g.multiStagePrefix !== undefined) ex.multiStagePrefix = g.multiStagePrefix;
+            if (g.multiPrefixEnabled !== undefined) ex.multiPrefixEnabled = g.multiPrefixEnabled === true;
+            if (Array.isArray(g.prefixTemplates)) ex.prefixTemplates = JSON.parse(JSON.stringify(g.prefixTemplates));
+            if (g.prefixAssignments && typeof g.prefixAssignments === "object") ex.prefixAssignments = Object.assign({}, g.prefixAssignments);
           }
         } else {
           var ng = Object.assign({}, g, { id: uid() });
@@ -15184,6 +16201,16 @@
           });
           if (!existing.stagePrefix && icg.stagePrefix)
             existing.stagePrefix = icg.stagePrefix;
+          if (!existing.multiStagePrefix && icg.multiStagePrefix)
+            existing.multiStagePrefix = icg.multiStagePrefix;
+          if (sub.updateExisting !== false) {
+            if (icg.multiPrefixEnabled !== undefined)
+              existing.multiPrefixEnabled = icg.multiPrefixEnabled === true;
+            if (Array.isArray(icg.prefixTemplates))
+              existing.prefixTemplates = JSON.parse(JSON.stringify(icg.prefixTemplates));
+            if (icg.prefixAssignments && typeof icg.prefixAssignments === "object")
+              existing.prefixAssignments = Object.assign({}, icg.prefixAssignments);
+          }
           if (
             Array.isArray(icg.charDisplayOrder) &&
             icg.charDisplayOrder.length > 0
@@ -15196,20 +16223,7 @@
             });
           }
         } else {
-          var newG = {
-            id: uid(),
-            name: icg.name,
-            color:
-              icg.color ||
-              GROUP_COLORS[data.groups.length % GROUP_COLORS.length],
-            note: icg.note || "",
-            defaultAuthor: icg.defaultAuthor || "",
-            stagePrefix: icg.stagePrefix || "",
-            iconMode: icg.iconMode || "group",
-            iconUrl: icg.iconUrl || "",
-            iconCharKey: icg.iconCharKey || "",
-            charKeys: [],
-          };
+          var newG = _buildIPGroupFromImport(icg);
           importKeys.forEach(function (k) {
             data.groups.forEach(function (other) {
               if (!Array.isArray(other.charKeys)) return;
@@ -15221,14 +16235,6 @@
           data.groups.push(newG);
         }
       });
-    }
-    function _subRebindBdKey(k) {
-      if (!k || isLocalCharKey(k)) return k;
-      var dn = getCharDisplayName(k);
-      if (_subNameMap[dn] && _subNameMap[dn].length === 1) {
-        return _subNameMap[dn][0];
-      }
-      return k;
     }
     if (
       imported.charBirthdayMessages &&
@@ -15256,7 +16262,7 @@
         } else {
           return;
         }
-        var newKey = _subRebindBdKey(k);
+        var newKey = _rebindLostKeyByName(k, _subNameMap);
         var existing = data.settings.charBirthdayMessages[newKey] || {
           versions: {},
         };
@@ -15299,7 +16305,7 @@
       Object.keys(imported.charBirthdays).forEach(function (k) {
         var d = imported.charBirthdays[k];
         if (!d || !/^\d{2}-\d{2}$/.test(d)) return;
-        var newKey = _subRebindBdKey(k);
+        var newKey = _rebindLostKeyByName(k, _subNameMap);
         if (
           data.settings.ownBirthdays &&
           data.settings.ownBirthdays[newKey] === true
@@ -15324,6 +16330,37 @@
         }
       });
     }
+    (function () {
+      var _expIdToLocal = {};
+      ip.forEach(function (p) {
+        var sid = p.sourceId || p.id;
+        var found = data.prompts.find(function (lp) {
+          return (sid && lp.sourceId === sid) || lp.id === p.id;
+        });
+        if (found) _expIdToLocal[p.id] = found.id;
+      });
+      function _remapAssign(localGroup, srcAssign) {
+        if (!localGroup || !srcAssign || typeof srcAssign !== "object") return;
+        if (!localGroup.prefixAssignments) localGroup.prefixAssignments = {};
+        Object.keys(srcAssign).forEach(function (oldPid) {
+          if (localGroup.prefixAssignments[oldPid] !== undefined && !_expIdToLocal[oldPid]) {
+            delete localGroup.prefixAssignments[oldPid];
+          }
+          var newPid = _expIdToLocal[oldPid];
+          if (newPid) localGroup.prefixAssignments[newPid] = srcAssign[oldPid];
+        });
+      }
+      (ig || []).forEach(function (impG) {
+        if (!impG || !impG.prefixAssignments) return;
+        var localG = data.groups.find(function (g) { return g.name === impG.name; });
+        _remapAssign(localG, impG.prefixAssignments);
+      });
+      (Array.isArray(imported.charGroups) ? imported.charGroups : []).forEach(function (icg) {
+        if (!icg || !icg.prefixAssignments) return;
+        var localG = data.groups.find(function (g) { return g.name === icg.name; });
+        _remapAssign(localG, icg.prefixAssignments);
+      });
+    })();
     _invalidateCharGroupCache();
     saveData();
     return {
@@ -17687,6 +18724,35 @@
       }
       makeDraggable();
       setupKeyboardAdapt();
+      $p.off("click.ms-inject-clear-btn").on(
+        "click.ms-inject-clear-btn",
+        ".ms-inject-clear-btn",
+        function (e) {
+          e.stopPropagation();
+          var sids = data.settings.stageSelectedIds || [];
+          if (sids.length === 0) return;
+          data.settings.stageSelectedIds = [];
+          saveData();
+          updateInjectIndicator();
+          if (panelVisible) {
+            try {
+              if (currentView().name === "preview") renderView();
+              else refreshKeepingState();
+            } catch (e) {}
+          }
+        },
+      );
+      $p.off("click.ms-fs-edit").on(
+        "click.ms-fs-edit",
+        ".ms-fs-edit-btn",
+        function (e) {
+          e.stopPropagation();
+          var target = $(this).data("fs-target");
+          var title = $(this).data("fs-title") || "全屏编辑";
+          if (!target) return;
+          showFullscreenEditor({ targetSelector: target, title: title });
+        },
+      );
       $p.off("click.ms-inject-ind").on(
         "click.ms-inject-ind",
         "#ms-inject-indicator",
@@ -17870,6 +18936,7 @@
     renderView();
     autoCheckSubscriptions();
     showBirthdayBannerIfAny();
+    setTimeout(checkAndShowChangelog, 800);
   }
 
   function enterBirthdayPanelMode() {
@@ -19125,6 +20192,18 @@
       });
       return;
     }
+    if (currentView().name === "group-edit" && groupEditDirty) {
+      msConfirm("分组设置尚未保存，确定要关闭吗？", {
+        title: "未保存的改动",
+        type: "warning",
+        okText: "关闭",
+      }).then(function (ok) {
+        if (!ok) return;
+        groupEditDirty = false;
+        hidePanel();
+      });
+      return;
+    }
     editDirty = false;
     exitFocusMode();
     $("#" + PANEL_ID).removeClass("ms-visible");
@@ -19714,8 +20793,18 @@
               data.settings.randomInject &&
               data.settings.randomInject.enabled
             ) {
-              var rp = getRandomStagePrompt();
-              if (rp) stagePrompts.push(rp);
+              if (data.settings.randomInject.multiEnabled) {
+                var rcount = parseInt(data.settings.randomInject.multiCount) || 2;
+                var rps = getRandomStagePrompts(rcount);
+                if (rps.length > 0) {
+                  rps.forEach(function (rp) {
+                    stagePrompts.push(rp);
+                  });
+                }
+              } else {
+                var rp = getRandomStagePrompt();
+                if (rp) stagePrompts.push(rp);
+              }
               wasManual = false;
             }
             _currentStagePrompts = [];
