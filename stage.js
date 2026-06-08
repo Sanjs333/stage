@@ -1,6 +1,10 @@
+// Auto-generated from src/parts by scripts/build-stage.mjs.
+// Edit src/parts/*.js, then run: npm run build
+
 (function () {
   "use strict";
 
+// Wrapped by scripts/build-stage.mjs.
   const STORAGE_KEY = "miniStage_data";
   const PANEL_ID = "mini-stage-panel";
   const STYLE_ID = "mini-stage-styles";
@@ -165,6 +169,37 @@
     const d = document.createElement("div");
     d.appendChild(document.createTextNode(s));
     return d.innerHTML;
+  }
+  function escAttr(s) {
+    if (!s) return "";
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+  function escAlreadyEscapedAttr(s) {
+    if (!s) return "";
+    return String(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+  function sanitizeMdUrl(url, isImage) {
+    var raw = String(url || "")
+      .trim()
+      .replace(/&amp;/g, "&");
+    var compact = raw.replace(/[\u0000-\u001f\u007f\s]+/g, "").toLowerCase();
+    if (!compact) return "";
+    if (/^(javascript|vbscript):/.test(compact)) return "";
+    if (/^data:/i.test(compact)) {
+      if (
+        isImage &&
+        /^data:image\/(?:png|gif|jpe?g|webp|bmp);base64,/i.test(compact)
+      ) {
+        return raw;
+      }
+      return "";
+    }
+    return raw;
   }
   function chk(id, a, label) {
     return (
@@ -509,7 +544,9 @@
       height: el.style.getPropertyValue("height"),
       maxHeight: el.style.getPropertyValue("max-height"),
       zoom: el.style.getPropertyValue("zoom"),
-      panelPos: data.settings.panelPos ? Object.assign({}, data.settings.panelPos) : null,
+      panelPos: data.settings.panelPos
+        ? Object.assign({}, data.settings.panelPos)
+        : null,
       wasCollapsed: $p.hasClass("ms-collapsed"),
     });
     el.style.removeProperty("left");
@@ -527,15 +564,25 @@
       '<div class="ms-fs-editor-overlay">' +
       '<div class="ms-fs-header-bar">' +
       '<i class="fa-solid fa-up-right-and-down-left-from-center" style="color:var(--ms-accent);font-size:13px;"></i>' +
-      '<span class="ms-fs-title-text">' + esc(opts.title || "全屏编辑") + "</span>" +
+      '<span class="ms-fs-title-text">' +
+      esc(opts.title || "全屏编辑") +
+      "</span>" +
       '<button class="ms-tbtn" id="ms-fs-cancel">取消</button>' +
       '<button class="ms-tbtn" id="ms-fs-save" style="color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-floppy-disk" style="margin-right:3px;"></i>保存</button>' +
       "</div>" +
       '<div class="ms-fs-content-wrap">' +
-      '<textarea class="ms-fs-textarea" id="' + taId + '">' + esc(originalValue) + "</textarea>" +
+      '<textarea class="ms-fs-textarea" id="' +
+      taId +
+      '">' +
+      esc(originalValue) +
+      "</textarea>" +
       "</div>" +
       '<div class="ms-fs-footer-bar">' +
-      '<div class="ms-char-count">' + stats.chars + " 字 · " + stats.lines + " 行</div>" +
+      '<div class="ms-char-count">' +
+      stats.chars +
+      " 字 · " +
+      stats.lines +
+      " 行</div>" +
       "</div>" +
       "</div>";
     $p.append(overlayHtml);
@@ -546,7 +593,9 @@
     ta.setSelectionRange(originalValue.length, originalValue.length);
     function updateCount() {
       var s = countStats(ta.value);
-      $overlay.find(".ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
+      $overlay
+        .find(".ms-char-count")
+        .text(s.chars + " 字 · " + s.lines + " 行");
     }
     function closeOverlay() {
       var saved = $p.data("ms-fs-saved-pos");
@@ -565,8 +614,10 @@
           ["zoom", "zoom"],
         ];
         keys.forEach(function (pair) {
-          var jsKey = pair[0], cssKey = pair[1];
-          if (saved[jsKey]) elem.style.setProperty(cssKey, saved[jsKey], "important");
+          var jsKey = pair[0],
+            cssKey = pair[1];
+          if (saved[jsKey])
+            elem.style.setProperty(cssKey, saved[jsKey], "important");
           else elem.style.removeProperty(cssKey);
         });
         data.settings.panelPos = saved.panelPos || null;
@@ -575,7 +626,9 @@
       $p.removeData("ms-fs-saved-pos");
       applyUICustomization();
     }
-    $overlay.on("click", "#ms-fs-cancel", function () { closeOverlay(); });
+    $overlay.on("click", "#ms-fs-cancel", function () {
+      closeOverlay();
+    });
     $overlay.on("click", "#ms-fs-save", function () {
       $sourceTa.val(ta.value).trigger("input").trigger("change");
       closeOverlay();
@@ -1289,9 +1342,15 @@
             multiEnabled: false,
             multiCount: 2,
           };
-        if (data.settings.randomInject && data.settings.randomInject.multiEnabled === undefined)
+        if (
+          data.settings.randomInject &&
+          data.settings.randomInject.multiEnabled === undefined
+        )
           data.settings.randomInject.multiEnabled = false;
-        if (data.settings.randomInject && data.settings.randomInject.multiCount === undefined)
+        if (
+          data.settings.randomInject &&
+          data.settings.randomInject.multiCount === undefined
+        )
           data.settings.randomInject.multiCount = 2;
         if (
           data.settings.randomInject &&
@@ -1463,16 +1522,27 @@
           if (!Array.isArray(g.charDisplayOrder)) g.charDisplayOrder = [];
           if (g.multiPrefixEnabled === undefined) g.multiPrefixEnabled = false;
           if (!Array.isArray(g.prefixTemplates)) g.prefixTemplates = [];
-          if (!g.prefixAssignments || typeof g.prefixAssignments !== "object") g.prefixAssignments = {};
-          if (g.prefixOverrides && typeof g.prefixOverrides === "object" && Object.keys(g.prefixOverrides).length > 0) {
+          if (!g.prefixAssignments || typeof g.prefixAssignments !== "object")
+            g.prefixAssignments = {};
+          if (
+            g.prefixOverrides &&
+            typeof g.prefixOverrides === "object" &&
+            Object.keys(g.prefixOverrides).length > 0
+          ) {
             Object.keys(g.prefixOverrides).forEach(function (pid) {
               var content = g.prefixOverrides[pid];
               if (!content || !content.trim()) return;
-              var existing = g.prefixTemplates.find(function (t) { return t.content === content; });
+              var existing = g.prefixTemplates.find(function (t) {
+                return t.content === content;
+              });
               if (existing) {
                 g.prefixAssignments[pid] = existing.id;
               } else {
-                var newTpl = { id: uid(), name: '迁移模板 ' + (g.prefixTemplates.length + 1), content: content };
+                var newTpl = {
+                  id: uid(),
+                  name: "迁移模板 " + (g.prefixTemplates.length + 1),
+                  content: content,
+                };
                 g.prefixTemplates.push(newTpl);
                 g.prefixAssignments[pid] = newTpl.id;
               }
@@ -1688,12 +1758,18 @@
       showModal({
         title: "小剧场 已更新到 v" + SCRIPT_VERSION,
         iconType: "success",
-        modalStyle: "min-width:400px;max-width:94vw;width:600px;max-height:80vh;",
-        body: '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;padding:0 2px;"><i class="fa-solid fa-arrow-up-right-from-square" style="margin-right:4px;"></i>从 v' + esc(fromVer) + ' 升级而来</div><div class="ms-preview-content" style="padding:0;">' + renderMd(content) + '</div>',
+        modalStyle:
+          "min-width:400px;max-width:94vw;width:600px;max-height:80vh;",
+        body:
+          '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;padding:0 2px;"><i class="fa-solid fa-arrow-up-right-from-square" style="margin-right:4px;"></i>从 v' +
+          esc(fromVer) +
+          ' 升级而来</div><div class="ms-preview-content" style="padding:0;">' +
+          renderMd(content) +
+          "</div>",
         buttons: [
-          { text: "知道了", cls: "primary", primary: true, value: true }
+          { text: "知道了", cls: "primary", primary: true, value: true },
         ],
-      }).then(function() {
+      }).then(function () {
         data.settings.lastSeenVersion = SCRIPT_VERSION;
         saveData();
       });
@@ -2727,7 +2803,8 @@
     return {
       id: uid(),
       name: icg.name,
-      color: icg.color || GROUP_COLORS[data.groups.length % GROUP_COLORS.length],
+      color:
+        icg.color || GROUP_COLORS[data.groups.length % GROUP_COLORS.length],
       note: icg.note || "",
       defaultAuthor: icg.defaultAuthor || "",
       stagePrefix: icg.stagePrefix || "",
@@ -2737,8 +2814,13 @@
       iconCharKey: icg.iconCharKey || "",
       charKeys: [],
       multiPrefixEnabled: icg.multiPrefixEnabled === true,
-      prefixTemplates: Array.isArray(icg.prefixTemplates) ? JSON.parse(JSON.stringify(icg.prefixTemplates)) : [],
-      prefixAssignments: icg.prefixAssignments && typeof icg.prefixAssignments === "object" ? Object.assign({}, icg.prefixAssignments) : {},
+      prefixTemplates: Array.isArray(icg.prefixTemplates)
+        ? JSON.parse(JSON.stringify(icg.prefixTemplates))
+        : [],
+      prefixAssignments:
+        icg.prefixAssignments && typeof icg.prefixAssignments === "object"
+          ? Object.assign({}, icg.prefixAssignments)
+          : {},
     };
   }
 
@@ -3264,7 +3346,8 @@
         insertText = prefix + label + p.content;
         if (_inputAppendList.length === 1) {
           var firstItem = _inputAppendList[0];
-          var firstLabel = "【任务1 | " + (firstItem.title || "未命名") + "】\n";
+          var firstLabel =
+            "【任务1 | " + (firstItem.title || "未命名") + "】\n";
           if (firstItem.content && firstItem.content.indexOf(firstLabel) < 0) {
             retroLabel = firstLabel;
             retroOldContent = firstItem.content;
@@ -3277,14 +3360,20 @@
       if (retroLabel && retroOldContent) {
         var firstIdx = workingVal.indexOf(retroOldContent);
         if (firstIdx >= 0) {
-          workingVal = workingVal.substring(0, firstIdx) + retroLabel + workingVal.substring(firstIdx);
+          workingVal =
+            workingVal.substring(0, firstIdx) +
+            retroLabel +
+            workingVal.substring(firstIdx);
           var labelLen = retroLabel.length;
           if (workingStart >= firstIdx) workingStart += labelLen;
           if (workingEnd >= firstIdx) workingEnd += labelLen;
           _inputAppendList[0].content = retroLabel + retroOldContent;
         }
       }
-      var newVal = workingVal.substring(0, workingStart) + insertText + workingVal.substring(workingEnd);
+      var newVal =
+        workingVal.substring(0, workingStart) +
+        insertText +
+        workingVal.substring(workingEnd);
       $ta.val(newVal).trigger("input").trigger("focus");
       var newCursor = workingStart + insertText.length;
       ta.setSelectionRange(newCursor, newCursor);
@@ -3337,6 +3426,7 @@
   }
 
   var _renderMdCache = new Map();
+
   function renderMd(text) {
     if (!text) return '<span style="opacity:0.4;">空内容</span>';
     var originalText = text;
@@ -3399,18 +3489,22 @@
     h = h.replace(/\*(?!\s)([\s\S]+?)(?<!\s)\*/g, "<em>$1</em>");
     h = h.replace(/~~([\s\S]+?)~~/g, "<del>$1</del>");
     h = h.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, function (m, alt, url) {
+      var safeUrl = sanitizeMdUrl(url, true);
+      if (!safeUrl) return m;
       return (
         '<img class="ms-md-img" src="' +
-        url.replace(/&/g, "&") +
+        escAttr(safeUrl) +
         '" alt="' +
-        alt +
+        escAlreadyEscapedAttr(alt) +
         '" loading="lazy">'
       );
     });
     h = h.replace(/\[([^\]]+)\]\(([^)]+)\)/g, function (m, text, url) {
+      var safeUrl = sanitizeMdUrl(url, false);
+      if (!safeUrl) return text;
       return (
         '<a class="ms-md-link" href="' +
-        url.replace(/&/g, "&amp;") +
+        escAttr(safeUrl) +
         '" target="_blank" rel="noopener">' +
         text +
         "</a>"
@@ -3492,7 +3586,8 @@
       });
     });
     cqBlocks.forEach(function (content, idx) {
-      var _rep = '<span class="ms-quote-text">\u201c' + esc(content) + "\u201d</span>";
+      var _rep =
+        '<span class="ms-quote-text">\u201c' + esc(content) + "\u201d</span>";
       h = h.replace("%%CQ" + idx + "%%", function () {
         return _rep;
       });
@@ -3737,8 +3832,13 @@
                 })
               : [],
             multiPrefixEnabled: cg.multiPrefixEnabled === true,
-            prefixTemplates: Array.isArray(cg.prefixTemplates) ? JSON.parse(JSON.stringify(cg.prefixTemplates)) : [],
-            prefixAssignments: cg.prefixAssignments && typeof cg.prefixAssignments === "object" ? Object.assign({}, cg.prefixAssignments) : {},
+            prefixTemplates: Array.isArray(cg.prefixTemplates)
+              ? JSON.parse(JSON.stringify(cg.prefixTemplates))
+              : [],
+            prefixAssignments:
+              cg.prefixAssignments && typeof cg.prefixAssignments === "object"
+                ? Object.assign({}, cg.prefixAssignments)
+                : {},
           });
         }
       });
@@ -3928,11 +4028,11 @@
             });
             if (existing.charKeys.indexOf(k) < 0) existing.charKeys.push(k);
           });
-              if (!existing.stagePrefix && icg.stagePrefix)
-                existing.stagePrefix = icg.stagePrefix;
-              if (!existing.multiStagePrefix && icg.multiStagePrefix)
-                existing.multiStagePrefix = icg.multiStagePrefix;
-              if (mode !== "append") {
+          if (!existing.stagePrefix && icg.stagePrefix)
+            existing.stagePrefix = icg.stagePrefix;
+          if (!existing.multiStagePrefix && icg.multiStagePrefix)
+            existing.multiStagePrefix = icg.multiStagePrefix;
+          if (mode !== "append") {
             if (icg.color !== undefined) existing.color = icg.color;
             if (icg.note !== undefined) existing.note = icg.note;
             if (icg.defaultAuthor !== undefined)
@@ -3944,9 +4044,20 @@
             if (Array.isArray(icg.charDisplayOrder)) {
               existing.charDisplayOrder = icg.charDisplayOrder.slice();
             }
-            if (icg.multiPrefixEnabled !== undefined) existing.multiPrefixEnabled = icg.multiPrefixEnabled === true;
-            if (Array.isArray(icg.prefixTemplates)) existing.prefixTemplates = JSON.parse(JSON.stringify(icg.prefixTemplates));
-            if (icg.prefixAssignments && typeof icg.prefixAssignments === "object") existing.prefixAssignments = Object.assign({}, icg.prefixAssignments);
+            if (icg.multiPrefixEnabled !== undefined)
+              existing.multiPrefixEnabled = icg.multiPrefixEnabled === true;
+            if (Array.isArray(icg.prefixTemplates))
+              existing.prefixTemplates = JSON.parse(
+                JSON.stringify(icg.prefixTemplates),
+              );
+            if (
+              icg.prefixAssignments &&
+              typeof icg.prefixAssignments === "object"
+            )
+              existing.prefixAssignments = Object.assign(
+                {},
+                icg.prefixAssignments,
+              );
           } else {
             if (
               Array.isArray(icg.charDisplayOrder) &&
@@ -4255,7 +4366,10 @@
         if (!localGroup || !srcAssign || typeof srcAssign !== "object") return;
         if (!localGroup.prefixAssignments) localGroup.prefixAssignments = {};
         Object.keys(srcAssign).forEach(function (oldPid) {
-          if (localGroup.prefixAssignments[oldPid] !== undefined && !_expIdToLocal[oldPid]) {
+          if (
+            localGroup.prefixAssignments[oldPid] !== undefined &&
+            !_expIdToLocal[oldPid]
+          ) {
             delete localGroup.prefixAssignments[oldPid];
           }
           var newPid = _expIdToLocal[oldPid];
@@ -4264,12 +4378,16 @@
       }
       (ig || []).forEach(function (impG) {
         if (!impG || !impG.prefixAssignments) return;
-        var localG = data.groups.find(function (g) { return g.name === impG.name; });
+        var localG = data.groups.find(function (g) {
+          return g.name === impG.name;
+        });
         _remapAssign(localG, impG.prefixAssignments);
       });
       (icgs || []).forEach(function (icg) {
         if (!icg || !icg.prefixAssignments) return;
-        var localG = data.groups.find(function (g) { return g.name === icg.name; });
+        var localG = data.groups.find(function (g) {
+          return g.name === icg.name;
+        });
         _remapAssign(localG, icg.prefixAssignments);
       });
     })();
@@ -4470,7 +4588,11 @@
           ? esc(truncate(getPrompt(sids[0]).title, 16))
           : "已选 " + sids.length + " 条";
       $ind
-        .html('<i class="fa-solid fa-syringe"></i><span>' + label + '</span><i class="fa-solid fa-xmark ms-inject-clear-btn" title="清除所有注入选择" style="margin-left:6px;font-size:10px;opacity:0.6;cursor:pointer;padding:2px 4px;border-radius:3px;"></i>')
+        .html(
+          '<i class="fa-solid fa-syringe"></i><span>' +
+            label +
+            '</span><i class="fa-solid fa-xmark ms-inject-clear-btn" title="清除所有注入选择" style="margin-left:6px;font-size:10px;opacity:0.6;cursor:pointer;padding:2px 4px;border-radius:3px;"></i>',
+        )
         .addClass("visible");
     } else if (
       data.settings.randomInject &&
@@ -4533,7 +4655,7 @@
     if (!closeMatch) return text;
     var inner = trimmed.substring(
       openMatch[0].length,
-      trimmed.length - closeMatch[0].length
+      trimmed.length - closeMatch[0].length,
     );
     var openTagRe = new RegExp("<" + tagName + "\\b", "gi");
     var closeTagRe = new RegExp("</" + tagName + "\\b", "gi");
@@ -4549,13 +4671,22 @@
       var pr = stagePrompts[0];
       var g = pr.groupId ? getGroup(pr.groupId) : null;
       var prefix = "";
-      if (g && g.multiPrefixEnabled && g.prefixAssignments && g.prefixAssignments[pr.id] && Array.isArray(g.prefixTemplates)) {
-        var _tpl = g.prefixTemplates.find(function (t) { return t.id === g.prefixAssignments[pr.id]; });
+      if (
+        g &&
+        g.multiPrefixEnabled &&
+        g.prefixAssignments &&
+        g.prefixAssignments[pr.id] &&
+        Array.isArray(g.prefixTemplates)
+      ) {
+        var _tpl = g.prefixTemplates.find(function (t) {
+          return t.id === g.prefixAssignments[pr.id];
+        });
         if (_tpl && _tpl.content && _tpl.content.trim()) prefix = _tpl.content;
       }
       if (!prefix) {
         if (g && g.stagePrefix) prefix = g.stagePrefix;
-        else if (data.settings.defaultStagePrefix) prefix = data.settings.defaultStagePrefix;
+        else if (data.settings.defaultStagePrefix)
+          prefix = data.settings.defaultStagePrefix;
       }
       var result = "";
       if (prefix) {
@@ -4584,7 +4715,11 @@
     });
     if (_allSameGroup && _firstGid) {
       var _firstG = getGroup(_firstGid);
-      if (_firstG && _firstG.multiStagePrefix && _firstG.multiStagePrefix.trim()) {
+      if (
+        _firstG &&
+        _firstG.multiStagePrefix &&
+        _firstG.multiStagePrefix.trim()
+      ) {
         wrapper = _firstG.multiStagePrefix;
       }
     }
@@ -4605,13 +4740,23 @@
     stagePrompts.forEach(function (pr) {
       var g = pr.groupId ? getGroup(pr.groupId) : null;
       var rawPrefix = "";
-      if (g && g.multiPrefixEnabled && g.prefixAssignments && g.prefixAssignments[pr.id] && Array.isArray(g.prefixTemplates)) {
-        var _tpl = g.prefixTemplates.find(function (t) { return t.id === g.prefixAssignments[pr.id]; });
-        if (_tpl && _tpl.content && _tpl.content.trim()) rawPrefix = _tpl.content;
+      if (
+        g &&
+        g.multiPrefixEnabled &&
+        g.prefixAssignments &&
+        g.prefixAssignments[pr.id] &&
+        Array.isArray(g.prefixTemplates)
+      ) {
+        var _tpl = g.prefixTemplates.find(function (t) {
+          return t.id === g.prefixAssignments[pr.id];
+        });
+        if (_tpl && _tpl.content && _tpl.content.trim())
+          rawPrefix = _tpl.content;
       }
       if (!rawPrefix) {
         if (g && g.stagePrefix) rawPrefix = g.stagePrefix;
-        else if (data.settings.defaultStagePrefix) rawPrefix = data.settings.defaultStagePrefix;
+        else if (data.settings.defaultStagePrefix)
+          rawPrefix = data.settings.defaultStagePrefix;
       }
       var key = rawPrefix || "_no_prefix_";
       if (!groupedByPrefix[key]) {
@@ -4643,8 +4788,12 @@
         });
         var stagesContent = subTasks.join("\n\n");
         var processedPrefix = innerPrefix
-          .replace(/\{\{stage_title\}\}/gi, function () { return allTitles.join("\u3001"); })
-          .replace(/\{\{stages\}\}/gi, function () { return stagesContent; });
+          .replace(/\{\{stage_title\}\}/gi, function () {
+            return allTitles.join("\u3001");
+          })
+          .replace(/\{\{stages\}\}/gi, function () {
+            return stagesContent;
+          });
         taskBlocks.push(processedPrefix);
       } else if (!innerPrefix || hasStageMacro) {
         grp.prompts.forEach(function (pr) {
@@ -4661,9 +4810,12 @@
           } else {
             taskContent = pr.content;
           }
-          taskContent = taskContent.replace(/\{\{stage_title\}\}/gi, function () {
-            return pr.title || "";
-          });
+          taskContent = taskContent.replace(
+            /\{\{stage_title\}\}/gi,
+            function () {
+              return pr.title || "";
+            },
+          );
           var _taskHeader = "\u3010\u4efb\u52a1" + taskCounter;
           if (pr.title && pr.title.trim()) {
             _taskHeader += " | " + pr.title.trim();
@@ -4684,9 +4836,12 @@
           subTasks.push(_subHeader + "\n" + pr.content);
           allTitles.push(pr.title || "");
         });
-        var processedPrefix = innerPrefix.replace(/\{\{stage_title\}\}/gi, function () {
-          return allTitles.join("\u3001");
-        });
+        var processedPrefix = innerPrefix.replace(
+          /\{\{stage_title\}\}/gi,
+          function () {
+            return allTitles.join("\u3001");
+          },
+        );
         taskBlocks.push(processedPrefix + "\n\n" + subTasks.join("\n\n"));
       }
     });
@@ -4774,13 +4929,50 @@
           break;
         }
       }
-      if (!picked) picked = available[Math.floor(Math.random() * available.length)];
+      if (!picked)
+        picked = available[Math.floor(Math.random() * available.length)];
       result.push(picked);
       available = available.filter(function (p) {
         return p.id !== picked.id;
       });
     }
     return result;
+  }
+
+  function doRandomPick() {
+    var visibleIds = getVisiblePromptIds().filter(function (pid) {
+      return !!getPrompt(pid);
+    });
+    var pool = visibleIds
+      .map(function (pid) {
+        return getPrompt(pid);
+      })
+      .filter(function (p) {
+        return p && isInRandomPool(p);
+      });
+    var fallbackToGlobalPool = false;
+    if (pool.length === 0) {
+      fallbackToGlobalPool = visibleIds.length > 0;
+      pool = data.prompts.filter(function (p) {
+        return isInRandomPool(p);
+      });
+    }
+    if (pool.length === 0) {
+      toast("warning", "随机池里没有可抽取的剧场");
+      return;
+    }
+    var picked = pool[Math.floor(Math.random() * pool.length)];
+    if (!picked) return;
+    if (fallbackToGlobalPool) {
+      toast("info", "当前范围都被排除了，已从全局随机池抽取");
+    }
+    navigateTo({
+      name: "preview",
+      promptId: picked.id,
+      _siblingIds: pool.map(function (p) {
+        return p.id;
+      }),
+    });
   }
 
   var _pagedCtx = null;
@@ -4790,7 +4982,13 @@
   }
 
   function _buildPagedAnchor(rendered, total) {
-    return '<div id="ms-paged-anchor" style="padding:14px;text-align:center;font-size:11px;color:var(--SmartThemeQuoteColor,#888);background:rgba(var(--ms-accent-rgb),0.04);border-top:1px solid rgba(255,255,255,0.04);border-bottom:1px solid rgba(255,255,255,0.04);"><i class="fa-solid fa-arrow-down" style="margin-right:4px;color:var(--ms-accent);"></i>已显示 ' + rendered + ' / ' + total + ' · 继续向下滚动加载</div>';
+    return (
+      '<div id="ms-paged-anchor" style="padding:14px;text-align:center;font-size:11px;color:var(--SmartThemeQuoteColor,#888);background:rgba(var(--ms-accent-rgb),0.04);border-top:1px solid rgba(255,255,255,0.04);border-bottom:1px solid rgba(255,255,255,0.04);"><i class="fa-solid fa-arrow-down" style="margin-right:4px;color:var(--ms-accent);"></i>已显示 ' +
+      rendered +
+      " / " +
+      total +
+      " · 继续向下滚动加载</div>"
+    );
   }
 
   function _applyPagedRender(blockHtmls, options) {
@@ -4806,7 +5004,10 @@
       batchSize: batchSize,
       _lastLoad: 0,
     };
-    return blockHtmls.slice(0, firstBatch).join("") + _buildPagedAnchor(firstBatch, blockHtmls.length);
+    return (
+      blockHtmls.slice(0, firstBatch).join("") +
+      _buildPagedAnchor(firstBatch, blockHtmls.length)
+    );
   }
 
   function _loadMorePagedBlocks($body) {
@@ -4819,7 +5020,8 @@
     }
     var bodyEl = $body[0];
     if (!bodyEl) return;
-    var distToBottom = bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight;
+    var distToBottom =
+      bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight;
     if (distToBottom > 400) return;
     var now = Date.now();
     if (ctx._lastLoad && now - ctx._lastLoad < 80) return;
@@ -4981,8 +5183,9 @@
     return { chars: text.length, lines: text.split("\n").length };
   }
 
-  function getCSS() {
-    return `
+function getCSS() {
+  return `
+@import url("https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css");
 #${PANEL_ID}{--ms-accent:var(--SmartThemeFavColor,#c9957a);--ms-accent-rgb:201,149,122;--ms-danger:#a93226;--ms-danger-rgb:169,50,38;--ms-success:#3a8a3a;}
 #${PANEL_ID}{position:fixed;z-index:9998;background-color:var(--SmartThemeBlurTintColor,#1a1a2e);border:1px solid var(--SmartThemeBorderColor,#333);border-radius:10px;box-shadow:0 4px 24px rgba(0,0,0,0.45);display:none;flex-direction:column;color:var(--SmartThemeBodyColor,#ccc);font-family:inherit;font-size:14px;overflow:hidden;width:500px;max-width:92vw;max-height:82vh;min-width:320px;left:50%;top:60px;transform:translateX(-50%);}
 #${PANEL_ID}.ms-visible{display:flex;}
@@ -5511,10 +5714,10 @@
 .ms-macro-info code{background:rgba(var(--ms-accent-rgb),0.12);color:var(--ms-accent);padding:2px 7px;border-radius:4px;font-size:11px;font-family:Consolas,"Courier New",monospace;border:1px solid rgba(var(--ms-accent-rgb),0.2);letter-spacing:0.3px;}
 .ms-macro-info .ms-macro-desc{color:var(--SmartThemeQuoteColor,#999);margin-left:6px;}
 `;
-  }
+}
 
-  function getPanelHTML() {
-    return `<div id="${PANEL_ID}">
+function getPanelHTML() {
+  return `<div id="${PANEL_ID}">
       <div class="ms-header" id="ms-header">
         <i class="fa-solid fa-grip ms-drag-handle"></i>
         <span class="ms-title" id="ms-title">小剧场</span>
@@ -5527,232 +5730,58 @@
       <div class="ms-footer" id="ms-footer"></div>
       <div class="ms-dropdown" id="ms-dropdown"></div>
       <input type="file" id="ms-file-input" accept=".json" style="display:none;"><button class="ms-scroll-top" id="ms-scroll-top" title="回到顶部"><i class="fa-solid fa-angle-up"></i></button><button class="ms-scroll-bottom" id="ms-scroll-bottom" title="回到底部"><i class="fa-solid fa-angle-down"></i></button></div>`;
+}
+
+function renderView() {
+  if (bindReorderDrag._cleanup) {
+    bindReorderDrag._cleanup();
+    bindReorderDrag._cleanup = null;
   }
-
-  function renderView() {
-    if (bindReorderDrag._cleanup) {
-      bindReorderDrag._cleanup();
-      bindReorderDrag._cleanup = null;
-    }
-    _clearPagedCtx();
-    const $p = $("#" + PANEL_ID);
-    if (!$p.length) return;
-    $p.find("#ms-count").text(data.prompts.length + " 条");
-    $p.find("#ms-filter-panel").removeClass("open").empty();
-    const v = currentView();
-    const map = {
-      "lost-chars": renderLostChars,
-      list: renderList,
-      group: renderGroup,
-      starred: renderStarred,
-      recent: renderRecent,
-      characters: renderCharacters,
-      character: renderCharacter,
-      preview: renderPreview,
-      edit: renderEdit,
-      groups: renderGroups,
-      "group-edit": renderGroupEdit,
-      "tag-manage": renderTagManage,
-      export: renderExport,
-      "export-single-options": renderExportSingleOptions,
-      "export-group-options": renderExportGroupOptions,
-      "export-batch-options": renderExportBatchOptions,
-      "import-confirm": renderImportConfirm,
-      "quick-phrases": renderQuickPhrases,
-      "quick-phrase-edit": renderQuickPhraseEdit,
-      settings: renderSettings,
-      stats: renderStats,
-      "reorder-groups": renderReorderGroups,
-      "reorder-prompts": renderReorderPrompts,
-      "reorder-tags": renderReorderTags,
-      history: renderHistory,
-      "history-diff": renderHistoryDiff,
-      "history-list": renderHistoryList,
-      subscriptions: renderSubscriptions,
-      "subscription-add": renderSubscriptionAdd,
-      "subscription-detail": renderSubscriptionDetail,
-      "random-pool": renderRandomPool,
-    };
-    if (map[v.name]) map[v.name](v);
-    if ($p.find("#ms-footer").css("display") === "block")
-      $p.find("#ms-footer").css("display", "flex");
-    var $scrollBody = $p.find("#ms-body");
-    if (v._expandedSeries && v._expandedSeries.length) {
-      v._expandedSeries.forEach(function (sid) {
-        var $sb = $p.find("#" + sid);
-        if ($sb.length) {
-          $sb.addClass("open");
-          var $arrow = $sb.prev(".ms-series-header").find(".ms-series-arrow");
-          if ($arrow.length) {
-            $arrow[0].style.transition = "none";
-            $arrow.addClass("open");
-          }
-        }
-      });
-      requestAnimationFrame(function () {
-        $p.find(".ms-series-arrow").css("transition", "");
-      });
-    }
-    if (
-      v._filterPanelOpen &&
-      (filterState.includeTags.length > 0 ||
-        filterState.excludeTags.length > 0 ||
-        filterState.groupId)
-    ) {
-      $p.find("#ms-filter-panel").html(buildFilterPanel()).addClass("open");
-      bindFilterEvents($p);
-    }
-    if (v._savedScrollTop !== undefined && v._savedScrollTop > 0) {
-      $scrollBody.scrollTop(v._savedScrollTop);
-    } else {
-      $scrollBody.scrollTop(0);
-    }
-    updateInjectIndicator();
-    setTimeout(function () {
-      $p.find("#ms-body").trigger("scroll");
-    }, 100);
-    if (v._lastViewedId) {
-      setTimeout(function () {
-        var $card = $p.find('.ms-card[data-pid="' + v._lastViewedId + '"]');
-        if ($card.length) {
-          $card.addClass("ms-just-viewed");
-          var cardRect = $card[0].getBoundingClientRect();
-          var bodyRect = $scrollBody[0].getBoundingClientRect();
-          var relativeTop = cardRect.top - bodyRect.top;
-          var cardH = $card.outerHeight();
-          var bodyH = $scrollBody.height();
-          if (relativeTop < 0 || relativeTop + cardH > bodyH) {
-            $scrollBody.scrollTop(
-              $scrollBody.scrollTop() + relativeTop - bodyH * 0.3,
-            );
-          }
-        }
-        delete v._lastViewedId;
-      }, 50);
-    }
-  }
-
-  function refreshKeepingState() {
-    var $p = $("#" + PANEL_ID);
-    var v = currentView();
-    var $body = $p.find("#ms-body");
-    if (v.name === "group" || v.name === "character") {
-      var _openSeries = [];
-      $body.find(".ms-series-body.open").each(function () {
-        _openSeries.push(this.id);
-      });
-      v._expandedSeries = _openSeries;
-      v._savedScrollTop = $body.scrollTop();
-      renderView();
-    } else {
-      renderBodyOnly();
-    }
-  }
-  function rerenderAfterSelectChange() {
-    refreshKeepingState();
-  }
-
-  function renderBodyOnly() {
-    const $p = $("#" + PANEL_ID);
-    if (!$p.length) return;
-    _clearPagedCtx();
-    const v = currentView(),
-      $body = $p.find("#ms-body");
-    var _openSeries = [];
-    $body.find(".ms-series-body.open").each(function () {
-      _openSeries.push(this.id);
-    });
-    var _scrollTop = $body.scrollTop();
-    if (v.name === "list") {
-      $body.html(buildListBody());
-      if (selectMode) {
-        $p.find("#ms-footer").html(buildBatchFooter()).show();
-      } else if (
-        searchQuery ||
-        filterState.includeTags.length > 0 ||
-        filterState.excludeTags.length > 0 ||
-        filterState.groupId
-      ) {
-        var filteredList = sortPrompts(
-          filterPrompts(searchPrompts(data.prompts, searchQuery)),
-        );
-        $p.find("#ms-footer")
-          .html(
-            "<span>找到 " +
-              filteredList.length +
-              " / " +
-              data.prompts.length +
-              " 条</span>",
-          )
-          .show();
-      } else {
-        $p.find("#ms-footer").html(buildListFooter()).show();
-      }
-    } else if (v.name === "group") {
-      var $oldSearch = $p.find("#ms-search");
-      var _searchWasFocused = $oldSearch.is(":focus");
-      var _searchStart =
-        _searchWasFocused && $oldSearch[0]
-          ? $oldSearch[0].selectionStart || 0
-          : 0;
-      var _searchEnd =
-        _searchWasFocused && $oldSearch[0]
-          ? $oldSearch[0].selectionEnd || 0
-          : 0;
-      renderView();
-      if (_searchWasFocused) {
-        var $newSearch = $p.find("#ms-search");
-        if ($newSearch.length) {
-          $newSearch.focus();
-          try {
-            $newSearch[0].setSelectionRange(_searchStart, _searchEnd);
-          } catch (e) {}
-        }
-      }
-      return;
-    } else if (v.name === "starred") {
-      let f = sortPrompts(
-        filterPrompts(searchPrompts(getStarredPrompts(), searchQuery)),
-      );
-      var _sf = f.length > 0
-        ? _applyPagedRender(getPromptCardBlocks(f, true))
-        : `<div class="ms-empty"><i class="fa-solid fa-star"></i>还没有收藏</div>`;
-      $body.html(buildRangeModeHint() + _sf);
-
-      $p.find("#ms-footer")
-        .html(
-          selectMode ? buildBatchFooter() : `<span>${f.length} 条收藏</span>`,
-        )
-        .show();
-    } else if (v.name === "recent") {
-      const list = sortPrompts(
-        filterPrompts(searchPrompts(getRecentPrompts(), searchQuery)),
-      );
-      var _rf = list.length > 0
-        ? _applyPagedRender(getPromptCardBlocks(list, true))
-        : `<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>还没有记录</div>`;
-      $body.html(buildRangeModeHint() + _rf);
-
-      $p.find("#ms-footer")
-        .find("span:first")
-        .text(list.length + " 条");
-    } else if (v.name === "characters") {
-      var $oldSearch = $p.find("#ms-search");
-      var wasFocused = $oldSearch.is(":focus");
-      var cursorPos =
-        wasFocused && $oldSearch[0] ? $oldSearch[0].selectionStart || 0 : 0;
-      renderCharacters(v);
-      if (wasFocused) {
-        var $newSearch = $p.find("#ms-search");
-        $newSearch.focus();
-        try {
-          $newSearch[0].setSelectionRange(cursorPos, cursorPos);
-        } catch (e) {}
-      }
-      return;
-    }
-
-    _openSeries.forEach(function (sid) {
+  _clearPagedCtx();
+  const $p = $("#" + PANEL_ID);
+  if (!$p.length) return;
+  $p.find("#ms-count").text(data.prompts.length + " 条");
+  $p.find("#ms-filter-panel").removeClass("open").empty();
+  const v = currentView();
+  const map = {
+    "lost-chars": renderLostChars,
+    list: renderList,
+    group: renderGroup,
+    starred: renderStarred,
+    recent: renderRecent,
+    characters: renderCharacters,
+    character: renderCharacter,
+    preview: renderPreview,
+    edit: renderEdit,
+    groups: renderGroups,
+    "group-edit": renderGroupEdit,
+    "tag-manage": renderTagManage,
+    export: renderExport,
+    "export-single-options": renderExportSingleOptions,
+    "export-group-options": renderExportGroupOptions,
+    "export-batch-options": renderExportBatchOptions,
+    "import-confirm": renderImportConfirm,
+    "quick-phrases": renderQuickPhrases,
+    "quick-phrase-edit": renderQuickPhraseEdit,
+    settings: renderSettings,
+    stats: renderStats,
+    "reorder-groups": renderReorderGroups,
+    "reorder-prompts": renderReorderPrompts,
+    "reorder-tags": renderReorderTags,
+    history: renderHistory,
+    "history-diff": renderHistoryDiff,
+    "history-list": renderHistoryList,
+    subscriptions: renderSubscriptions,
+    "subscription-add": renderSubscriptionAdd,
+    "subscription-detail": renderSubscriptionDetail,
+    "random-pool": renderRandomPool,
+  };
+  if (map[v.name]) map[v.name](v);
+  if ($p.find("#ms-footer").css("display") === "block")
+    $p.find("#ms-footer").css("display", "flex");
+  var $scrollBody = $p.find("#ms-body");
+  if (v._expandedSeries && v._expandedSeries.length) {
+    v._expandedSeries.forEach(function (sid) {
       var $sb = $p.find("#" + sid);
       if ($sb.length) {
         $sb.addClass("open");
@@ -5763,46 +5792,215 @@
         }
       }
     });
-    if (_openSeries.length) {
-      requestAnimationFrame(function () {
-        $p.find(".ms-series-arrow").css("transition", "");
-      });
-    }
-    $body.scrollTop(_scrollTop);
-    setTimeout(function () {
-      $body.trigger("scroll");
-    }, 50);
-    if ($p.find("#ms-footer").css("display") === "block")
-      $p.find("#ms-footer").css("display", "flex");
+    requestAnimationFrame(function () {
+      $p.find(".ms-series-arrow").css("transition", "");
+    });
   }
-  function buildRangeModeHint() {
-    if (!selectMode || !rangeSelectMode) return "";
-    var vis = getVisiblePromptIds();
-    var anchorValid = rangeSelectAnchor && vis.indexOf(rangeSelectAnchor) >= 0;
-    return (
-      '<div style="padding:8px 14px;background:rgba(var(--ms-accent-rgb),0.06);border-bottom:1px solid var(--SmartThemeBorderColor,#333);font-size:11px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;"><i class="fa-solid fa-arrows-left-right-to-line" style="color:var(--ms-accent);margin-right:4px;"></i>范围模式：' +
-      (anchorValid
-        ? "已锚定，再次点选可扩展或收缩范围"
-        : "点选第一项确定锚点") +
-      ' · <span style="opacity:0.75;">长按某条目可改锚点到该处</span></div>'
+  if (
+    v._filterPanelOpen &&
+    (filterState.includeTags.length > 0 ||
+      filterState.excludeTags.length > 0 ||
+      filterState.groupId)
+  ) {
+    $p.find("#ms-filter-panel").html(buildFilterPanel()).addClass("open");
+    bindFilterEvents($p);
+  }
+  if (v._savedScrollTop !== undefined && v._savedScrollTop > 0) {
+    $scrollBody.scrollTop(v._savedScrollTop);
+  } else {
+    $scrollBody.scrollTop(0);
+  }
+  updateInjectIndicator();
+  setTimeout(function () {
+    $p.find("#ms-body").trigger("scroll");
+  }, 100);
+  if (v._lastViewedId) {
+    setTimeout(function () {
+      var $card = $p.find('.ms-card[data-pid="' + v._lastViewedId + '"]');
+      if ($card.length) {
+        $card.addClass("ms-just-viewed");
+        var cardRect = $card[0].getBoundingClientRect();
+        var bodyRect = $scrollBody[0].getBoundingClientRect();
+        var relativeTop = cardRect.top - bodyRect.top;
+        var cardH = $card.outerHeight();
+        var bodyH = $scrollBody.height();
+        if (relativeTop < 0 || relativeTop + cardH > bodyH) {
+          $scrollBody.scrollTop(
+            $scrollBody.scrollTop() + relativeTop - bodyH * 0.3,
+          );
+        }
+      }
+      delete v._lastViewedId;
+    }, 50);
+  }
+}
+
+function refreshKeepingState() {
+  var $p = $("#" + PANEL_ID);
+  var v = currentView();
+  var $body = $p.find("#ms-body");
+  if (v.name === "group" || v.name === "character") {
+    var _openSeries = [];
+    $body.find(".ms-series-body.open").each(function () {
+      _openSeries.push(this.id);
+    });
+    v._expandedSeries = _openSeries;
+    v._savedScrollTop = $body.scrollTop();
+    renderView();
+  } else {
+    renderBodyOnly();
+  }
+}
+function rerenderAfterSelectChange() {
+  refreshKeepingState();
+}
+
+function renderBodyOnly() {
+  const $p = $("#" + PANEL_ID);
+  if (!$p.length) return;
+  _clearPagedCtx();
+  const v = currentView(),
+    $body = $p.find("#ms-body");
+  var _openSeries = [];
+  $body.find(".ms-series-body.open").each(function () {
+    _openSeries.push(this.id);
+  });
+  var _scrollTop = $body.scrollTop();
+  if (v.name === "list") {
+    $body.html(buildListBody());
+    if (selectMode) {
+      $p.find("#ms-footer").html(buildBatchFooter()).show();
+    } else if (
+      searchQuery ||
+      filterState.includeTags.length > 0 ||
+      filterState.excludeTags.length > 0 ||
+      filterState.groupId
+    ) {
+      var filteredList = sortPrompts(
+        filterPrompts(searchPrompts(data.prompts, searchQuery)),
+      );
+      $p.find("#ms-footer")
+        .html(
+          "<span>找到 " +
+            filteredList.length +
+            " / " +
+            data.prompts.length +
+            " 条</span>",
+        )
+        .show();
+    } else {
+      $p.find("#ms-footer").html(buildListFooter()).show();
+    }
+  } else if (v.name === "group") {
+    var $oldSearch = $p.find("#ms-search");
+    var _searchWasFocused = $oldSearch.is(":focus");
+    var _searchStart =
+      _searchWasFocused && $oldSearch[0]
+        ? $oldSearch[0].selectionStart || 0
+        : 0;
+    var _searchEnd =
+      _searchWasFocused && $oldSearch[0] ? $oldSearch[0].selectionEnd || 0 : 0;
+    renderView();
+    if (_searchWasFocused) {
+      var $newSearch = $p.find("#ms-search");
+      if ($newSearch.length) {
+        $newSearch.focus();
+        try {
+          $newSearch[0].setSelectionRange(_searchStart, _searchEnd);
+        } catch (e) {}
+      }
+    }
+    return;
+  } else if (v.name === "starred") {
+    let f = sortPrompts(
+      filterPrompts(searchPrompts(getStarredPrompts(), searchQuery)),
     );
+    var _sf =
+      f.length > 0
+        ? _applyPagedRender(getPromptCardBlocks(f, true))
+        : `<div class="ms-empty"><i class="fa-solid fa-star"></i>还没有收藏</div>`;
+    $body.html(buildRangeModeHint() + _sf);
+
+    $p.find("#ms-footer")
+      .html(selectMode ? buildBatchFooter() : `<span>${f.length} 条收藏</span>`)
+      .show();
+  } else if (v.name === "recent") {
+    const list = sortPrompts(
+      filterPrompts(searchPrompts(getRecentPrompts(), searchQuery)),
+    );
+    var _rf =
+      list.length > 0
+        ? _applyPagedRender(getPromptCardBlocks(list, true))
+        : `<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>还没有记录</div>`;
+    $body.html(buildRangeModeHint() + _rf);
+
+    $p.find("#ms-footer")
+      .find("span:first")
+      .text(list.length + " 条");
+  } else if (v.name === "characters") {
+    var $oldSearch = $p.find("#ms-search");
+    var wasFocused = $oldSearch.is(":focus");
+    var cursorPos =
+      wasFocused && $oldSearch[0] ? $oldSearch[0].selectionStart || 0 : 0;
+    renderCharacters(v);
+    if (wasFocused) {
+      var $newSearch = $p.find("#ms-search");
+      $newSearch.focus();
+      try {
+        $newSearch[0].setSelectionRange(cursorPos, cursorPos);
+      } catch (e) {}
+    }
+    return;
   }
 
-  function buildBatchFooter() {
-    const vis = getVisiblePromptIds();
-    const allSelected =
-      vis.length > 0 && vis.every((id) => selectedIds.has(id));
-    const noneSelected = selectedIds.size === 0;
-    const selIcon = allSelected
-      ? "fa-solid fa-square-check"
-      : noneSelected
-        ? "fa-regular fa-square"
-        : "fa-solid fa-square-minus";
-    const selColor = noneSelected
-      ? "var(--SmartThemeQuoteColor,#666)"
-      : "var(--ms-accent)";
-    const selLabel = allSelected ? " 取消" : " 全选";
-    return `<div class="ms-batch-bar">
+  _openSeries.forEach(function (sid) {
+    var $sb = $p.find("#" + sid);
+    if ($sb.length) {
+      $sb.addClass("open");
+      var $arrow = $sb.prev(".ms-series-header").find(".ms-series-arrow");
+      if ($arrow.length) {
+        $arrow[0].style.transition = "none";
+        $arrow.addClass("open");
+      }
+    }
+  });
+  if (_openSeries.length) {
+    requestAnimationFrame(function () {
+      $p.find(".ms-series-arrow").css("transition", "");
+    });
+  }
+  $body.scrollTop(_scrollTop);
+  setTimeout(function () {
+    $body.trigger("scroll");
+  }, 50);
+  if ($p.find("#ms-footer").css("display") === "block")
+    $p.find("#ms-footer").css("display", "flex");
+}
+function buildRangeModeHint() {
+  if (!selectMode || !rangeSelectMode) return "";
+  var vis = getVisiblePromptIds();
+  var anchorValid = rangeSelectAnchor && vis.indexOf(rangeSelectAnchor) >= 0;
+  return (
+    '<div style="padding:8px 14px;background:rgba(var(--ms-accent-rgb),0.06);border-bottom:1px solid var(--SmartThemeBorderColor,#333);font-size:11px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;"><i class="fa-solid fa-arrows-left-right-to-line" style="color:var(--ms-accent);margin-right:4px;"></i>范围模式：' +
+    (anchorValid ? "已锚定，再次点选可扩展或收缩范围" : "点选第一项确定锚点") +
+    ' · <span style="opacity:0.75;">长按某条目可改锚点到该处</span></div>'
+  );
+}
+
+function buildBatchFooter() {
+  const vis = getVisiblePromptIds();
+  const allSelected = vis.length > 0 && vis.every((id) => selectedIds.has(id));
+  const noneSelected = selectedIds.size === 0;
+  const selIcon = allSelected
+    ? "fa-solid fa-square-check"
+    : noneSelected
+      ? "fa-regular fa-square"
+      : "fa-solid fa-square-minus";
+  const selColor = noneSelected
+    ? "var(--SmartThemeQuoteColor,#666)"
+    : "var(--ms-accent)";
+  const selLabel = allSelected ? " 取消" : " 全选";
+  return `<div class="ms-batch-bar">
       <span class="ms-batch-count"><i class="fa-solid fa-list-check"></i> ${selectedIds.size}</span>
       <button class="ms-batch-btn" data-batch="selectall"><i class="${selIcon}" style="color:${selColor};"></i><span class="ms-btn-label">${selLabel}</span></button>
       <button class="ms-batch-btn" data-batch="move"><i class="fa-solid fa-folder-open"></i><span class="ms-btn-label"> 移动</span></button>
@@ -5813,494 +6011,483 @@
       <button class="ms-batch-btn" data-batch="export"><i class="fa-solid fa-file-export"></i><span class="ms-btn-label"> 导出</span></button>
       <button class="ms-batch-btn danger" data-batch="delete"><i class="fa-solid fa-trash"></i><span class="ms-btn-label"> 删除</span></button>
     </div>`;
-  }
+}
 
-  function buildListBody() {
-    let html = buildRangeModeHint();
-    if (
-      searchQuery ||
-      filterState.includeTags.length > 0 ||
-      filterState.excludeTags.length > 0 ||
-      filterState.groupId
-    ) {
-      let list = sortPrompts(
-        filterPrompts(searchPrompts(data.prompts, searchQuery)),
-      );
-      if (list.length > 0) {
-        html += `<div class="ms-section-label">${searchQuery ? "搜索" : "筛选"}结果 (${list.length})</div>`;
-        var _searchBlocks;
-        if (
-          !searchQuery &&
-          filterState.groupId &&
-          filterState.groupId !== "_ungrouped"
-        ) {
-          _searchBlocks = getGroupBodySeriesBlocks(list);
-        } else {
-          _searchBlocks = getPromptCardBlocks(list, true);
-        }
-        html += _applyPagedRender(_searchBlocks);
-      } else
-        html = `<div class="ms-empty"><i class="fa-solid fa-magnifying-glass"></i>没有找到匹配的内容</div>`;
-      return html;
-    }
-    const starred = getStarredPrompts();
-    if (starred.length > 0)
-      html += `<div class="ms-nav-item" data-nav="starred"><div class="ms-nav-icon" style="background:rgba(var(--ms-accent-rgb),0.12);color:var(--ms-accent);"><i class="fa-solid fa-star"></i></div><div class="ms-nav-info"><div class="ms-nav-title">收藏</div></div><span class="ms-nav-cnt">${starred.length}</span><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
-    const recent = getRecentPrompts();
-    if (recent.length > 0)
-      html += `<div class="ms-nav-item" data-nav="recent"><div class="ms-nav-icon" style="background:rgba(126,168,160,0.12);color:#7ea8a0;"><i class="fa-solid fa-clock-rotate-left"></i></div><div class="ms-nav-info"><div class="ms-nav-title">最近使用</div></div><span class="ms-nav-cnt">${recent.length}</span><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
-    const charMap = getAllCharactersWithStages();
-    const charCount = Object.keys(charMap).length;
-    const currentCharForNav = getCurrentCharKeySafe();
-    if (charCount > 0 || currentCharForNav) {
-      html += `<div class="ms-nav-item" data-nav="characters"><div class="ms-nav-icon" style="background:rgba(180,140,200,0.12);color:#b48cc8;"><i class="fa-solid fa-user-tag"></i></div><div class="ms-nav-info"><div class="ms-nav-title">角色专属</div></div><span class="ms-nav-cnt">${charCount}</span><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
-    }
-    if (
-      starred.length > 0 ||
-      recent.length > 0 ||
-      charCount > 0 ||
-      currentCharForNav
-    )
-      html += '<div class="ms-divider"></div>';
-    var _gpBuckets = {};
-    data.prompts.forEach(function (p) {
-      var k = p.groupId && getGroup(p.groupId) ? p.groupId : "_ungrouped";
-      if (!_gpBuckets[k]) _gpBuckets[k] = [];
-      _gpBuckets[k].push(p);
+function buildListBody() {
+  let html = buildRangeModeHint();
+  if (
+    searchQuery ||
+    filterState.includeTags.length > 0 ||
+    filterState.excludeTags.length > 0 ||
+    filterState.groupId
+  ) {
+    let list = sortPrompts(
+      filterPrompts(searchPrompts(data.prompts, searchQuery)),
+    );
+    if (list.length > 0) {
+      html += `<div class="ms-section-label">${searchQuery ? "搜索" : "筛选"}结果 (${list.length})</div>`;
+      var _searchBlocks;
+      if (
+        !searchQuery &&
+        filterState.groupId &&
+        filterState.groupId !== "_ungrouped"
+      ) {
+        _searchBlocks = getGroupBodySeriesBlocks(list);
+      } else {
+        _searchBlocks = getPromptCardBlocks(list, true);
+      }
+      html += _applyPagedRender(_searchBlocks);
+    } else
+      html = `<div class="ms-empty"><i class="fa-solid fa-magnifying-glass"></i>没有找到匹配的内容</div>`;
+    return html;
+  }
+  const starred = getStarredPrompts();
+  if (starred.length > 0)
+    html += `<div class="ms-nav-item" data-nav="starred"><div class="ms-nav-icon" style="background:rgba(var(--ms-accent-rgb),0.12);color:var(--ms-accent);"><i class="fa-solid fa-star"></i></div><div class="ms-nav-info"><div class="ms-nav-title">收藏</div></div><span class="ms-nav-cnt">${starred.length}</span><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
+  const recent = getRecentPrompts();
+  if (recent.length > 0)
+    html += `<div class="ms-nav-item" data-nav="recent"><div class="ms-nav-icon" style="background:rgba(126,168,160,0.12);color:#7ea8a0;"><i class="fa-solid fa-clock-rotate-left"></i></div><div class="ms-nav-info"><div class="ms-nav-title">最近使用</div></div><span class="ms-nav-cnt">${recent.length}</span><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
+  const charMap = getAllCharactersWithStages();
+  const charCount = Object.keys(charMap).length;
+  const currentCharForNav = getCurrentCharKeySafe();
+  if (charCount > 0 || currentCharForNav) {
+    html += `<div class="ms-nav-item" data-nav="characters"><div class="ms-nav-icon" style="background:rgba(180,140,200,0.12);color:#b48cc8;"><i class="fa-solid fa-user-tag"></i></div><div class="ms-nav-info"><div class="ms-nav-title">角色专属</div></div><span class="ms-nav-cnt">${charCount}</span><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
+  }
+  if (
+    starred.length > 0 ||
+    recent.length > 0 ||
+    charCount > 0 ||
+    currentCharForNav
+  )
+    html += '<div class="ms-divider"></div>';
+  var _gpBuckets = {};
+  data.prompts.forEach(function (p) {
+    var k = p.groupId && getGroup(p.groupId) ? p.groupId : "_ungrouped";
+    if (!_gpBuckets[k]) _gpBuckets[k] = [];
+    _gpBuckets[k].push(p);
+  });
+  var _selByGroup = {};
+  if (selectMode) {
+    selectedIds.forEach(function (pid) {
+      var _p = getPrompt(pid);
+      if (!_p) return;
+      var _gk = _p.groupId && getGroup(_p.groupId) ? _p.groupId : "_ungrouped";
+      _selByGroup[_gk] = (_selByGroup[_gk] || 0) + 1;
     });
-    var _selByGroup = {};
-    if (selectMode) {
-      selectedIds.forEach(function (pid) {
-        var _p = getPrompt(pid);
-        if (!_p) return;
-        var _gk =
-          _p.groupId && getGroup(_p.groupId) ? _p.groupId : "_ungrouped";
-        _selByGroup[_gk] = (_selByGroup[_gk] || 0) + 1;
-      });
-    }
-    data.groups.forEach((g) => {
-      const groupPrompts = _gpBuckets[g.id] || [];
-      const cnt = groupPrompts.length;
-      const charSet = new Set();
-      const seriesSet = new Set();
-      groupPrompts.forEach(function (p) {
-        if (p.character && isLocalCharKey(p.character))
-          charSet.add(p.character);
-        var sn = (p.series || "").trim();
-        if (sn) seriesSet.add(sn);
-      });
-      const charCnt = charSet.size;
-      const seriesCnt = seriesSet.size;
-      const noteH = g.note
-        ? `<div class="ms-nav-note">${esc(g.note)}</div>`
-        : "";
-      const selCnt = _selByGroup[g.id] || 0;
-      const selBadge =
-        selCnt > 0
-          ? `<span class="ms-nav-sel-badge">(${selCnt}选中)</span>`
-          : "";
-      var _gHasStage =
-        (data.settings.stageSelectedIds || []).length > 0 &&
-        data.prompts.some(function (pp) {
-          return (
-            (data.settings.stageSelectedIds || []).indexOf(pp.id) >= 0 &&
-            pp.groupId === g.id
-          );
-        });
-      var _useAvatar =
-        isIPGroup(g) ||
-        (g.iconMode === "custom" && g.iconUrl) ||
-        (g.iconMode === "char" && g.iconCharKey);
-      var _iconH = _useAvatar
-        ? buildGroupAvatarHTML(g, 32)
-        : `<div class="ms-nav-icon" style="background:${g.color}22;color:${g.color};"><i class="fa-solid fa-folder"></i></div>`;
-      var cntParts = [];
-      if (charCnt > 0)
-        cntParts.push(
-          '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-user" style="font-size:8px;opacity:0.7;"></i>' +
-            charCnt +
-            "</span>",
+  }
+  data.groups.forEach((g) => {
+    const groupPrompts = _gpBuckets[g.id] || [];
+    const cnt = groupPrompts.length;
+    const charSet = new Set();
+    const seriesSet = new Set();
+    groupPrompts.forEach(function (p) {
+      if (p.character && isLocalCharKey(p.character)) charSet.add(p.character);
+      var sn = (p.series || "").trim();
+      if (sn) seriesSet.add(sn);
+    });
+    const charCnt = charSet.size;
+    const seriesCnt = seriesSet.size;
+    const noteH = g.note ? `<div class="ms-nav-note">${esc(g.note)}</div>` : "";
+    const selCnt = _selByGroup[g.id] || 0;
+    const selBadge =
+      selCnt > 0 ? `<span class="ms-nav-sel-badge">(${selCnt}选中)</span>` : "";
+    var _gHasStage =
+      (data.settings.stageSelectedIds || []).length > 0 &&
+      data.prompts.some(function (pp) {
+        return (
+          (data.settings.stageSelectedIds || []).indexOf(pp.id) >= 0 &&
+          pp.groupId === g.id
         );
-      if (seriesCnt > 0)
-        cntParts.push(
-          '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-layer-group" style="font-size:8px;opacity:0.7;"></i>' +
-            seriesCnt +
-            "</span>",
-        );
+      });
+    var _useAvatar =
+      isIPGroup(g) ||
+      (g.iconMode === "custom" && g.iconUrl) ||
+      (g.iconMode === "char" && g.iconCharKey);
+    var _iconH = _useAvatar
+      ? buildGroupAvatarHTML(g, 32)
+      : `<div class="ms-nav-icon" style="background:${g.color}22;color:${g.color};"><i class="fa-solid fa-folder"></i></div>`;
+    var cntParts = [];
+    if (charCnt > 0)
       cntParts.push(
-        '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-masks-theater" style="font-size:8px;opacity:0.7;"></i>' +
-          cnt +
+        '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-user" style="font-size:8px;opacity:0.7;"></i>' +
+          charCnt +
           "</span>",
       );
-      var cntHtml =
-        '<span class="ms-nav-cnt" style="display:inline-flex;align-items:center;gap:5px;font-size:10px;">' +
-        cntParts.join('<span style="opacity:0.35;">·</span>') +
-        "</span>";
-      html += `<div class="ms-swipe-wrap"><div class="ms-swipe-row"><div class="ms-nav-item ms-swipe-content${_gHasStage ? " ms-stage-injecting" : ""}" data-nav="group" data-gid="${g.id}">${_iconH}<div class="ms-nav-info"><div class="ms-nav-title">${esc(g.name)}</div>${noteH}</div>${selBadge}${cntHtml}<i class="ms-nav-chevron fa-solid fa-angle-right"></i></div><button class="ms-swipe-del" data-swipe-del-gid="${g.id}"><i class="fa-solid fa-trash"></i>删除</button></div></div>`;
-    });
-
-    const ungrouped = _gpBuckets["_ungrouped"] || [];
-    if (ungrouped.length > 0) {
-      const selCnt = _selByGroup["_ungrouped"] || 0;
-      const selBadge =
-        selCnt > 0
-          ? `<span class="ms-nav-sel-badge">(${selCnt}选中)</span>`
-          : "";
-      html += `<div class="ms-nav-item" data-nav="group" data-gid="_ungrouped"><div class="ms-nav-icon" style="background:rgba(255,255,255,0.05);color:var(--SmartThemeQuoteColor,#888);"><i class="fa-solid fa-inbox"></i></div><div class="ms-nav-info"><div class="ms-nav-title">未分组</div></div>${selBadge}<span class="ms-nav-cnt">${ungrouped.length}</span><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
-    }
-    if (
-      data.groups.length === 0 &&
-      ungrouped.length === 0 &&
-      starred.length === 0
-    )
-      html = `<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>还没有小剧场<br>点击上方 + 新建</div>`;
-    return html;
-  }
-
-  function buildListFooter() {
-    var subDot =
-      data.settings.subUpdatesPending > 0
-        ? '<span class="ms-sub-dot"></span>'
-        : "";
-    var historyWarn = "";
-    var hTotal = data.prompts.reduce(function (s, p) {
-      return s + (p.history ? p.history.length : 0);
-    }, 0);
-    if (hTotal > 0) {
-      var isWarn = data.settings.historyWarnEnabled && hTotal > 30;
-      historyWarn =
-        ' · <a data-action="history-list" style="color:' +
-        (isWarn ? "var(--ms-danger)" : "var(--SmartThemeQuoteColor,#666)") +
-        ';text-decoration:none;cursor:pointer;"' +
-        (isWarn ? ' title="建议清理版本历史"' : "") +
-        ">" +
-        (isWarn ? "⚠" : "") +
-        "历史" +
-        hTotal +
-        "条</a>";
-    }
-    return (
-      "<span>" +
-      data.prompts.length +
-      " 条 · " +
-      data.groups.length +
-      " 组" +
-      historyWarn +
-      '</span><div class="ms-footer-btns"><a data-action="manage-groups"><i class="fa-solid fa-folder-open"></i>分组</a> <a data-action="manage-tags"><i class="fa-solid fa-tags"></i>标签</a> <a data-action="import"><i class="fa-solid fa-file-import"></i>导入</a> <a data-action="export"><i class="fa-solid fa-file-export"></i>导出</a> <a data-action="subscriptions"><i class="fa-solid fa-rss"></i>订阅' +
-      subDot +
-      '</a> <a data-action="settings"><i class="fa-solid fa-gear"></i>设置</a> </div>'
+    if (seriesCnt > 0)
+      cntParts.push(
+        '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-layer-group" style="font-size:8px;opacity:0.7;"></i>' +
+          seriesCnt +
+          "</span>",
+      );
+    cntParts.push(
+      '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-masks-theater" style="font-size:8px;opacity:0.7;"></i>' +
+        cnt +
+        "</span>",
     );
+    var cntHtml =
+      '<span class="ms-nav-cnt" style="display:inline-flex;align-items:center;gap:5px;font-size:10px;">' +
+      cntParts.join('<span style="opacity:0.35;">·</span>') +
+      "</span>";
+    html += `<div class="ms-swipe-wrap"><div class="ms-swipe-row"><div class="ms-nav-item ms-swipe-content${_gHasStage ? " ms-stage-injecting" : ""}" data-nav="group" data-gid="${g.id}">${_iconH}<div class="ms-nav-info"><div class="ms-nav-title">${esc(g.name)}</div>${noteH}</div>${selBadge}${cntHtml}<i class="ms-nav-chevron fa-solid fa-angle-right"></i></div><button class="ms-swipe-del" data-swipe-del-gid="${g.id}"><i class="fa-solid fa-trash"></i>删除</button></div></div>`;
+  });
+
+  const ungrouped = _gpBuckets["_ungrouped"] || [];
+  if (ungrouped.length > 0) {
+    const selCnt = _selByGroup["_ungrouped"] || 0;
+    const selBadge =
+      selCnt > 0 ? `<span class="ms-nav-sel-badge">(${selCnt}选中)</span>` : "";
+    html += `<div class="ms-nav-item" data-nav="group" data-gid="_ungrouped"><div class="ms-nav-icon" style="background:rgba(255,255,255,0.05);color:var(--SmartThemeQuoteColor,#888);"><i class="fa-solid fa-inbox"></i></div><div class="ms-nav-info"><div class="ms-nav-title">未分组</div></div>${selBadge}<span class="ms-nav-cnt">${ungrouped.length}</span><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
   }
+  if (
+    data.groups.length === 0 &&
+    ungrouped.length === 0 &&
+    starred.length === 0
+  )
+    html = `<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>还没有小剧场<br>点击上方 + 新建</div>`;
+  return html;
+}
 
-  function buildToolbar(opts) {
-    let html = "";
-    if (opts.back)
-      html += `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button>`;
-    if (opts.search !== false)
-      html += `<div style="position:relative;flex:1;min-width:100px;display:flex;align-items:center;"><input class="ms-search" id="ms-search" type="text" placeholder="${opts.searchPlaceholder || "搜索..."}" value="${esc(searchQuery)}" style="flex:1;padding-right:24px;"><span id="ms-search-clear" style="position:absolute;right:8px;cursor:pointer;color:var(--SmartThemeQuoteColor,#666);font-size:11px;display:${searchQuery ? "block" : "none"};line-height:1;">×</span></div>`;
-    html += `<div class="ms-toolbar-actions">`;
-    if (opts.filter)
-      html += `<button class="ms-tbtn" id="ms-btn-filter" title="筛选"><i class="fa-solid fa-filter"></i></button>`;
-    if (opts.select && selectMode)
-      html += `<button class="ms-tbtn ${rangeSelectMode ? "active" : ""}" id="ms-btn-range" title="范围选择"><i class="fa-solid fa-arrows-left-right-to-line"></i></button>`;
-    if (opts.select)
-      html += `<button class="ms-tbtn ${selectMode ? "active" : ""}" id="ms-btn-select" title="多选"><i class="fa-solid fa-check-double"></i></button>`;
-    if (opts.sort)
-      html += `<button class="ms-tbtn" id="ms-btn-sort" title="排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>`;
-    if (opts.random && !selectMode)
-      html += `<button class="ms-tbtn" id="ms-btn-random" title="随机抽取"><i class="fa-solid fa-dice"></i></button>`;
-    if (opts.reorder)
-      html += `<button class="ms-tbtn" id="ms-btn-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button>`;
-    if (opts.exportGroup)
-      html += `<button class="ms-tbtn" id="ms-btn-export-group" title="导出本组"><i class="fa-solid fa-file-export"></i></button>`;
-    if (opts.add)
-      html += `<button class="ms-tbtn" id="${opts.addId || "ms-btn-new"}" title="${opts.addTitle || "新建"}"><i class="fa-solid fa-plus"></i></button>`;
-    html += `</div>`;
-    if (opts.extra) html += opts.extra;
-    return html;
+function buildListFooter() {
+  var subDot =
+    data.settings.subUpdatesPending > 0
+      ? '<span class="ms-sub-dot"></span>'
+      : "";
+  var historyWarn = "";
+  var hTotal = data.prompts.reduce(function (s, p) {
+    return s + (p.history ? p.history.length : 0);
+  }, 0);
+  if (hTotal > 0) {
+    var isWarn = data.settings.historyWarnEnabled && hTotal > 30;
+    historyWarn =
+      ' · <a data-action="history-list" style="color:' +
+      (isWarn ? "var(--ms-danger)" : "var(--SmartThemeQuoteColor,#666)") +
+      ';text-decoration:none;cursor:pointer;"' +
+      (isWarn ? ' title="建议清理版本历史"' : "") +
+      ">" +
+      (isWarn ? "⚠" : "") +
+      "历史" +
+      hTotal +
+      "条</a>";
   }
+  return (
+    "<span>" +
+    data.prompts.length +
+    " 条 · " +
+    data.groups.length +
+    " 组" +
+    historyWarn +
+    '</span><div class="ms-footer-btns"><a data-action="manage-groups"><i class="fa-solid fa-folder-open"></i>分组</a> <a data-action="manage-tags"><i class="fa-solid fa-tags"></i>标签</a> <a data-action="import"><i class="fa-solid fa-file-import"></i>导入</a> <a data-action="export"><i class="fa-solid fa-file-export"></i>导出</a> <a data-action="subscriptions"><i class="fa-solid fa-rss"></i>订阅' +
+    subDot +
+    '</a> <a data-action="settings"><i class="fa-solid fa-gear"></i>设置</a> </div>'
+  );
+}
 
-  function buildFilterPanel() {
-    let html = "";
-    const v = currentView();
-    const inGroupView = v.name === "group";
-    const inCharView = v.name === "character";
-    const hasAnyFilter =
-      filterState.includeTags.length > 0 ||
-      filterState.excludeTags.length > 0 ||
-      filterState.groupId;
-    var _visibleTagIds = null;
-    if (v.name === "group" || v.name === "character") {
-      var _scopeList;
-      if (v.name === "group") {
-        _scopeList =
-          v.groupId === "_ungrouped"
-            ? getUngroupedPrompts()
-            : getPromptsInGroup(v.groupId);
-      } else {
-        _scopeList = getPromptsByCharacter(v.charKey || v.charName);
-      }
-      _visibleTagIds = new Set();
-      _scopeList.forEach(function (p) {
-        (p.tags || []).forEach(function (tid) {
-          _visibleTagIds.add(tid);
-        });
-      });
-    }
-    var _tagsToShow = _visibleTagIds
-      ? data.settings.definedTags.filter(function (t) {
-          return _visibleTagIds.has(t.id);
-        })
-      : data.settings.definedTags;
+function buildToolbar(opts) {
+  let html = "";
+  if (opts.back)
+    html += `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button>`;
+  if (opts.search !== false)
+    html += `<div style="position:relative;flex:1;min-width:100px;display:flex;align-items:center;"><input class="ms-search" id="ms-search" type="text" placeholder="${opts.searchPlaceholder || "搜索..."}" value="${esc(searchQuery)}" style="flex:1;padding-right:24px;"><span id="ms-search-clear" style="position:absolute;right:8px;cursor:pointer;color:var(--SmartThemeQuoteColor,#666);font-size:11px;display:${searchQuery ? "block" : "none"};line-height:1;">×</span></div>`;
+  html += `<div class="ms-toolbar-actions">`;
+  if (opts.filter)
+    html += `<button class="ms-tbtn" id="ms-btn-filter" title="筛选"><i class="fa-solid fa-filter"></i></button>`;
+  if (opts.select && selectMode)
+    html += `<button class="ms-tbtn ${rangeSelectMode ? "active" : ""}" id="ms-btn-range" title="范围选择"><i class="fa-solid fa-arrows-left-right-to-line"></i></button>`;
+  if (opts.select)
+    html += `<button class="ms-tbtn ${selectMode ? "active" : ""}" id="ms-btn-select" title="多选"><i class="fa-solid fa-check-double"></i></button>`;
+  if (opts.sort)
+    html += `<button class="ms-tbtn" id="ms-btn-sort" title="排序"><i class="fa-solid fa-arrow-down-short-wide"></i></button>`;
+  if (opts.random && !selectMode)
+    html += `<button class="ms-tbtn" id="ms-btn-random" title="随机抽取"><i class="fa-solid fa-dice"></i></button>`;
+  if (opts.reorder)
+    html += `<button class="ms-tbtn" id="ms-btn-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button>`;
+  if (opts.exportGroup)
+    html += `<button class="ms-tbtn" id="ms-btn-export-group" title="导出本组"><i class="fa-solid fa-file-export"></i></button>`;
+  if (opts.add)
+    html += `<button class="ms-tbtn" id="${opts.addId || "ms-btn-new"}" title="${opts.addTitle || "新建"}"><i class="fa-solid fa-plus"></i></button>`;
+  html += `</div>`;
+  if (opts.extra) html += opts.extra;
+  return html;
+}
 
-    if (_tagsToShow.length > 0) {
-      var modeLabel =
-        data.settings.filterTagMode === "and" ? "全部匹配" : "任一匹配";
-      var excludeActive = filterState.tagSelectMode === "exclude";
-      html += `<div class="ms-filter-section" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">标签筛选（可多选）<button class="ms-filter-mode-btn" id="ms-tag-mode-toggle">${modeLabel}</button><button class="ms-filter-mode-btn ${excludeActive ? "ms-mode-exclude-active" : ""}" id="ms-tag-exclude-toggle" title="开启后点击的标签将被排除"><i class="fa-solid fa-ban"></i> 排除模式${excludeActive ? "·开" : ""}</button>${hasAnyFilter ? '<button class="ms-filter-mode-btn" id="ms-clear-filter" style="margin-left:auto;color:var(--ms-danger);border-color:rgba(var(--ms-danger-rgb),0.3);background:rgba(var(--ms-danger-rgb),0.05);"><i class="fa-solid fa-broom"></i> 清空筛选</button>' : ""}</div><div class="ms-tag-row">`;
-      _tagsToShow.forEach((t) => {
-        const inc = filterState.includeTags.includes(t.id);
-        const exc = filterState.excludeTags.includes(t.id);
-        let cls = "",
-          style = "";
-        if (inc) {
-          cls = "active";
-          style = "background:" + t.color + ";";
-        } else if (exc) {
-          cls = "ms-tag-excluded";
-        }
-        html += `<span class="ms-tag-toggle ${cls}" data-filter-tag="${t.id}" style="${style}">${esc(t.name)}</span>`;
-      });
-      html += `</div>`;
+function buildFilterPanel() {
+  let html = "";
+  const v = currentView();
+  const inGroupView = v.name === "group";
+  const inCharView = v.name === "character";
+  const hasAnyFilter =
+    filterState.includeTags.length > 0 ||
+    filterState.excludeTags.length > 0 ||
+    filterState.groupId;
+  var _visibleTagIds = null;
+  if (v.name === "group" || v.name === "character") {
+    var _scopeList;
+    if (v.name === "group") {
+      _scopeList =
+        v.groupId === "_ungrouped"
+          ? getUngroupedPrompts()
+          : getPromptsInGroup(v.groupId);
+    } else {
+      _scopeList = getPromptsByCharacter(v.charKey || v.charName);
     }
-    if (!inGroupView && !inCharView) {
-      html += `<div class="ms-filter-section">分组筛选</div><div class="ms-tag-row">`;
-      html += `<span class="ms-tag-toggle ${!filterState.groupId ? "active" : ""}" data-filter-group="" style="${!filterState.groupId ? "background:#666;" : ""}">全部</span>`;
-      data.groups.forEach((g) => {
-        const a = filterState.groupId === g.id;
-        html += `<span class="ms-tag-toggle ${a ? "active" : ""}" data-filter-group="${g.id}" style="${a ? "background:" + g.color + ";" : ""}">${esc(g.name)}</span>`;
+    _visibleTagIds = new Set();
+    _scopeList.forEach(function (p) {
+      (p.tags || []).forEach(function (tid) {
+        _visibleTagIds.add(tid);
       });
-      if (getUngroupedPrompts().length > 0) {
-        const a = filterState.groupId === "_ungrouped";
-        html += `<span class="ms-tag-toggle ${a ? "active" : ""}" data-filter-group="_ungrouped" style="${a ? "background:#666;" : ""}">未分组</span>`;
-      }
-      html += `</div>`;
-    }
-    var curK = getCurrentCharKeySafe();
-    if (!inGroupView && !inCharView && curK) {
-      var onlyCur = filterState.onlyCurrentChar;
-      html += `<div class="ms-filter-section">当前角色</div><div class="ms-tag-row"><span class="ms-tag-toggle ${onlyCur ? "active" : ""}" id="ms-filter-only-current-char" style="${onlyCur ? "background:#b48cc8;" : ""}"><i class="fa-solid fa-user-check" style="margin-right:3px;font-size:10px;"></i>仅显示「${esc(getCharDisplayName(curK))}」专属</span></div>`;
-    }
-    return html;
-  }
-
-  function getPromptCardBlocks(list, showGroupLabel) {
-    if (list.length === 0) return [];
-    var blocks = [];
-    list.forEach((p) => {
-      const starCls = p.starred ? "active" : "",
-        starIcon = p.starred ? "fa-solid" : "fa-regular",
-        isSel = selectedIds.has(p.id);
-      const isStageTarget =
-        (data.settings.stageSelectedIds || []).indexOf(p.id) >= 0;
-      const isAnchor =
-        selectMode && rangeSelectMode && rangeSelectAnchor === p.id;
-      const anchorH = isAnchor
-        ? ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;margin-left:4px;" title="锚点"></i>'
-        : "";
-      const g = p.groupId ? getGroup(p.groupId) : null;
-      var seriesAboveH = "";
-      if (showGroupLabel) {
-        var _metaParts = [];
-        if (g) {
-          var gIconH;
-          var isIPG = isIPGroup(g);
-          if (
-            isIPG ||
-            (g.iconMode === "custom" && g.iconUrl) ||
-            (g.iconMode === "char" && g.iconCharKey)
-          ) {
-            gIconH =
-              '<span style="display:inline-flex;vertical-align:middle;">' +
-              buildGroupAvatarHTML(g, 14) +
-              "</span>";
-          } else {
-            gIconH =
-              '<i class="fa-solid fa-folder" style="font-size:9px;"></i>';
-          }
-          _metaParts.push(
-            '<span style="color:' +
-              g.color +
-              ';display:inline-flex;align-items:center;gap:3px;">' +
-              gIconH +
-              (searchQuery ? highlightText(g.name, searchQuery) : esc(g.name)) +
-              "</span>",
-          );
-          if (isIPG && p.character && isLocalCharKey(p.character)) {
-            var charDn = getCharDisplayName(p.character);
-            var charAp = getCharAvatarPathSafe(p.character);
-            var charAvH = charAp
-              ? '<img src="' +
-                esc(charAp) +
-                '" loading="lazy" style="width:12px;height:12px;border-radius:2px;object-fit:cover;vertical-align:middle;" onerror="this.style.display=\'none\';this.onerror=null;">'
-              : '<i class="fa-solid fa-user" style="font-size:9px;opacity:0.7;"></i>';
-            _metaParts.push(
-              '<span style="color:#b48cc8;display:inline-flex;align-items:center;gap:3px;">' +
-                charAvH +
-                esc(charDn) +
-                "</span>",
-            );
-          }
-        }
-
-        if (p.series) {
-          _metaParts.push(
-            '<span style="color:var(--ms-accent);opacity:0.8;display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-layer-group" style="font-size:9px;"></i>' +
-              (searchQuery
-                ? highlightText(p.series, searchQuery)
-                : esc(p.series)) +
-              "</span>",
-          );
-        }
-        if (_metaParts.length > 0) {
-          seriesAboveH =
-            '<div style="font-size:10px;display:flex;align-items:center;gap:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;">' +
-            _metaParts.join(
-              '<span style="color:var(--SmartThemeQuoteColor,#555);margin:0 2px;">\u00b7</span>',
-            ) +
-            "</div>";
-        }
-      }
-      const titleH = searchQuery
-        ? highlightText(p.title, searchQuery)
-        : esc(p.title);
-      const prevH = searchQuery
-        ? highlightText(
-            getContextSnippet(p.content, searchQuery, 50),
-            searchQuery,
-          )
-        : esc(truncate(p.content, 50));
-      const pinH = p.pinned
-        ? `<span class="ms-card-pin"><i class="fa-solid fa-thumbtack"></i></span>`
-        : "";
-      let tagsH = "";
-      sortTagIds(p.tags || []).forEach((tid) => {
-        const t = getTag(tid);
-        if (t)
-          tagsH += `<span class="ms-tag-chip ms-tag-chip-sm" style="background:${t.color};">${esc(t.name)}</span>`;
-      });
-      var _ts =
-        p.updatedAt && p.updatedAt !== p.createdAt ? p.updatedAt : p.createdAt;
-      var _tsH = "";
-      if (_ts) {
-        var _d = new Date(_ts);
-        if (!isNaN(_d.getTime())) {
-          var _now = new Date();
-          var _isThisYear = _d.getFullYear() === _now.getFullYear();
-          var _shortDate = _isThisYear
-            ? String(_d.getMonth() + 1).padStart(2, "0") +
-              "/" +
-              String(_d.getDate()).padStart(2, "0")
-            : String(_d.getFullYear()).slice(2) +
-              "/" +
-              String(_d.getMonth() + 1).padStart(2, "0") +
-              "/" +
-              String(_d.getDate()).padStart(2, "0");
-          var _isEdited = p.updatedAt && p.updatedAt !== p.createdAt;
-          _tsH =
-            '<span class="ms-card-ts" title="' +
-            (_isEdited ? "编辑" : "创建") +
-            ": " +
-            formatDate(_ts) +
-            '"><i class="fa-solid ' +
-            (_isEdited ? "fa-pen-to-square" : "fa-calendar-plus") +
-            '"></i>' +
-            _shortDate +
-            "</span>";
-        }
-      }
-      var _bottomRowH = "";
-      if (tagsH || _tsH) {
-        _bottomRowH =
-          '<div class="ms-card-tags-row">' + (tagsH || "") + _tsH + "</div>";
-      }
-      var cardHtml = "";
-      if (selectMode) {
-        cardHtml +=
-          `<div class="ms-card ${isSel ? "selected" : ""}${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><div class="ms-card-check"><i class="fa-solid fa-check"></i></div>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}${anchorH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div>`;
-        if (_bottomRowH) cardHtml += _bottomRowH;
-        cardHtml += `</div>`;
-      } else {
-        cardHtml +=
-          `<div class="ms-card${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><span class="ms-card-star ${starCls}" data-pid="${p.id}"><i class="${starIcon} fa-star"></i></span>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div><div class="ms-card-quick"><button class="ms-card-qbtn" data-qaction="send" data-pid="${p.id}" title="填入输入框"><i class="fa-solid fa-right-to-bracket"></i></button><button class="ms-card-qbtn" data-qaction="send-gen" data-pid="${p.id}" title="发送并生成"><i class="fa-regular fa-paper-plane"></i></button></div><i class="fa-solid fa-angle-right" style="color:var(--SmartThemeQuoteColor,#555);font-size:10px;flex-shrink:0;"></i>`;
-        if (_bottomRowH) cardHtml += _bottomRowH;
-        cardHtml += `</div>`;
-      }
-      blocks.push(cardHtml);
     });
-    return blocks;
   }
+  var _tagsToShow = _visibleTagIds
+    ? data.settings.definedTags.filter(function (t) {
+        return _visibleTagIds.has(t.id);
+      })
+    : data.settings.definedTags;
 
-  function renderPromptCards(list, showGroupLabel) {
-    if (list.length === 0)
-      return `<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无</div>`;
-    return getPromptCardBlocks(list, showGroupLabel).join("");
+  if (_tagsToShow.length > 0) {
+    var modeLabel =
+      data.settings.filterTagMode === "and" ? "全部匹配" : "任一匹配";
+    var excludeActive = filterState.tagSelectMode === "exclude";
+    html += `<div class="ms-filter-section" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">标签筛选（可多选）<button class="ms-filter-mode-btn" id="ms-tag-mode-toggle">${modeLabel}</button><button class="ms-filter-mode-btn ${excludeActive ? "ms-mode-exclude-active" : ""}" id="ms-tag-exclude-toggle" title="开启后点击的标签将被排除"><i class="fa-solid fa-ban"></i> 排除模式${excludeActive ? "·开" : ""}</button>${hasAnyFilter ? '<button class="ms-filter-mode-btn" id="ms-clear-filter" style="margin-left:auto;color:var(--ms-danger);border-color:rgba(var(--ms-danger-rgb),0.3);background:rgba(var(--ms-danger-rgb),0.05);"><i class="fa-solid fa-broom"></i> 清空筛选</button>' : ""}</div><div class="ms-tag-row">`;
+    _tagsToShow.forEach((t) => {
+      const inc = filterState.includeTags.includes(t.id);
+      const exc = filterState.excludeTags.includes(t.id);
+      let cls = "",
+        style = "";
+      if (inc) {
+        cls = "active";
+        style = "background:" + t.color + ";";
+      } else if (exc) {
+        cls = "ms-tag-excluded";
+      }
+      html += `<span class="ms-tag-toggle ${cls}" data-filter-tag="${t.id}" style="${style}">${esc(t.name)}</span>`;
+    });
+    html += `</div>`;
   }
+  if (!inGroupView && !inCharView) {
+    html += `<div class="ms-filter-section">分组筛选</div><div class="ms-tag-row">`;
+    html += `<span class="ms-tag-toggle ${!filterState.groupId ? "active" : ""}" data-filter-group="" style="${!filterState.groupId ? "background:#666;" : ""}">全部</span>`;
+    data.groups.forEach((g) => {
+      const a = filterState.groupId === g.id;
+      html += `<span class="ms-tag-toggle ${a ? "active" : ""}" data-filter-group="${g.id}" style="${a ? "background:" + g.color + ";" : ""}">${esc(g.name)}</span>`;
+    });
+    if (getUngroupedPrompts().length > 0) {
+      const a = filterState.groupId === "_ungrouped";
+      html += `<span class="ms-tag-toggle ${a ? "active" : ""}" data-filter-group="_ungrouped" style="${a ? "background:#666;" : ""}">未分组</span>`;
+    }
+    html += `</div>`;
+  }
+  var curK = getCurrentCharKeySafe();
+  if (!inGroupView && !inCharView && curK) {
+    var onlyCur = filterState.onlyCurrentChar;
+    html += `<div class="ms-filter-section">当前角色</div><div class="ms-tag-row"><span class="ms-tag-toggle ${onlyCur ? "active" : ""}" id="ms-filter-only-current-char" style="${onlyCur ? "background:#b48cc8;" : ""}"><i class="fa-solid fa-user-check" style="margin-right:3px;font-size:10px;"></i>仅显示「${esc(getCharDisplayName(curK))}」专属</span></div>`;
+  }
+  return html;
+}
 
-  function getGroupBodySeriesBlocks(list) {
-    if (searchQuery) return getPromptCardBlocks(list, true);
-    var rendered = new Set();
-    var blocks = [];
-    list.forEach(function (p) {
-      if (rendered.has(p.id)) return;
-      if (p.series && p.series.trim()) {
-        var seriesName = p.series.trim();
-        var seriesItems = list.filter(function (q) {
-          return (
-            q.series && q.series.trim() === seriesName && !rendered.has(q.id)
+function getPromptCardBlocks(list, showGroupLabel) {
+  if (list.length === 0) return [];
+  var blocks = [];
+  list.forEach((p) => {
+    const starCls = p.starred ? "active" : "",
+      starIcon = p.starred ? "fa-solid" : "fa-regular",
+      isSel = selectedIds.has(p.id);
+    const isStageTarget =
+      (data.settings.stageSelectedIds || []).indexOf(p.id) >= 0;
+    const isAnchor =
+      selectMode && rangeSelectMode && rangeSelectAnchor === p.id;
+    const anchorH = isAnchor
+      ? ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;margin-left:4px;" title="锚点"></i>'
+      : "";
+    const g = p.groupId ? getGroup(p.groupId) : null;
+    var seriesAboveH = "";
+    if (showGroupLabel) {
+      var _metaParts = [];
+      if (g) {
+        var gIconH;
+        var isIPG = isIPGroup(g);
+        if (
+          isIPG ||
+          (g.iconMode === "custom" && g.iconUrl) ||
+          (g.iconMode === "char" && g.iconCharKey)
+        ) {
+          gIconH =
+            '<span style="display:inline-flex;vertical-align:middle;">' +
+            buildGroupAvatarHTML(g, 14) +
+            "</span>";
+        } else {
+          gIconH = '<i class="fa-solid fa-folder" style="font-size:9px;"></i>';
+        }
+        _metaParts.push(
+          '<span style="color:' +
+            g.color +
+            ';display:inline-flex;align-items:center;gap:3px;">' +
+            gIconH +
+            (searchQuery ? highlightText(g.name, searchQuery) : esc(g.name)) +
+            "</span>",
+        );
+        if (isIPG && p.character && isLocalCharKey(p.character)) {
+          var charDn = getCharDisplayName(p.character);
+          var charAp = getCharAvatarPathSafe(p.character);
+          var charAvH = charAp
+            ? '<img src="' +
+              esc(charAp) +
+              '" loading="lazy" style="width:12px;height:12px;border-radius:2px;object-fit:cover;vertical-align:middle;" onerror="this.style.display=\'none\';this.onerror=null;">'
+            : '<i class="fa-solid fa-user" style="font-size:9px;opacity:0.7;"></i>';
+          _metaParts.push(
+            '<span style="color:#b48cc8;display:inline-flex;align-items:center;gap:3px;">' +
+              charAvH +
+              esc(charDn) +
+              "</span>",
           );
-        });
-        if (seriesItems.length > 1) {
-          var sid =
-            "ms-series-" + simpleHash(seriesName + "||" + (p.groupId || ""));
-          var headerExtra = "";
-          var anchorBadge = "";
-          if (selectMode) {
-            var allSel = seriesItems.every(function (q) {
+        }
+      }
+
+      if (p.series) {
+        _metaParts.push(
+          '<span style="color:var(--ms-accent);opacity:0.8;display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-layer-group" style="font-size:9px;"></i>' +
+            (searchQuery
+              ? highlightText(p.series, searchQuery)
+              : esc(p.series)) +
+            "</span>",
+        );
+      }
+      if (_metaParts.length > 0) {
+        seriesAboveH =
+          '<div style="font-size:10px;display:flex;align-items:center;gap:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;">' +
+          _metaParts.join(
+            '<span style="color:var(--SmartThemeQuoteColor,#555);margin:0 2px;">\u00b7</span>',
+          ) +
+          "</div>";
+      }
+    }
+    const titleH = searchQuery
+      ? highlightText(p.title, searchQuery)
+      : esc(p.title);
+    const prevH = searchQuery
+      ? highlightText(
+          getContextSnippet(p.content, searchQuery, 50),
+          searchQuery,
+        )
+      : esc(truncate(p.content, 50));
+    const pinH = p.pinned
+      ? `<span class="ms-card-pin"><i class="fa-solid fa-thumbtack"></i></span>`
+      : "";
+    let tagsH = "";
+    sortTagIds(p.tags || []).forEach((tid) => {
+      const t = getTag(tid);
+      if (t)
+        tagsH += `<span class="ms-tag-chip ms-tag-chip-sm" style="background:${t.color};">${esc(t.name)}</span>`;
+    });
+    var _ts =
+      p.updatedAt && p.updatedAt !== p.createdAt ? p.updatedAt : p.createdAt;
+    var _tsH = "";
+    if (_ts) {
+      var _d = new Date(_ts);
+      if (!isNaN(_d.getTime())) {
+        var _now = new Date();
+        var _isThisYear = _d.getFullYear() === _now.getFullYear();
+        var _shortDate = _isThisYear
+          ? String(_d.getMonth() + 1).padStart(2, "0") +
+            "/" +
+            String(_d.getDate()).padStart(2, "0")
+          : String(_d.getFullYear()).slice(2) +
+            "/" +
+            String(_d.getMonth() + 1).padStart(2, "0") +
+            "/" +
+            String(_d.getDate()).padStart(2, "0");
+        var _isEdited = p.updatedAt && p.updatedAt !== p.createdAt;
+        _tsH =
+          '<span class="ms-card-ts" title="' +
+          (_isEdited ? "编辑" : "创建") +
+          ": " +
+          formatDate(_ts) +
+          '"><i class="fa-solid ' +
+          (_isEdited ? "fa-pen-to-square" : "fa-calendar-plus") +
+          '"></i>' +
+          _shortDate +
+          "</span>";
+      }
+    }
+    var _bottomRowH = "";
+    if (tagsH || _tsH) {
+      _bottomRowH =
+        '<div class="ms-card-tags-row">' + (tagsH || "") + _tsH + "</div>";
+    }
+    var cardHtml = "";
+    if (selectMode) {
+      cardHtml += `<div class="ms-card ${isSel ? "selected" : ""}${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><div class="ms-card-check"><i class="fa-solid fa-check"></i></div>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}${anchorH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div>`;
+      if (_bottomRowH) cardHtml += _bottomRowH;
+      cardHtml += `</div>`;
+    } else {
+      cardHtml += `<div class="ms-card${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><span class="ms-card-star ${starCls}" data-pid="${p.id}"><i class="${starIcon} fa-star"></i></span>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div><div class="ms-card-quick"><button class="ms-card-qbtn" data-qaction="send" data-pid="${p.id}" title="填入输入框"><i class="fa-solid fa-right-to-bracket"></i></button><button class="ms-card-qbtn" data-qaction="send-gen" data-pid="${p.id}" title="发送并生成"><i class="bi bi-send-fill"></i></button></div><i class="fa-solid fa-angle-right" style="color:var(--SmartThemeQuoteColor,#555);font-size:10px;flex-shrink:0;"></i>`;
+      if (_bottomRowH) cardHtml += _bottomRowH;
+      cardHtml += `</div>`;
+    }
+    blocks.push(cardHtml);
+  });
+  return blocks;
+}
+
+function renderPromptCards(list, showGroupLabel) {
+  if (list.length === 0)
+    return `<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无</div>`;
+  return getPromptCardBlocks(list, showGroupLabel).join("");
+}
+
+function getGroupBodySeriesBlocks(list) {
+  if (searchQuery) return getPromptCardBlocks(list, true);
+  var rendered = new Set();
+  var blocks = [];
+  list.forEach(function (p) {
+    if (rendered.has(p.id)) return;
+    if (p.series && p.series.trim()) {
+      var seriesName = p.series.trim();
+      var seriesItems = list.filter(function (q) {
+        return (
+          q.series && q.series.trim() === seriesName && !rendered.has(q.id)
+        );
+      });
+      if (seriesItems.length > 1) {
+        var sid =
+          "ms-series-" + simpleHash(seriesName + "||" + (p.groupId || ""));
+        var headerExtra = "";
+        var anchorBadge = "";
+        if (selectMode) {
+          var allSel = seriesItems.every(function (q) {
+            return selectedIds.has(q.id);
+          });
+          var someSel =
+            !allSel &&
+            seriesItems.some(function (q) {
               return selectedIds.has(q.id);
             });
-            var someSel =
-              !allSel &&
-              seriesItems.some(function (q) {
-                return selectedIds.has(q.id);
-              });
-            var scCls = allSel ? " ms-sc-all" : someSel ? " ms-sc-some" : "";
-            headerExtra =
-              '<div class="ms-series-check' +
-              scCls +
-              "\" data-series-ids='" +
-              JSON.stringify(
-                seriesItems.map(function (q) {
-                  return q.id;
-                }),
-              ) +
-              "' data-series-key=\"" +
-              esc(sid) +
-              '"><i class="fa-solid ' +
-              (someSel && !allSel ? "fa-minus" : "fa-check") +
-              '"></i></div>';
-            if (rangeSelectMode && rangeSelectAnchor === "series:" + sid) {
-              anchorBadge =
-                ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>';
-            }
+          var scCls = allSel ? " ms-sc-all" : someSel ? " ms-sc-some" : "";
+          headerExtra =
+            '<div class="ms-series-check' +
+            scCls +
+            "\" data-series-ids='" +
+            JSON.stringify(
+              seriesItems.map(function (q) {
+                return q.id;
+              }),
+            ) +
+            "' data-series-key=\"" +
+            esc(sid) +
+            '"><i class="fa-solid ' +
+            (someSel && !allSel ? "fa-minus" : "fa-check") +
+            '"></i></div>';
+          if (rangeSelectMode && rangeSelectAnchor === "series:" + sid) {
+            anchorBadge =
+              ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>';
           }
-          var _seriesHasStage =
-            (data.settings.stageSelectedIds || []).length > 0 &&
-            seriesItems.some(function (si) {
-              return (data.settings.stageSelectedIds || []).indexOf(si.id) >= 0;
-            });
-          blocks.push(
-            '<div class="ms-series-group' +
+        }
+        var _seriesHasStage =
+          (data.settings.stageSelectedIds || []).length > 0 &&
+          seriesItems.some(function (si) {
+            return (data.settings.stageSelectedIds || []).indexOf(si.id) >= 0;
+          });
+        blocks.push(
+          '<div class="ms-series-group' +
             (_seriesHasStage ? " ms-stage-injecting" : "") +
             '"><div class="ms-series-header" data-series-id="' +
             sid +
@@ -6317,46 +6504,46 @@
             sid +
             '">' +
             renderPromptCards(seriesItems, false) +
-            "</div></div>"
-          );
-          seriesItems.forEach(function (q) {
-            rendered.add(q.id);
-          });
-        } else {
-          if (p.series && p.series.trim()) {
-            var fullSeriesCount = data.prompts.filter(function (q) {
-              return (
-                q.series &&
-                q.series.trim() === seriesName &&
-                q.groupId === p.groupId
-              );
-            }).length;
-            if (fullSeriesCount > 1) {
-              var sid2 =
-                "ms-series-" +
-                simpleHash(seriesName + "||" + (p.groupId || "") + "||_f");
-              var headerExtra2 = "";
-              var anchorBadge2 = "";
-              if (selectMode) {
-                var isSel2 = selectedIds.has(p.id);
-                var scCls2 = isSel2 ? " ms-sc-all" : "";
-                headerExtra2 =
-                  '<div class="ms-series-check' +
-                  scCls2 +
-                  "\" data-series-ids='" +
-                  JSON.stringify([p.id]) +
-                  "' data-series-key=\"" +
-                  esc(sid2) +
-                  '"><i class="fa-solid fa-check"></i></div>';
-                if (rangeSelectMode && rangeSelectAnchor === "series:" + sid2) {
-                  anchorBadge2 =
-                    ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>';
-                }
+            "</div></div>",
+        );
+        seriesItems.forEach(function (q) {
+          rendered.add(q.id);
+        });
+      } else {
+        if (p.series && p.series.trim()) {
+          var fullSeriesCount = data.prompts.filter(function (q) {
+            return (
+              q.series &&
+              q.series.trim() === seriesName &&
+              q.groupId === p.groupId
+            );
+          }).length;
+          if (fullSeriesCount > 1) {
+            var sid2 =
+              "ms-series-" +
+              simpleHash(seriesName + "||" + (p.groupId || "") + "||_f");
+            var headerExtra2 = "";
+            var anchorBadge2 = "";
+            if (selectMode) {
+              var isSel2 = selectedIds.has(p.id);
+              var scCls2 = isSel2 ? " ms-sc-all" : "";
+              headerExtra2 =
+                '<div class="ms-series-check' +
+                scCls2 +
+                "\" data-series-ids='" +
+                JSON.stringify([p.id]) +
+                "' data-series-key=\"" +
+                esc(sid2) +
+                '"><i class="fa-solid fa-check"></i></div>';
+              if (rangeSelectMode && rangeSelectAnchor === "series:" + sid2) {
+                anchorBadge2 =
+                  ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>';
               }
-              var _singleHasStage =
-                (data.settings.stageSelectedIds || []).indexOf(p.id) >= 0;
-              blocks.push(
-                '<div class="ms-series-group' +
+            }
+            var _singleHasStage =
+              (data.settings.stageSelectedIds || []).indexOf(p.id) >= 0;
+            blocks.push(
+              '<div class="ms-series-group' +
                 (_singleHasStage ? " ms-stage-injecting" : "") +
                 '"><div class="ms-series-header" data-series-id="' +
                 sid2 +
@@ -6375,891 +6562,883 @@
                 sid2 +
                 '">' +
                 renderPromptCards([p], false) +
-                "</div></div>"
-              );
-              rendered.add(p.id);
-              return;
-            }
+                "</div></div>",
+            );
+            rendered.add(p.id);
+            return;
           }
-          var _singleBlocks1 = getPromptCardBlocks([p], false);
-          if (_singleBlocks1.length > 0) blocks.push(_singleBlocks1[0]);
-          rendered.add(p.id);
         }
-      } else {
-        var _singleBlocks2 = getPromptCardBlocks([p], false);
-        if (_singleBlocks2.length > 0) blocks.push(_singleBlocks2[0]);
+        var _singleBlocks1 = getPromptCardBlocks([p], false);
+        if (_singleBlocks1.length > 0) blocks.push(_singleBlocks1[0]);
         rendered.add(p.id);
       }
-    });
-    return blocks;
-  }
-
-  function renderGroupBodyWithSeries(list) {
-    return getGroupBodySeriesBlocks(list).join("");
-  }
-
-  function openDropdown($p, html, position) {
-    const $dd = $p.find("#ms-dropdown");
-    if ($dd.is(":visible")) {
-      closeActiveDropdown();
-      return null;
-    }
-    const panelH = $p[0].getBoundingClientRect().height;
-    const ddMaxH = Math.max(150, panelH - 80);
-    var pos = position || {};
-    if (pos.anchor === "top") {
-      $dd.css({
-        top: pos.top || 80,
-        right: pos.right !== undefined ? pos.right : 14,
-        left: pos.left !== undefined ? pos.left : "auto",
-        bottom: "auto",
-        maxHeight: ddMaxH + "px",
-        minWidth: pos.minWidth || "",
-      });
     } else {
-      $dd.css({
-        bottom: pos.bottom !== undefined ? pos.bottom : 40,
-        right: pos.right !== undefined ? pos.right : 14,
-        left: pos.left !== undefined ? pos.left : "auto",
-        top: "auto",
-        maxHeight: ddMaxH + "px",
-        minWidth: pos.minWidth || "",
-      });
+      var _singleBlocks2 = getPromptCardBlocks([p], false);
+      if (_singleBlocks2.length > 0) blocks.push(_singleBlocks2[0]);
+      rendered.add(p.id);
     }
-    $dd.html(html).show();
-    $p.css("overflow", "visible");
-    setupOutsideClickClose($p);
-    return $dd;
-  }
+  });
+  return blocks;
+}
 
-  function showSortDropdown($p) {
-    const modes = [
-      ["custom", "自定义顺序"],
-      ["created-desc", "最新创建"],
-      ["created-asc", "最早创建"],
-      ["edited-desc", "最新编辑"],
-      ["edited-asc", "最早编辑"],
-      ["name-asc", "名称 A→Z"],
-      ["name-desc", "名称 Z→A"],
-      ["used-desc", "最近使用"],
-      ["used-asc", "最早使用"],
-      ["usage-desc", "使用最多"],
-      ["usage-asc", "使用最少"],
-    ];
-    var html = modes
-      .map(
-        (m) =>
-          `<div class="ms-dropdown-item${(data.settings.sortMode || "created-desc") === m[0] ? " active" : ""}" data-sort="${m[0]}">${m[1]}</div>`,
-      )
-      .join("");
-    var $dd = openDropdown($p, html, { anchor: "top" });
-    if (!$dd) return;
-    $dd.off("click").on("click.sort", ".ms-dropdown-item", function () {
-      data.settings.sortMode = $(this).data("sort");
-      saveData();
-      closeActiveDropdown();
-      renderBodyOnly();
+function renderGroupBodyWithSeries(list) {
+  return getGroupBodySeriesBlocks(list).join("");
+}
+
+function openDropdown($p, html, position) {
+  const $dd = $p.find("#ms-dropdown");
+  if ($dd.is(":visible")) {
+    closeActiveDropdown();
+    return null;
+  }
+  const panelH = $p[0].getBoundingClientRect().height;
+  const ddMaxH = Math.max(150, panelH - 80);
+  var pos = position || {};
+  if (pos.anchor === "top") {
+    $dd.css({
+      top: pos.top || 80,
+      right: pos.right !== undefined ? pos.right : 14,
+      left: pos.left !== undefined ? pos.left : "auto",
+      bottom: "auto",
+      maxHeight: ddMaxH + "px",
+      minWidth: pos.minWidth || "",
+    });
+  } else {
+    $dd.css({
+      bottom: pos.bottom !== undefined ? pos.bottom : 40,
+      right: pos.right !== undefined ? pos.right : 14,
+      left: pos.left !== undefined ? pos.left : "auto",
+      top: "auto",
+      maxHeight: ddMaxH + "px",
+      minWidth: pos.minWidth || "",
     });
   }
+  $dd.html(html).show();
+  $p.css("overflow", "visible");
+  setupOutsideClickClose($p);
+  return $dd;
+}
 
-  function showMoveDropdown($p) {
-    let html = `<div class="ms-dropdown-item" data-moveto="">未分组</div>`;
-    data.groups.forEach((g) => {
-      html += `<div class="ms-dropdown-item" data-moveto="${g.id}">${esc(g.name)}</div>`;
-    });
-    html += `<div style="border-top:1px solid var(--SmartThemeBorderColor,#333);"></div>`;
-    html += `<div class="ms-dropdown-item" data-moveto="_new" style="color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>新建分组</div>`;
-    var $dd = openDropdown($p, html);
-    if (!$dd) return;
-    $dd.off("click").on("click.move", ".ms-dropdown-item", function () {
-      const target = $(this).data("moveto");
-      if (target === "_new") {
-        closeActiveDropdown();
-        msPrompt("", {
-          title: "新建分组",
-          placeholder: "请输入新分组名称",
-          validate: function (v) {
-            if (!v || !v.trim()) return "名称不能为空";
-            return null;
-          },
-        }).then(function (name) {
-          if (!name || !name.trim()) return;
-          const ng = createGroup(name.trim());
-          movePromptsToGroup([...selectedIds], ng.id);
-          toast("success", `已创建分组并移动 ${selectedIds.size} 项`);
-          exitSelectMode();
-          renderView();
-        });
-        return;
-      } else {
-        movePromptsToGroup([...selectedIds], target || null);
-        toast("success", `已移动 ${selectedIds.size} 项`);
-      }
-      exitSelectMode();
-      closeActiveDropdown();
-      renderView();
-    });
-  }
+function showSortDropdown($p) {
+  const modes = [
+    ["custom", "自定义顺序"],
+    ["created-desc", "最新创建"],
+    ["created-asc", "最早创建"],
+    ["edited-desc", "最新编辑"],
+    ["edited-asc", "最早编辑"],
+    ["name-asc", "名称 A→Z"],
+    ["name-desc", "名称 Z→A"],
+    ["used-desc", "最近使用"],
+    ["used-asc", "最早使用"],
+    ["usage-desc", "使用最多"],
+    ["usage-asc", "使用最少"],
+  ];
+  var html = modes
+    .map(
+      (m) =>
+        `<div class="ms-dropdown-item${(data.settings.sortMode || "created-desc") === m[0] ? " active" : ""}" data-sort="${m[0]}">${m[1]}</div>`,
+    )
+    .join("");
+  var $dd = openDropdown($p, html, { anchor: "top" });
+  if (!$dd) return;
+  $dd.off("click").on("click.sort", ".ms-dropdown-item", function () {
+    data.settings.sortMode = $(this).data("sort");
+    saveData();
+    closeActiveDropdown();
+    renderBodyOnly();
+  });
+}
 
-  function showBatchTagDropdown($p) {
-    if ($p.find("#ms-dropdown").is(":visible")) {
+function showMoveDropdown($p) {
+  let html = `<div class="ms-dropdown-item" data-moveto="">未分组</div>`;
+  data.groups.forEach((g) => {
+    html += `<div class="ms-dropdown-item" data-moveto="${g.id}">${esc(g.name)}</div>`;
+  });
+  html += `<div style="border-top:1px solid var(--SmartThemeBorderColor,#333);"></div>`;
+  html += `<div class="ms-dropdown-item" data-moveto="_new" style="color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>新建分组</div>`;
+  var $dd = openDropdown($p, html);
+  if (!$dd) return;
+  $dd.off("click").on("click.move", ".ms-dropdown-item", function () {
+    const target = $(this).data("moveto");
+    if (target === "_new") {
       closeActiveDropdown();
-      return;
-    }
-    if (data.settings.definedTags.length === 0) {
-      toast("warning", "还没有标签，请先在标签管理中创建");
-      return;
-    }
-    function buildTagContent() {
-      let html = `<div style="padding:6px 12px;font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#888);border-bottom:1px solid var(--SmartThemeBorderColor,#444);">批量标签管理 · 已选 ${selectedIds.size} 项</div>`;
-      data.settings.definedTags.forEach((t) => {
-        let cnt = 0;
-        selectedIds.forEach((pid) => {
-          const p = getPrompt(pid);
-          if (p && p.tags && p.tags.includes(t.id)) cnt++;
-        });
-        html += `<div class="ms-batch-tag-item">
-          <div class="ms-batch-tag-info"><span class="ms-tag-chip" style="background:${t.color};">${esc(t.name)}</span><span class="ms-batch-tag-cnt">${cnt}/${selectedIds.size}</span></div>
-          <button class="ms-batch-tag-btn add-btn" data-tagid="${t.id}" title="添加"><i class="fa-solid fa-plus"></i></button>
-          <button class="ms-batch-tag-btn rm-btn" data-tagid="${t.id}" title="移除"><i class="fa-solid fa-minus"></i></button>
-        </div>`;
-      });
-      html += `<div class="ms-batch-tag-item" style="border-top:1px solid var(--SmartThemeBorderColor,#444);">
-        <div class="ms-batch-tag-info" style="cursor:pointer;color:var(--ms-accent);" id="ms-batch-new-tag"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>新建标签</div>
-      </div>`;
-      return html;
-    }
-    var $dd = openDropdown($p, buildTagContent(), { minWidth: "220px" });
-    if (!$dd) return;
-    $dd.off("click");
-    $dd.on("click.btag", "#ms-batch-new-tag", function (e) {
-      e.stopPropagation();
       msPrompt("", {
-        title: "新建标签",
-        placeholder: "请输入新标签名称",
+        title: "新建分组",
+        placeholder: "请输入新分组名称",
         validate: function (v) {
           if (!v || !v.trim()) return "名称不能为空";
           return null;
         },
       }).then(function (name) {
         if (!name || !name.trim()) return;
-        createTag(name.trim());
-        $dd.html(buildTagContent());
-        refreshKeepingState();
+        const ng = createGroup(name.trim());
+        movePromptsToGroup([...selectedIds], ng.id);
+        toast("success", `已创建分组并移动 ${selectedIds.size} 项`);
+        exitSelectMode();
+        renderView();
       });
-    });
-    var _btagRefreshTimer = null;
-    $dd.on("click.btag", ".ms-batch-tag-btn", function (e) {
-      e.stopPropagation();
-      const tid = $(this).data("tagid");
-      const isAdd = $(this).hasClass("add-btn");
-      const tagObj = getTag(tid);
-      let changed = 0;
-      selectedIds.forEach((pid) => {
-        const p = getPrompt(pid);
-        if (!p) return;
-        if (isAdd) {
-          if (!p.tags.includes(tid)) {
-            p.tags.push(tid);
-            changed++;
-          }
-        } else {
-          const before = p.tags.length;
-          p.tags = p.tags.filter((id) => id !== tid);
-          if (p.tags.length !== before) changed++;
-        }
-      });
-      if (changed === 0) return;
-      saveData();
-      const $row = $dd
-        .find('.ms-batch-tag-btn[data-tagid="' + tid + '"]')
-        .closest(".ms-batch-tag-item");
+      return;
+    } else {
+      movePromptsToGroup([...selectedIds], target || null);
+      toast("success", `已移动 ${selectedIds.size} 项`);
+    }
+    exitSelectMode();
+    closeActiveDropdown();
+    renderView();
+  });
+}
+
+function showBatchTagDropdown($p) {
+  if ($p.find("#ms-dropdown").is(":visible")) {
+    closeActiveDropdown();
+    return;
+  }
+  if (data.settings.definedTags.length === 0) {
+    toast("warning", "还没有标签，请先在标签管理中创建");
+    return;
+  }
+  function buildTagContent() {
+    let html = `<div style="padding:6px 12px;font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#888);border-bottom:1px solid var(--SmartThemeBorderColor,#444);">批量标签管理 · 已选 ${selectedIds.size} 项</div>`;
+    data.settings.definedTags.forEach((t) => {
       let cnt = 0;
       selectedIds.forEach((pid) => {
         const p = getPrompt(pid);
-        if (p && p.tags && p.tags.includes(tid)) cnt++;
+        if (p && p.tags && p.tags.includes(t.id)) cnt++;
       });
-      $row.find(".ms-batch-tag-cnt").text(cnt + "/" + selectedIds.size);
-      if (_btagRefreshTimer) clearTimeout(_btagRefreshTimer);
-      _btagRefreshTimer = setTimeout(function () {
-        _btagRefreshTimer = null;
-        refreshKeepingState();
-      }, 400);
+      html += `<div class="ms-batch-tag-item">
+          <div class="ms-batch-tag-info"><span class="ms-tag-chip" style="background:${t.color};">${esc(t.name)}</span><span class="ms-batch-tag-cnt">${cnt}/${selectedIds.size}</span></div>
+          <button class="ms-batch-tag-btn add-btn" data-tagid="${t.id}" title="添加"><i class="fa-solid fa-plus"></i></button>
+          <button class="ms-batch-tag-btn rm-btn" data-tagid="${t.id}" title="移除"><i class="fa-solid fa-minus"></i></button>
+        </div>`;
     });
+    html += `<div class="ms-batch-tag-item" style="border-top:1px solid var(--SmartThemeBorderColor,#444);">
+        <div class="ms-batch-tag-info" style="cursor:pointer;color:var(--ms-accent);" id="ms-batch-new-tag"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>新建标签</div>
+      </div>`;
+    return html;
   }
+  var $dd = openDropdown($p, buildTagContent(), { minWidth: "220px" });
+  if (!$dd) return;
+  $dd.off("click");
+  $dd.on("click.btag", "#ms-batch-new-tag", function (e) {
+    e.stopPropagation();
+    msPrompt("", {
+      title: "新建标签",
+      placeholder: "请输入新标签名称",
+      validate: function (v) {
+        if (!v || !v.trim()) return "名称不能为空";
+        return null;
+      },
+    }).then(function (name) {
+      if (!name || !name.trim()) return;
+      createTag(name.trim());
+      $dd.html(buildTagContent());
+      refreshKeepingState();
+    });
+  });
+  var _btagRefreshTimer = null;
+  $dd.on("click.btag", ".ms-batch-tag-btn", function (e) {
+    e.stopPropagation();
+    const tid = $(this).data("tagid");
+    const isAdd = $(this).hasClass("add-btn");
+    const tagObj = getTag(tid);
+    let changed = 0;
+    selectedIds.forEach((pid) => {
+      const p = getPrompt(pid);
+      if (!p) return;
+      if (isAdd) {
+        if (!p.tags.includes(tid)) {
+          p.tags.push(tid);
+          changed++;
+        }
+      } else {
+        const before = p.tags.length;
+        p.tags = p.tags.filter((id) => id !== tid);
+        if (p.tags.length !== before) changed++;
+      }
+    });
+    if (changed === 0) return;
+    saveData();
+    const $row = $dd
+      .find('.ms-batch-tag-btn[data-tagid="' + tid + '"]')
+      .closest(".ms-batch-tag-item");
+    let cnt = 0;
+    selectedIds.forEach((pid) => {
+      const p = getPrompt(pid);
+      if (p && p.tags && p.tags.includes(tid)) cnt++;
+    });
+    $row.find(".ms-batch-tag-cnt").text(cnt + "/" + selectedIds.size);
+    if (_btagRefreshTimer) clearTimeout(_btagRefreshTimer);
+    _btagRefreshTimer = setTimeout(function () {
+      _btagRefreshTimer = null;
+      refreshKeepingState();
+    }, 400);
+  });
+}
 
-  function showBatchSeriesDropdown($p) {
-    if ($p.find("#ms-dropdown").is(":visible")) {
-      closeActiveDropdown();
-      return;
-    }
-    const _selGroupIds = new Set();
-    selectedIds.forEach(function (pid) {
-      var p = getPrompt(pid);
-      if (p) _selGroupIds.add(p.groupId || null);
-    });
-    var scopePrompts = data.prompts.filter(function (p) {
-      return _selGroupIds.has(p.groupId || null);
-    });
-    var sortedScope = sortPrompts(scopePrompts);
+function showBatchSeriesDropdown($p) {
+  if ($p.find("#ms-dropdown").is(":visible")) {
+    closeActiveDropdown();
+    return;
+  }
+  const _selGroupIds = new Set();
+  selectedIds.forEach(function (pid) {
+    var p = getPrompt(pid);
+    if (p) _selGroupIds.add(p.groupId || null);
+  });
+  var scopePrompts = data.prompts.filter(function (p) {
+    return _selGroupIds.has(p.groupId || null);
+  });
+  var sortedScope = sortPrompts(scopePrompts);
 
-    var seriesOptions = [];
-    var seenOptKey = new Set();
-    sortedScope.forEach(function (p) {
-      var sn = String(p.series || "").trim();
-      if (!sn) return;
-      var g = p.groupId ? getGroup(p.groupId) : null;
-      var isIP = g && isIPGroup(g);
-      var charKey =
-        isIP && p.character && isLocalCharKey(p.character) ? p.character : null;
-      var optKey = sn + "||" + (charKey || "_") + "||" + (p.groupId || "_");
-      if (seenOptKey.has(optKey)) return;
-      seenOptKey.add(optKey);
-      seriesOptions.push({ name: sn, charKey: charKey });
-    });
-    var seriesNames = [];
-    var seenNameKey = new Set();
-    sortedScope.forEach(function (p) {
-      var sn = String(p.series || "").trim();
-      if (!sn || seenNameKey.has(sn)) return;
-      seenNameKey.add(sn);
-      seriesNames.push(sn);
-    });
+  var seriesOptions = [];
+  var seenOptKey = new Set();
+  sortedScope.forEach(function (p) {
+    var sn = String(p.series || "").trim();
+    if (!sn) return;
+    var g = p.groupId ? getGroup(p.groupId) : null;
+    var isIP = g && isIPGroup(g);
+    var charKey =
+      isIP && p.character && isLocalCharKey(p.character) ? p.character : null;
+    var optKey = sn + "||" + (charKey || "_") + "||" + (p.groupId || "_");
+    if (seenOptKey.has(optKey)) return;
+    seenOptKey.add(optKey);
+    seriesOptions.push({ name: sn, charKey: charKey });
+  });
+  var seriesNames = [];
+  var seenNameKey = new Set();
+  sortedScope.forEach(function (p) {
+    var sn = String(p.series || "").trim();
+    if (!sn || seenNameKey.has(sn)) return;
+    seenNameKey.add(sn);
+    seriesNames.push(sn);
+  });
 
-    let html =
-      '<div style="padding:6px 12px;font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#888);border-bottom:1px solid var(--SmartThemeBorderColor,#444);">批量设置系列 · 已选 ' +
-      selectedIds.size +
-      " 项</div>";
-    html +=
-      '<div class="ms-dropdown-item" data-series-action="rename-existing" style="color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.06);"><i class="fa-solid fa-pen-to-square" style="margin-right:6px;font-size:11px;"></i>重命名已有系列…</div>';
+  let html =
+    '<div style="padding:6px 12px;font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#888);border-bottom:1px solid var(--SmartThemeBorderColor,#444);">批量设置系列 · 已选 ' +
+    selectedIds.size +
+    " 项</div>";
+  html +=
+    '<div class="ms-dropdown-item" data-series-action="rename-existing" style="color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.06);"><i class="fa-solid fa-pen-to-square" style="margin-right:6px;font-size:11px;"></i>重命名已有系列…</div>';
+  html +=
+    '<div style="border-top:1px solid var(--SmartThemeBorderColor,#333);"></div>';
+  if (seriesOptions.length > 0) {
+    seriesOptions.forEach(function (opt) {
+      var charPart = "";
+      var charDataAttr = "";
+      if (opt.charKey) {
+        var dn = getCharDisplayName(opt.charKey);
+        var ap = getCharAvatarPathSafe(opt.charKey);
+        var avH = ap
+          ? '<img src="' +
+            esc(ap) +
+            '" loading="lazy" style="width:12px;height:12px;border-radius:2px;object-fit:cover;vertical-align:middle;margin:0 4px 0 6px;" onerror="this.style.display=\'none\';this.onerror=null;">'
+          : '<i class="fa-solid fa-user" style="font-size:9px;margin:0 4px 0 6px;color:#b48cc8;opacity:0.7;"></i>';
+        charPart =
+          avH +
+          '<span style="font-size:10px;color:#b48cc8;opacity:0.85;">' +
+          esc(truncate(dn, 10)) +
+          "</span>";
+        charDataAttr = ' data-series-charkey="' + esc(opt.charKey) + '"';
+      }
+      html +=
+        '<div class="ms-dropdown-item" data-series-name="' +
+        esc(opt.name) +
+        '"' +
+        charDataAttr +
+        '><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;margin-right:6px;font-size:11px;"></i>' +
+        esc(opt.name) +
+        charPart +
+        "</div>";
+    });
     html +=
       '<div style="border-top:1px solid var(--SmartThemeBorderColor,#333);"></div>';
-    if (seriesOptions.length > 0) {
-      seriesOptions.forEach(function (opt) {
-        var charPart = "";
-        var charDataAttr = "";
-        if (opt.charKey) {
-          var dn = getCharDisplayName(opt.charKey);
-          var ap = getCharAvatarPathSafe(opt.charKey);
-          var avH = ap
-            ? '<img src="' +
-              esc(ap) +
-              '" loading="lazy" style="width:12px;height:12px;border-radius:2px;object-fit:cover;vertical-align:middle;margin:0 4px 0 6px;" onerror="this.style.display=\'none\';this.onerror=null;">'
-            : '<i class="fa-solid fa-user" style="font-size:9px;margin:0 4px 0 6px;color:#b48cc8;opacity:0.7;"></i>';
-          charPart =
-            avH +
-            '<span style="font-size:10px;color:#b48cc8;opacity:0.85;">' +
-            esc(truncate(dn, 10)) +
-            "</span>";
-          charDataAttr = ' data-series-charkey="' + esc(opt.charKey) + '"';
-        }
-        html +=
-          '<div class="ms-dropdown-item" data-series-name="' +
-          esc(opt.name) +
-          '"' +
-          charDataAttr +
-          '><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;margin-right:6px;font-size:11px;"></i>' +
-          esc(opt.name) +
-          charPart +
-          "</div>";
-      });
-      html +=
-        '<div style="border-top:1px solid var(--SmartThemeBorderColor,#333);"></div>';
-    }
-    html +=
-      '<div class="ms-dropdown-item" data-series-action="custom" style="color:var(--ms-accent);"><i class="fa-solid fa-pen" style="margin-right:6px;font-size:11px;"></i>自定义系列名</div>';
-    html +=
-      '<div class="ms-dropdown-item" data-series-action="clear" style="color:var(--ms-danger);"><i class="fa-solid fa-xmark" style="margin-right:6px;font-size:11px;"></i>清除系列</div>';
+  }
+  html +=
+    '<div class="ms-dropdown-item" data-series-action="custom" style="color:var(--ms-accent);"><i class="fa-solid fa-pen" style="margin-right:6px;font-size:11px;"></i>自定义系列名</div>';
+  html +=
+    '<div class="ms-dropdown-item" data-series-action="clear" style="color:var(--ms-danger);"><i class="fa-solid fa-xmark" style="margin-right:6px;font-size:11px;"></i>清除系列</div>';
 
-    var $dd = openDropdown($p, html);
-    if (!$dd) return;
-    $dd.off("click").on("click.series", ".ms-dropdown-item", function () {
-      const seriesName = $(this).data("series-name");
-      const charKey = $(this).attr("data-series-charkey");
-      const action = $(this).data("series-action");
+  var $dd = openDropdown($p, html);
+  if (!$dd) return;
+  $dd.off("click").on("click.series", ".ms-dropdown-item", function () {
+    const seriesName = $(this).data("series-name");
+    const charKey = $(this).attr("data-series-charkey");
+    const action = $(this).data("series-action");
 
-      if (action === "rename-existing") {
-        closeActiveDropdown();
-        if (seriesNames.length === 0) {
-          toast("info", "暂时没有任何系列名");
-          return;
-        }
-        var listHtml =
-          '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;">选择要重命名的系列（会改掉所有使用该系列名的剧场）：</div>';
-        listHtml +=
-          '<div class="ms-modal-list" style="max-height:300px;overflow-y:auto;">';
-        seriesNames.forEach(function (sn) {
-          var cnt = data.prompts.filter(function (pp) {
-            return (pp.series || "").trim() === sn;
-          }).length;
-          listHtml +=
-            '<div class="ms-modal-list-item" data-rename-src="' +
-            esc(sn) +
-            '"><div class="ms-modal-list-icon" style="background:rgba(var(--ms-accent-rgb),0.15);color:var(--ms-accent);"><i class="fa-solid fa-layer-group"></i></div><div class="ms-modal-list-info"><div class="ms-modal-list-name">' +
-            esc(sn) +
-            '</div><div class="ms-modal-list-desc">' +
-            cnt +
-            " 条剧场使用</div></div></div>";
-        });
-        listHtml += "</div>";
-        showModal({
-          title: "重命名系列",
-          iconType: "info",
-          icon: "fa-pen-to-square",
-          modalStyle: "min-width:340px;max-width:90vw;width:400px;",
-          body: listHtml,
-          buttons: [{ text: "取消", value: null }],
-          cancelValue: null,
-          onShow: function ($overlay, close) {
-            $overlay.on("click", ".ms-modal-list-item", function () {
-              var src = $(this).attr("data-rename-src");
-              if (!src) return;
-              close("done");
-              setTimeout(function () {
-                msPrompt("把「" + src + "」重命名为：", {
-                  title: "新系列名",
-                  defaultValue: src,
-                  placeholder: "留空表示清除系列",
-                  validate: function (v) {
-                    return null;
-                  },
-                }).then(function (newName) {
-                  if (newName === null) return;
-                  newName = (newName || "").trim();
-                  if (newName === src) {
-                    toast("info", "没有变化");
-                    return;
-                  }
-                  var changed = 0;
-                  data.prompts.forEach(function (pp) {
-                    if ((pp.series || "").trim() === src) {
-                      pp.series = newName;
-                      _invalidateLc(pp);
-                      changed++;
-                    }
-                  });
-                  saveData();
-                  toast(
-                    "success",
-                    newName
-                      ? "已把 " + changed + " 条改为「" + newName + "」"
-                      : "已清除 " + changed + " 条的系列",
-                  );
-                  refreshKeepingState();
-                });
-              }, 200);
-            });
-          },
-        });
+    if (action === "rename-existing") {
+      closeActiveDropdown();
+      if (seriesNames.length === 0) {
+        toast("info", "暂时没有任何系列名");
         return;
       }
-
-      if (action === "custom") {
-        closeActiveDropdown();
-        msPrompt("", {
-          title: "自定义系列名",
-          placeholder: "留空可清除系列",
-        }).then(function (name) {
-          if (name === null) return;
-          selectedIds.forEach(function (pid) {
-            const p = getPrompt(pid);
-            if (p) {
-              p.series = name.trim();
-              _invalidateLc(p);
-            }
+      var listHtml =
+        '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;">选择要重命名的系列（会改掉所有使用该系列名的剧场）：</div>';
+      listHtml +=
+        '<div class="ms-modal-list" style="max-height:300px;overflow-y:auto;">';
+      seriesNames.forEach(function (sn) {
+        var cnt = data.prompts.filter(function (pp) {
+          return (pp.series || "").trim() === sn;
+        }).length;
+        listHtml +=
+          '<div class="ms-modal-list-item" data-rename-src="' +
+          esc(sn) +
+          '"><div class="ms-modal-list-icon" style="background:rgba(var(--ms-accent-rgb),0.15);color:var(--ms-accent);"><i class="fa-solid fa-layer-group"></i></div><div class="ms-modal-list-info"><div class="ms-modal-list-name">' +
+          esc(sn) +
+          '</div><div class="ms-modal-list-desc">' +
+          cnt +
+          " 条剧场使用</div></div></div>";
+      });
+      listHtml += "</div>";
+      showModal({
+        title: "重命名系列",
+        iconType: "info",
+        icon: "fa-pen-to-square",
+        modalStyle: "min-width:340px;max-width:90vw;width:400px;",
+        body: listHtml,
+        buttons: [{ text: "取消", value: null }],
+        cancelValue: null,
+        onShow: function ($overlay, close) {
+          $overlay.on("click", ".ms-modal-list-item", function () {
+            var src = $(this).attr("data-rename-src");
+            if (!src) return;
+            close("done");
+            setTimeout(function () {
+              msPrompt("把「" + src + "」重命名为：", {
+                title: "新系列名",
+                defaultValue: src,
+                placeholder: "留空表示清除系列",
+                validate: function (v) {
+                  return null;
+                },
+              }).then(function (newName) {
+                if (newName === null) return;
+                newName = (newName || "").trim();
+                if (newName === src) {
+                  toast("info", "没有变化");
+                  return;
+                }
+                var changed = 0;
+                data.prompts.forEach(function (pp) {
+                  if ((pp.series || "").trim() === src) {
+                    pp.series = newName;
+                    _invalidateLc(pp);
+                    changed++;
+                  }
+                });
+                saveData();
+                toast(
+                  "success",
+                  newName
+                    ? "已把 " + changed + " 条改为「" + newName + "」"
+                    : "已清除 " + changed + " 条的系列",
+                );
+                refreshKeepingState();
+              });
+            }, 200);
           });
-          saveData();
-          toast(
-            "success",
-            name.trim() ? "已设置系列: " + name.trim() : "已清除系列",
-          );
-          refreshKeepingState();
-        });
-        return;
-      } else if (action === "clear") {
+        },
+      });
+      return;
+    }
+
+    if (action === "custom") {
+      closeActiveDropdown();
+      msPrompt("", {
+        title: "自定义系列名",
+        placeholder: "留空可清除系列",
+      }).then(function (name) {
+        if (name === null) return;
         selectedIds.forEach(function (pid) {
           const p = getPrompt(pid);
           if (p) {
-            p.series = "";
+            p.series = name.trim();
             _invalidateLc(p);
           }
         });
         saveData();
-        toast("success", "已清除 " + selectedIds.size + " 项的系列");
-      } else if (seriesName !== undefined) {
-        var charChanged = 0;
-        selectedIds.forEach(function (pid) {
-          const p = getPrompt(pid);
-          if (!p) return;
-          p.series = seriesName;
-          _invalidateLc(p);
-          if (charKey) {
-            var pg = p.groupId ? getGroup(p.groupId) : null;
-            if (pg && isIPGroup(pg) && p.character !== charKey) {
-              p.character = charKey;
-              charChanged++;
-            }
-          }
-        });
-        if (charChanged > 0) _invalidateCharGroupCache();
-        saveData();
-        var msg = "已设置系列: " + seriesName;
-        if (charChanged > 0) msg += "（" + charChanged + " 项已改绑到该角色）";
-        toast("success", msg);
-      }
-      closeActiveDropdown();
-      refreshKeepingState();
-    });
-  }
-
-  function showBatchCharacterDropdown($p) {
-    if ($p.find("#ms-dropdown").is(":visible")) {
-      closeActiveDropdown();
-      return;
-    }
-    if (selectedIds.size === 0) return;
-    const curKey = getCurrentCharKeySafe();
-    const curName = curKey ? getCharDisplayName(curKey) : "";
-    let html =
-      '<div style="padding:6px 12px;font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#888);border-bottom:1px solid var(--SmartThemeBorderColor,#444);">批量设置角色 · 已选 ' +
-      selectedIds.size +
-      " 项</div>";
-    if (curKey) {
-      html +=
-        '<div class="ms-dropdown-item" data-bchar-action="bind-current" style="color:var(--ms-accent);"><i class="fa-solid fa-user-check" style="margin-right:6px;"></i>绑定到当前角色 (' +
-        esc(truncate(curName, 14)) +
-        ")</div>";
-    }
-    html +=
-      '<div class="ms-dropdown-item" data-bchar-action="search"><i class="fa-solid fa-magnifying-glass" style="margin-right:6px;"></i>搜索角色绑定</div>';
-    html +=
-      '<div style="border-top:1px solid var(--SmartThemeBorderColor,#333);"></div>';
-    html +=
-      '<div class="ms-dropdown-item" data-bchar-action="clear" style="color:var(--ms-danger);"><i class="fa-solid fa-xmark" style="margin-right:6px;"></i>解绑全部</div>';
-    var $dd = openDropdown($p, html, { minWidth: "200px" });
-    if (!$dd) return;
-    $dd.off("click").on("click.bchar", ".ms-dropdown-item", function () {
-      const action = $(this).data("bchar-action");
-      if (action === "bind-current") {
-        if (!curKey) return;
-        selectedIds.forEach(function (pid) {
-          const p = getPrompt(pid);
-          if (p) p.character = curKey;
-        });
-        saveData();
-        toast("success", "已绑定 " + selectedIds.size + " 项到 " + curName);
-        closeActiveDropdown();
+        toast(
+          "success",
+          name.trim() ? "已设置系列: " + name.trim() : "已清除系列",
+        );
         refreshKeepingState();
-      } else if (action === "clear") {
-        selectedIds.forEach(function (pid) {
-          const p = getPrompt(pid);
-          if (p) p.character = "";
-        });
-        saveData();
-        toast("success", "已解绑 " + selectedIds.size + " 项");
-        closeActiveDropdown();
-        refreshKeepingState();
-      } else if (action === "search") {
-        closeActiveDropdown();
-        let allKeys = [];
-        try {
-          if (typeof SillyTavern !== "undefined" && SillyTavern.characters) {
-            allKeys = SillyTavern.characters
-              .map(function (c) {
-                return c.avatar;
-              })
-              .filter(Boolean);
-          }
-        } catch (e) {}
-        if (allKeys.length === 0)
-          allKeys = Object.keys(getAllCharactersWithStages());
-        if (allKeys.length === 0) {
-          toast("warning", "没有可绑定的角色");
-          return;
-        }
-        var ipInfo = null;
-        try {
-          var groupCount = {};
-          selectedIds.forEach(function (pid) {
-            var p = getPrompt(pid);
-            if (!p || !p.groupId) return;
-            groupCount[p.groupId] = (groupCount[p.groupId] || 0) + 1;
-          });
-          var topGid = null,
-            topCnt = 0;
-          Object.keys(groupCount).forEach(function (gid) {
-            if (groupCount[gid] > topCnt) {
-              topCnt = groupCount[gid];
-              topGid = gid;
-            }
-          });
-          if (topGid) {
-            var _topG = getGroup(topGid);
-            if (_topG && isIPGroup(_topG)) {
-              ipInfo = { name: _topG.name, keys: getIPGroupCharKeys(_topG) };
-            }
-          }
-        } catch (e) {}
-        showModal({
-          title: "绑定角色 (已选 " + selectedIds.size + " 项)",
-          iconType: "info",
-          icon: "fa-user-tag",
-          modalStyle: "min-width:380px;max-width:90vw;width:420px;",
-          body: function () {
-            return (
-              '<input type="text" class="ms-modal-search" placeholder="搜索角色名或文件名..." id="ms-batch-char-search">' +
-              '<div id="ms-batch-char-list">' +
-              buildCharPickerListHTML("", allKeys, null, ipInfo) +
-              "</div>"
-            );
-          },
-          buttons: [{ text: "取消", value: null }],
-          cancelValue: null,
-          onShow: function ($overlay, close) {
-            $overlay.find("#ms-batch-char-search").focus();
-            $overlay.on("input", "#ms-batch-char-search", function () {
-              $overlay
-                .find("#ms-batch-char-list")
-                .html(
-                  buildCharPickerListHTML($(this).val(), allKeys, null, ipInfo),
-                );
-            });
-            $overlay.on("click", ".ms-modal-list-item", function () {
-              var targetKey = $(this).attr("data-target-key");
-              if (!targetKey) return;
-              selectedIds.forEach(function (pid) {
-                const p = getPrompt(pid);
-                if (p) p.character = targetKey;
-              });
-              saveData();
-              toast(
-                "success",
-                "已绑定 " +
-                  selectedIds.size +
-                  " 项到 " +
-                  getCharDisplayName(targetKey),
-              );
-              close("done");
-              refreshKeepingState();
-            });
-          },
-        });
-      }
-    });
-  }
-
-  function showBatchAuthorDialog() {
-    const $p = $("#" + PANEL_ID);
-    if ($p.find("#ms-dropdown").is(":visible")) {
-      closeActiveDropdown();
+      });
       return;
-    }
-    var groupIds = new Set();
-    selectedIds.forEach(function (pid) {
-      var p = getPrompt(pid);
-      if (p && p.groupId) groupIds.add(p.groupId);
-    });
-    var authorsInGroups = new Set();
-    data.prompts.forEach(function (p) {
-      if (p.author && p.author.trim() && p.groupId && groupIds.has(p.groupId)) {
-        authorsInGroups.add(p.author.trim());
-      }
-    });
-    var allAuthors = new Set();
-    data.prompts.forEach(function (p) {
-      if (p.author && p.author.trim()) allAuthors.add(p.author.trim());
-    });
-    var sortedGroupAuthors = Array.from(authorsInGroups).sort();
-    var sortedOtherAuthors = Array.from(allAuthors)
-      .filter(function (a) {
-        return !authorsInGroups.has(a);
-      })
-      .sort();
-
-    let html =
-      '<div style="padding:6px 12px;font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#888);border-bottom:1px solid var(--SmartThemeBorderColor,#444);">批量设置作者 · 已选 ' +
-      selectedIds.size +
-      " 项</div>";
-    if (sortedGroupAuthors.length > 0) {
-      html +=
-        '<div style="padding:4px 12px 2px;font-size:10px;color:var(--ms-accent);font-weight:600;"><i class="fa-solid fa-folder" style="margin-right:3px;font-size:9px;"></i>本分组已有作者</div>';
-      sortedGroupAuthors.forEach(function (name) {
-        html +=
-          '<div class="ms-dropdown-item" data-author-value="' +
-          esc(name) +
-          '"><i class="fa-solid fa-user" style="color:var(--ms-accent);opacity:0.6;margin-right:6px;font-size:11px;"></i>' +
-          esc(name) +
-          "</div>";
-      });
-    }
-    if (sortedOtherAuthors.length > 0) {
-      html +=
-        '<div style="padding:4px 12px 2px;font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-weight:600;"><i class="fa-solid fa-list" style="margin-right:3px;font-size:9px;"></i>其他已有作者</div>';
-      sortedOtherAuthors.forEach(function (name) {
-        html +=
-          '<div class="ms-dropdown-item" data-author-value="' +
-          esc(name) +
-          '"><i class="fa-solid fa-user" style="opacity:0.5;margin-right:6px;font-size:11px;"></i>' +
-          esc(name) +
-          "</div>";
-      });
-    }
-    if (sortedGroupAuthors.length > 0 || sortedOtherAuthors.length > 0) {
-      html +=
-        '<div style="border-top:1px solid var(--SmartThemeBorderColor,#333);"></div>';
-    }
-    html +=
-      '<div class="ms-dropdown-item" data-author-action="custom" style="color:var(--ms-accent);"><i class="fa-solid fa-pen" style="margin-right:6px;font-size:11px;"></i>自定义作者名</div>';
-    html +=
-      '<div class="ms-dropdown-item" data-author-action="clear" style="color:var(--ms-danger);"><i class="fa-solid fa-xmark" style="margin-right:6px;font-size:11px;"></i>清除作者</div>';
-
-    var $dd = openDropdown($p, html, { minWidth: "200px" });
-    if (!$dd) return;
-
-    function applyAuthor(authorName) {
+    } else if (action === "clear") {
       selectedIds.forEach(function (pid) {
-        var p = getPrompt(pid);
+        const p = getPrompt(pid);
         if (p) {
-          p.author = authorName;
+          p.series = "";
           _invalidateLc(p);
         }
       });
       saveData();
-      toast(
-        "success",
-        authorName
-          ? "已为 " + selectedIds.size + " 项设置作者: " + authorName
-          : "已清除 " + selectedIds.size + " 项的作者",
-      );
-      refreshKeepingState();
+      toast("success", "已清除 " + selectedIds.size + " 项的系列");
+    } else if (seriesName !== undefined) {
+      var charChanged = 0;
+      selectedIds.forEach(function (pid) {
+        const p = getPrompt(pid);
+        if (!p) return;
+        p.series = seriesName;
+        _invalidateLc(p);
+        if (charKey) {
+          var pg = p.groupId ? getGroup(p.groupId) : null;
+          if (pg && isIPGroup(pg) && p.character !== charKey) {
+            p.character = charKey;
+            charChanged++;
+          }
+        }
+      });
+      if (charChanged > 0) _invalidateCharGroupCache();
+      saveData();
+      var msg = "已设置系列: " + seriesName;
+      if (charChanged > 0) msg += "（" + charChanged + " 项已改绑到该角色）";
+      toast("success", msg);
     }
+    closeActiveDropdown();
+    refreshKeepingState();
+  });
+}
 
-    $dd.off("click").on("click.author", ".ms-dropdown-item", function () {
-      var val = $(this).data("author-value");
-      var action = $(this).data("author-action");
-      if (action === "custom") {
-        closeActiveDropdown();
-        msPrompt("", {
-          title: "自定义作者名",
-          placeholder: "留空可清除作者",
-          icon: "fa-user-pen",
-        }).then(function (name) {
-          if (name === null) return;
-          applyAuthor(name.trim());
-        });
+function showBatchCharacterDropdown($p) {
+  if ($p.find("#ms-dropdown").is(":visible")) {
+    closeActiveDropdown();
+    return;
+  }
+  if (selectedIds.size === 0) return;
+  const curKey = getCurrentCharKeySafe();
+  const curName = curKey ? getCharDisplayName(curKey) : "";
+  let html =
+    '<div style="padding:6px 12px;font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#888);border-bottom:1px solid var(--SmartThemeBorderColor,#444);">批量设置角色 · 已选 ' +
+    selectedIds.size +
+    " 项</div>";
+  if (curKey) {
+    html +=
+      '<div class="ms-dropdown-item" data-bchar-action="bind-current" style="color:var(--ms-accent);"><i class="fa-solid fa-user-check" style="margin-right:6px;"></i>绑定到当前角色 (' +
+      esc(truncate(curName, 14)) +
+      ")</div>";
+  }
+  html +=
+    '<div class="ms-dropdown-item" data-bchar-action="search"><i class="fa-solid fa-magnifying-glass" style="margin-right:6px;"></i>搜索角色绑定</div>';
+  html +=
+    '<div style="border-top:1px solid var(--SmartThemeBorderColor,#333);"></div>';
+  html +=
+    '<div class="ms-dropdown-item" data-bchar-action="clear" style="color:var(--ms-danger);"><i class="fa-solid fa-xmark" style="margin-right:6px;"></i>解绑全部</div>';
+  var $dd = openDropdown($p, html, { minWidth: "200px" });
+  if (!$dd) return;
+  $dd.off("click").on("click.bchar", ".ms-dropdown-item", function () {
+    const action = $(this).data("bchar-action");
+    if (action === "bind-current") {
+      if (!curKey) return;
+      selectedIds.forEach(function (pid) {
+        const p = getPrompt(pid);
+        if (p) p.character = curKey;
+      });
+      saveData();
+      toast("success", "已绑定 " + selectedIds.size + " 项到 " + curName);
+      closeActiveDropdown();
+      refreshKeepingState();
+    } else if (action === "clear") {
+      selectedIds.forEach(function (pid) {
+        const p = getPrompt(pid);
+        if (p) p.character = "";
+      });
+      saveData();
+      toast("success", "已解绑 " + selectedIds.size + " 项");
+      closeActiveDropdown();
+      refreshKeepingState();
+    } else if (action === "search") {
+      closeActiveDropdown();
+      let allKeys = [];
+      try {
+        if (typeof SillyTavern !== "undefined" && SillyTavern.characters) {
+          allKeys = SillyTavern.characters
+            .map(function (c) {
+              return c.avatar;
+            })
+            .filter(Boolean);
+        }
+      } catch (e) {}
+      if (allKeys.length === 0)
+        allKeys = Object.keys(getAllCharactersWithStages());
+      if (allKeys.length === 0) {
+        toast("warning", "没有可绑定的角色");
         return;
       }
-      if (action === "clear") {
-        applyAuthor("");
-      } else if (val !== undefined) {
-        applyAuthor(String(val));
+      var ipInfo = null;
+      try {
+        var groupCount = {};
+        selectedIds.forEach(function (pid) {
+          var p = getPrompt(pid);
+          if (!p || !p.groupId) return;
+          groupCount[p.groupId] = (groupCount[p.groupId] || 0) + 1;
+        });
+        var topGid = null,
+          topCnt = 0;
+        Object.keys(groupCount).forEach(function (gid) {
+          if (groupCount[gid] > topCnt) {
+            topCnt = groupCount[gid];
+            topGid = gid;
+          }
+        });
+        if (topGid) {
+          var _topG = getGroup(topGid);
+          if (_topG && isIPGroup(_topG)) {
+            ipInfo = { name: _topG.name, keys: getIPGroupCharKeys(_topG) };
+          }
+        }
+      } catch (e) {}
+      showModal({
+        title: "绑定角色 (已选 " + selectedIds.size + " 项)",
+        iconType: "info",
+        icon: "fa-user-tag",
+        modalStyle: "min-width:380px;max-width:90vw;width:420px;",
+        body: function () {
+          return (
+            '<input type="text" class="ms-modal-search" placeholder="搜索角色名或文件名..." id="ms-batch-char-search">' +
+            '<div id="ms-batch-char-list">' +
+            buildCharPickerListHTML("", allKeys, null, ipInfo) +
+            "</div>"
+          );
+        },
+        buttons: [{ text: "取消", value: null }],
+        cancelValue: null,
+        onShow: function ($overlay, close) {
+          $overlay.find("#ms-batch-char-search").focus();
+          $overlay.on("input", "#ms-batch-char-search", function () {
+            $overlay
+              .find("#ms-batch-char-list")
+              .html(
+                buildCharPickerListHTML($(this).val(), allKeys, null, ipInfo),
+              );
+          });
+          $overlay.on("click", ".ms-modal-list-item", function () {
+            var targetKey = $(this).attr("data-target-key");
+            if (!targetKey) return;
+            selectedIds.forEach(function (pid) {
+              const p = getPrompt(pid);
+              if (p) p.character = targetKey;
+            });
+            saveData();
+            toast(
+              "success",
+              "已绑定 " +
+                selectedIds.size +
+                " 项到 " +
+                getCharDisplayName(targetKey),
+            );
+            close("done");
+            refreshKeepingState();
+          });
+        },
+      });
+    }
+  });
+}
+
+function showBatchAuthorDialog() {
+  const $p = $("#" + PANEL_ID);
+  if ($p.find("#ms-dropdown").is(":visible")) {
+    closeActiveDropdown();
+    return;
+  }
+  var groupIds = new Set();
+  selectedIds.forEach(function (pid) {
+    var p = getPrompt(pid);
+    if (p && p.groupId) groupIds.add(p.groupId);
+  });
+  var authorsInGroups = new Set();
+  data.prompts.forEach(function (p) {
+    if (p.author && p.author.trim() && p.groupId && groupIds.has(p.groupId)) {
+      authorsInGroups.add(p.author.trim());
+    }
+  });
+  var allAuthors = new Set();
+  data.prompts.forEach(function (p) {
+    if (p.author && p.author.trim()) allAuthors.add(p.author.trim());
+  });
+  var sortedGroupAuthors = Array.from(authorsInGroups).sort();
+  var sortedOtherAuthors = Array.from(allAuthors)
+    .filter(function (a) {
+      return !authorsInGroups.has(a);
+    })
+    .sort();
+
+  let html =
+    '<div style="padding:6px 12px;font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#888);border-bottom:1px solid var(--SmartThemeBorderColor,#444);">批量设置作者 · 已选 ' +
+    selectedIds.size +
+    " 项</div>";
+  if (sortedGroupAuthors.length > 0) {
+    html +=
+      '<div style="padding:4px 12px 2px;font-size:10px;color:var(--ms-accent);font-weight:600;"><i class="fa-solid fa-folder" style="margin-right:3px;font-size:9px;"></i>本分组已有作者</div>';
+    sortedGroupAuthors.forEach(function (name) {
+      html +=
+        '<div class="ms-dropdown-item" data-author-value="' +
+        esc(name) +
+        '"><i class="fa-solid fa-user" style="color:var(--ms-accent);opacity:0.6;margin-right:6px;font-size:11px;"></i>' +
+        esc(name) +
+        "</div>";
+    });
+  }
+  if (sortedOtherAuthors.length > 0) {
+    html +=
+      '<div style="padding:4px 12px 2px;font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-weight:600;"><i class="fa-solid fa-list" style="margin-right:3px;font-size:9px;"></i>其他已有作者</div>';
+    sortedOtherAuthors.forEach(function (name) {
+      html +=
+        '<div class="ms-dropdown-item" data-author-value="' +
+        esc(name) +
+        '"><i class="fa-solid fa-user" style="opacity:0.5;margin-right:6px;font-size:11px;"></i>' +
+        esc(name) +
+        "</div>";
+    });
+  }
+  if (sortedGroupAuthors.length > 0 || sortedOtherAuthors.length > 0) {
+    html +=
+      '<div style="border-top:1px solid var(--SmartThemeBorderColor,#333);"></div>';
+  }
+  html +=
+    '<div class="ms-dropdown-item" data-author-action="custom" style="color:var(--ms-accent);"><i class="fa-solid fa-pen" style="margin-right:6px;font-size:11px;"></i>自定义作者名</div>';
+  html +=
+    '<div class="ms-dropdown-item" data-author-action="clear" style="color:var(--ms-danger);"><i class="fa-solid fa-xmark" style="margin-right:6px;font-size:11px;"></i>清除作者</div>';
+
+  var $dd = openDropdown($p, html, { minWidth: "200px" });
+  if (!$dd) return;
+
+  function applyAuthor(authorName) {
+    selectedIds.forEach(function (pid) {
+      var p = getPrompt(pid);
+      if (p) {
+        p.author = authorName;
+        _invalidateLc(p);
       }
+    });
+    saveData();
+    toast(
+      "success",
+      authorName
+        ? "已为 " + selectedIds.size + " 项设置作者: " + authorName
+        : "已清除 " + selectedIds.size + " 项的作者",
+    );
+    refreshKeepingState();
+  }
+
+  $dd.off("click").on("click.author", ".ms-dropdown-item", function () {
+    var val = $(this).data("author-value");
+    var action = $(this).data("author-action");
+    if (action === "custom") {
       closeActiveDropdown();
-    });
-  }
-
-  function buildCharPickerListHTML(kw, allKeys, currentKey, ipGroupInfo) {
-    var lkw = (kw || "").trim().toLowerCase();
-    var matched = allKeys.filter(function (k) {
-      if (!lkw) return true;
-      return (
-        getCharDisplayName(k).toLowerCase().indexOf(lkw) >= 0 ||
-        String(k).toLowerCase().indexOf(lkw) >= 0
-      );
-    });
-
-    var ipKeys = [];
-    var ipName = "";
-    if (
-      !lkw &&
-      ipGroupInfo &&
-      ipGroupInfo.keys &&
-      ipGroupInfo.keys.length > 0
-    ) {
-      ipKeys = ipGroupInfo.keys.filter(function (k) {
-        return allKeys.indexOf(k) >= 0;
+      msPrompt("", {
+        title: "自定义作者名",
+        placeholder: "留空可清除作者",
+        icon: "fa-user-pen",
+      }).then(function (name) {
+        if (name === null) return;
+        applyAuthor(name.trim());
       });
-      ipName = ipGroupInfo.name || "";
-    }
-
-    if (matched.length === 0 && ipKeys.length === 0) {
-      return '<div style="padding:20px;text-align:center;color:var(--SmartThemeQuoteColor,#666);font-size:12px;">没有匹配的角色</div>';
-    }
-
-    function renderOneChar(k, isFromIP) {
-      var dn = getCharDisplayName(k);
-      var fname = String(k).replace(/\.[^.]+$/, "");
-      var ap = getCharAvatarPathSafe(k);
-      var iconHtml = ap
-        ? '<img src="' +
-          esc(ap) +
-          '" loading="lazy" decoding="async" onerror="this.style.display=\'none\';this.onerror=null;">'
-        : '<i class="fa-solid fa-user" style="color:#b48cc8;font-size:12px;"></i>';
-      var isCur = currentKey === k;
-      var extraBg = "";
-      if (isCur) extraBg = "background:rgba(var(--ms-accent-rgb),0.15);";
-      else if (isFromIP)
-        extraBg = "background:rgba(var(--ms-accent-rgb),0.05);";
-      return (
-        '<div class="ms-modal-list-item" data-target-key="' +
-        esc(k) +
-        '" style="' +
-        extraBg +
-        '">' +
-        '<div class="ms-modal-list-icon">' +
-        iconHtml +
-        "</div>" +
-        '<div class="ms-modal-list-info">' +
-        '<div class="ms-modal-list-name">' +
-        esc(dn) +
-        (isCur
-          ? ' <i class="fa-solid fa-check" style="color:var(--ms-accent);font-size:10px;margin-left:4px;"></i>'
-          : "") +
-        "</div>" +
-        '<div class="ms-modal-list-desc">' +
-        esc(fname) +
-        "</div>" +
-        "</div></div>"
-      );
-    }
-
-    var html =
-      '<div class="ms-modal-list" style="max-height:300px;overflow-y:auto;">';
-    var shown = new Set();
-    if (ipKeys.length > 0) {
-      html +=
-        '<div style="font-size:10px;color:var(--ms-accent);padding:6px 8px 4px;font-weight:600;display:flex;align-items:center;gap:4px;"><i class="fa-solid fa-layer-group" style="font-size:9px;"></i>本分组成员（' +
-        esc(ipName) +
-        "）</div>";
-      ipKeys.forEach(function (k) {
-        html += renderOneChar(k, true);
-        shown.add(k);
-      });
-      html +=
-        '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);padding:8px 8px 4px;font-weight:600;border-top:1px solid rgba(255,255,255,0.04);margin-top:4px;display:flex;align-items:center;gap:4px;"><i class="fa-solid fa-list" style="font-size:9px;"></i>全部角色</div>';
-    }
-    var cnt = 0;
-    for (var i = 0; i < matched.length && cnt < 100; i++) {
-      if (shown.has(matched[i])) continue;
-      html += renderOneChar(matched[i], false);
-      cnt++;
-    }
-    var remaining = matched.length - shown.size;
-    if (remaining > 100) {
-      html +=
-        '<div style="padding:8px;text-align:center;font-size:10px;color:var(--SmartThemeQuoteColor,#666);">仅显示前 100 个，请输入关键词缩小范围</div>';
-    }
-    html += "</div>";
-    return html;
-  }
-
-  function showBindCharacterDropdown($p, pid, onChangeCallback) {
-    const pr = getPrompt(pid);
-    if (!pr) return;
-    var allKeys = [];
-    try {
-      if (typeof SillyTavern !== "undefined" && SillyTavern.characters) {
-        allKeys = SillyTavern.characters
-          .map(function (c) {
-            return c.avatar;
-          })
-          .filter(Boolean);
-      }
-    } catch (e) {}
-    if (allKeys.length === 0)
-      allKeys = Object.keys(getAllCharactersWithStages());
-    if (allKeys.length === 0) {
-      toast("warning", "没有可绑定的角色");
       return;
     }
-    var ipInfo = null;
-    if (pr.groupId) {
-      var g = getGroup(pr.groupId);
-      if (g && isIPGroup(g)) {
-        ipInfo = { name: g.name, keys: getIPGroupCharKeys(g) };
-      }
+    if (action === "clear") {
+      applyAuthor("");
+    } else if (val !== undefined) {
+      applyAuthor(String(val));
     }
-    showModal({
-      title: "绑定角色：" + truncate(pr.title, 20),
-      iconType: "info",
-      icon: "fa-user-tag",
-      modalStyle: "min-width:380px;max-width:90vw;width:420px;",
-      body: function () {
-        var curBindHtml = "";
-        if (pr.character) {
-          var _cbDn = getCharDisplayName(pr.character);
-          var _cbAp = getCharAvatarPathSafe(pr.character);
-          var _cbIcon = _cbAp
-            ? '<img src="' +
-              esc(_cbAp) +
-              '" style="width:20px;height:20px;border-radius:4px;object-fit:cover;vertical-align:middle;margin-right:4px;" onerror="this.style.display=\'none\';this.onerror=null;">'
-            : '<i class="fa-solid fa-user" style="font-size:11px;margin-right:4px;opacity:0.6;"></i>';
-          curBindHtml =
-            '<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:rgba(var(--ms-accent-rgb),0.08);border:1px solid rgba(var(--ms-accent-rgb),0.2);border-radius:6px;margin-bottom:8px;font-size:12px;">' +
-            '<span style="flex:1;">当前绑定：' +
-            _cbIcon +
-            esc(_cbDn) +
-            "</span>" +
-            '<button class="ms-tbtn" id="ms-bind-unbind-btn" style="padding:3px 10px;font-size:11px;color:var(--ms-danger);border-color:var(--ms-danger);"><i class="fa-solid fa-xmark" style="margin-right:3px;"></i>解绑</button>' +
-            "</div>";
-        }
-        return (
-          curBindHtml +
-          '<input type="text" class="ms-modal-search" placeholder="搜索角色名或文件名..." id="ms-bind-char-search">' +
-          '<div id="ms-bind-char-list">' +
-          buildCharPickerListHTML("", allKeys, pr.character, ipInfo) +
-          "</div>"
-        );
-      },
-      buttons: [{ text: "取消", value: null }],
-      cancelValue: null,
-      onShow: function ($overlay, close) {
-        $overlay.find("#ms-bind-char-search").focus();
-        $overlay.on("input", "#ms-bind-char-search", function () {
-          $overlay
-            .find("#ms-bind-char-list")
-            .html(
-              buildCharPickerListHTML(
-                $(this).val(),
-                allKeys,
-                pr.character,
-                ipInfo,
-              ),
-            );
-        });
-        $overlay.on("click", "#ms-bind-unbind-btn", function () {
-          updatePrompt(pid, { character: "" });
-          toast("success", "已解绑");
-          close("done");
-          if (typeof onChangeCallback === "function") onChangeCallback();
-        });
-        $overlay.on("click", ".ms-modal-list-item", function () {
-          var k = $(this).attr("data-target-key");
-          if (!k) return;
-          updatePrompt(pid, { character: k });
-          recordRecentBoundChar(k);
-          toast("success", "已绑定到 " + getCharDisplayName(k));
-          close("done");
-          if (typeof onChangeCallback === "function") onChangeCallback();
-        });
-      },
+    closeActiveDropdown();
+  });
+}
+
+function buildCharPickerListHTML(kw, allKeys, currentKey, ipGroupInfo) {
+  var lkw = (kw || "").trim().toLowerCase();
+  var matched = allKeys.filter(function (k) {
+    if (!lkw) return true;
+    return (
+      getCharDisplayName(k).toLowerCase().indexOf(lkw) >= 0 ||
+      String(k).toLowerCase().indexOf(lkw) >= 0
+    );
+  });
+
+  var ipKeys = [];
+  var ipName = "";
+  if (!lkw && ipGroupInfo && ipGroupInfo.keys && ipGroupInfo.keys.length > 0) {
+    ipKeys = ipGroupInfo.keys.filter(function (k) {
+      return allKeys.indexOf(k) >= 0;
     });
+    ipName = ipGroupInfo.name || "";
   }
 
-  function closeAllSwipes(except) {
-    var $sp = $("#" + PANEL_ID);
-    $sp.find(".ms-swipe-wrap.ms-swiped").each(function () {
-      if (except && this === except[0]) return;
-      $(this)
-        .removeClass("ms-swiped")
-        .find(".ms-swipe-row")
-        .css("transform", "");
-    });
+  if (matched.length === 0 && ipKeys.length === 0) {
+    return '<div style="padding:20px;text-align:center;color:var(--SmartThemeQuoteColor,#666);font-size:12px;">没有匹配的角色</div>';
   }
+
+  function renderOneChar(k, isFromIP) {
+    var dn = getCharDisplayName(k);
+    var fname = String(k).replace(/\.[^.]+$/, "");
+    var ap = getCharAvatarPathSafe(k);
+    var iconHtml = ap
+      ? '<img src="' +
+        esc(ap) +
+        '" loading="lazy" decoding="async" onerror="this.style.display=\'none\';this.onerror=null;">'
+      : '<i class="fa-solid fa-user" style="color:#b48cc8;font-size:12px;"></i>';
+    var isCur = currentKey === k;
+    var extraBg = "";
+    if (isCur) extraBg = "background:rgba(var(--ms-accent-rgb),0.15);";
+    else if (isFromIP) extraBg = "background:rgba(var(--ms-accent-rgb),0.05);";
+    return (
+      '<div class="ms-modal-list-item" data-target-key="' +
+      esc(k) +
+      '" style="' +
+      extraBg +
+      '">' +
+      '<div class="ms-modal-list-icon">' +
+      iconHtml +
+      "</div>" +
+      '<div class="ms-modal-list-info">' +
+      '<div class="ms-modal-list-name">' +
+      esc(dn) +
+      (isCur
+        ? ' <i class="fa-solid fa-check" style="color:var(--ms-accent);font-size:10px;margin-left:4px;"></i>'
+        : "") +
+      "</div>" +
+      '<div class="ms-modal-list-desc">' +
+      esc(fname) +
+      "</div>" +
+      "</div></div>"
+    );
+  }
+
+  var html =
+    '<div class="ms-modal-list" style="max-height:300px;overflow-y:auto;">';
+  var shown = new Set();
+  if (ipKeys.length > 0) {
+    html +=
+      '<div style="font-size:10px;color:var(--ms-accent);padding:6px 8px 4px;font-weight:600;display:flex;align-items:center;gap:4px;"><i class="fa-solid fa-layer-group" style="font-size:9px;"></i>本分组成员（' +
+      esc(ipName) +
+      "）</div>";
+    ipKeys.forEach(function (k) {
+      html += renderOneChar(k, true);
+      shown.add(k);
+    });
+    html +=
+      '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);padding:8px 8px 4px;font-weight:600;border-top:1px solid rgba(255,255,255,0.04);margin-top:4px;display:flex;align-items:center;gap:4px;"><i class="fa-solid fa-list" style="font-size:9px;"></i>全部角色</div>';
+  }
+  var cnt = 0;
+  for (var i = 0; i < matched.length && cnt < 100; i++) {
+    if (shown.has(matched[i])) continue;
+    html += renderOneChar(matched[i], false);
+    cnt++;
+  }
+  var remaining = matched.length - shown.size;
+  if (remaining > 100) {
+    html +=
+      '<div style="padding:8px;text-align:center;font-size:10px;color:var(--SmartThemeQuoteColor,#666);">仅显示前 100 个，请输入关键词缩小范围</div>';
+  }
+  html += "</div>";
+  return html;
+}
+
+function showBindCharacterDropdown($p, pid, onChangeCallback) {
+  const pr = getPrompt(pid);
+  if (!pr) return;
+  var allKeys = [];
+  try {
+    if (typeof SillyTavern !== "undefined" && SillyTavern.characters) {
+      allKeys = SillyTavern.characters
+        .map(function (c) {
+          return c.avatar;
+        })
+        .filter(Boolean);
+    }
+  } catch (e) {}
+  if (allKeys.length === 0) allKeys = Object.keys(getAllCharactersWithStages());
+  if (allKeys.length === 0) {
+    toast("warning", "没有可绑定的角色");
+    return;
+  }
+  var ipInfo = null;
+  if (pr.groupId) {
+    var g = getGroup(pr.groupId);
+    if (g && isIPGroup(g)) {
+      ipInfo = { name: g.name, keys: getIPGroupCharKeys(g) };
+    }
+  }
+  showModal({
+    title: "绑定角色：" + truncate(pr.title, 20),
+    iconType: "info",
+    icon: "fa-user-tag",
+    modalStyle: "min-width:380px;max-width:90vw;width:420px;",
+    body: function () {
+      var curBindHtml = "";
+      if (pr.character) {
+        var _cbDn = getCharDisplayName(pr.character);
+        var _cbAp = getCharAvatarPathSafe(pr.character);
+        var _cbIcon = _cbAp
+          ? '<img src="' +
+            esc(_cbAp) +
+            '" style="width:20px;height:20px;border-radius:4px;object-fit:cover;vertical-align:middle;margin-right:4px;" onerror="this.style.display=\'none\';this.onerror=null;">'
+          : '<i class="fa-solid fa-user" style="font-size:11px;margin-right:4px;opacity:0.6;"></i>';
+        curBindHtml =
+          '<div style="display:flex;align-items:center;gap:6px;padding:6px 10px;background:rgba(var(--ms-accent-rgb),0.08);border:1px solid rgba(var(--ms-accent-rgb),0.2);border-radius:6px;margin-bottom:8px;font-size:12px;">' +
+          '<span style="flex:1;">当前绑定：' +
+          _cbIcon +
+          esc(_cbDn) +
+          "</span>" +
+          '<button class="ms-tbtn" id="ms-bind-unbind-btn" style="padding:3px 10px;font-size:11px;color:var(--ms-danger);border-color:var(--ms-danger);"><i class="fa-solid fa-xmark" style="margin-right:3px;"></i>解绑</button>' +
+          "</div>";
+      }
+      return (
+        curBindHtml +
+        '<input type="text" class="ms-modal-search" placeholder="搜索角色名或文件名..." id="ms-bind-char-search">' +
+        '<div id="ms-bind-char-list">' +
+        buildCharPickerListHTML("", allKeys, pr.character, ipInfo) +
+        "</div>"
+      );
+    },
+    buttons: [{ text: "取消", value: null }],
+    cancelValue: null,
+    onShow: function ($overlay, close) {
+      $overlay.find("#ms-bind-char-search").focus();
+      $overlay.on("input", "#ms-bind-char-search", function () {
+        $overlay
+          .find("#ms-bind-char-list")
+          .html(
+            buildCharPickerListHTML(
+              $(this).val(),
+              allKeys,
+              pr.character,
+              ipInfo,
+            ),
+          );
+      });
+      $overlay.on("click", "#ms-bind-unbind-btn", function () {
+        updatePrompt(pid, { character: "" });
+        toast("success", "已解绑");
+        close("done");
+        if (typeof onChangeCallback === "function") onChangeCallback();
+      });
+      $overlay.on("click", ".ms-modal-list-item", function () {
+        var k = $(this).attr("data-target-key");
+        if (!k) return;
+        updatePrompt(pid, { character: k });
+        recordRecentBoundChar(k);
+        toast("success", "已绑定到 " + getCharDisplayName(k));
+        close("done");
+        if (typeof onChangeCallback === "function") onChangeCallback();
+      });
+    },
+  });
+}
+
+function closeAllSwipes(except) {
+  var $sp = $("#" + PANEL_ID);
+  $sp.find(".ms-swipe-wrap.ms-swiped").each(function () {
+    if (except && this === except[0]) return;
+    $(this).removeClass("ms-swiped").find(".ms-swipe-row").css("transform", "");
+  });
+}
 
   function bindAllEvents() {
     const $p = $("#" + PANEL_ID);
-    $p.find("#ms-body, #ms-toolbar, #ms-footer, #ms-filter-panel").off(".ms").off(".ms-gd");
+    $p.find("#ms-body, #ms-toolbar, #ms-footer, #ms-filter-panel")
+      .off(".ms")
+      .off(".ms-gd");
     if (bindReorderDrag._cleanup) {
       bindReorderDrag._cleanup();
       bindReorderDrag._cleanup = null;
@@ -7443,8 +7622,12 @@
           $wrap.removeClass("ms-swiping");
           var dx =
             (ev && typeof ev.clientX === "number" ? ev.clientX : sx) - sx;
-          var off = startOffset + dx;
-          var open = off < -40;
+          var open;
+          if (startOffset < 0) {
+            open = !(dx > 20);
+          } else {
+            open = dx < -40;
+          }
           closeAllSwipes($wrap);
           if (open) {
             $wrap.addClass("ms-swiped");
@@ -8115,798 +8298,789 @@
     return html;
   }
 
-  function renderList() {
-    const $p = $("#" + PANEL_ID);
-    $p.find("#ms-title").text("小剧场");
-    $p.find("#ms-toolbar").html(
-      buildToolbar({
-        search: true,
-        searchPlaceholder: "搜索标题、内容或作者...",
-        filter: true,
-        select: true,
-        sort: true,
-        random: data.prompts.length > 0,
-        add: true,
-      }),
-    );
-    $p.find("#ms-body").html(buildListBody());
-    $p.find("#ms-footer")
-      .html(selectMode ? buildBatchFooter() : buildListFooter())
-      .show();
-    bindAllEvents();
+function renderList() {
+  const $p = $("#" + PANEL_ID);
+  $p.find("#ms-title").text("小剧场");
+  $p.find("#ms-toolbar").html(
+    buildToolbar({
+      search: true,
+      searchPlaceholder: "搜索标题、内容或作者...",
+      filter: true,
+      select: true,
+      sort: true,
+      random: data.prompts.length > 0,
+      add: true,
+    }),
+  );
+  $p.find("#ms-body").html(buildListBody());
+  $p.find("#ms-footer")
+    .html(selectMode ? buildBatchFooter() : buildListFooter())
+    .show();
+  bindAllEvents();
+}
+
+function renderGroup(v) {
+  const $p = $("#" + PANEL_ID),
+    gid = v.groupId,
+    isU = gid === "_ungrouped";
+  const g = isU ? null : getGroup(gid),
+    title = isU ? "未分组" : g ? g.name : "分组";
+  const list = isU ? getUngroupedPrompts() : getPromptsInGroup(gid);
+  const filtered = sortPrompts(filterPrompts(searchPrompts(list, searchQuery)));
+  const isIP = g && isIPGroup(g);
+  $p.find("#ms-title").text(title);
+  $p.find("#ms-toolbar").html(
+    buildToolbar({
+      back: true,
+      search: true,
+      filter: true,
+      select: true,
+      sort: true,
+      random: list.length > 0,
+      reorder: !isU && list.length > 1,
+      exportGroup: !isU,
+      add: true,
+      addId: "ms-btn-new-in-group",
+    }),
+  );
+
+  var bodyHtml = buildRangeModeHint();
+  var hasAnyCharBind = list.some(function (p) {
+    return p.character && isLocalCharKey(p.character);
+  });
+  var usingPartitioned =
+    hasAnyCharBind &&
+    !searchQuery &&
+    filterState.includeTags.length === 0 &&
+    filterState.excludeTags.length === 0 &&
+    !filterState.onlyCurrentChar;
+
+  if (isIP && !searchQuery) {
+    var memberH =
+      '<div style="padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.04);display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
+    var _memberKeys = getIPGroupCharKeys(g);
+    memberH +=
+      '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);"><i class="fa-solid fa-users" style="margin-right:3px;"></i>成员角色 (' +
+      _memberKeys.length +
+      ")</span>";
+    _memberKeys.forEach(function (k) {
+      var dn = getCharDisplayName(k);
+      var ap = getCharAvatarPathSafe(k);
+      var av = ap
+        ? '<img src="' +
+          esc(ap) +
+          '" style="width:16px;height:16px;border-radius:3px;object-fit:cover;vertical-align:middle;margin-right:3px;" onerror="this.style.display=\'none\';this.onerror=null;">'
+        : '<i class="fa-solid fa-user" style="font-size:10px;margin-right:3px;opacity:0.6;"></i>';
+      memberH +=
+        '<span class="ms-tag-toggle" data-nav-char="' +
+        esc(k) +
+        '" title="点击查看 ' +
+        esc(dn) +
+        ' 的剧场，长按切换到 TA 的聊天档" style="padding:2px 8px;font-size:11px;cursor:pointer;">' +
+        av +
+        esc(dn) +
+        "</span>";
+    });
+    memberH += "</div>";
+    bodyHtml += memberH;
   }
 
-  function renderGroup(v) {
-    const $p = $("#" + PANEL_ID),
-      gid = v.groupId,
-      isU = gid === "_ungrouped";
-    const g = isU ? null : getGroup(gid),
-      title = isU ? "未分组" : g ? g.name : "分组";
-    const list = isU ? getUngroupedPrompts() : getPromptsInGroup(gid);
-    const filtered = sortPrompts(
-      filterPrompts(searchPrompts(list, searchQuery)),
-    );
-    const isIP = g && isIPGroup(g);
-    $p.find("#ms-title").text(title);
-    $p.find("#ms-toolbar").html(
-      buildToolbar({
-        back: true,
-        search: true,
-        filter: true,
-        select: true,
-        sort: true,
-        random: list.length > 0,
-        reorder: !isU && list.length > 1,
-        exportGroup: !isU,
-        add: true,
-        addId: "ms-btn-new-in-group",
-      }),
-    );
-
-    var bodyHtml = buildRangeModeHint();
-    var hasAnyCharBind = list.some(function (p) {
-      return p.character && isLocalCharKey(p.character);
+  if (filtered.length === 0) {
+    bodyHtml +=
+      '<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无内容</div>';
+  } else if (usingPartitioned) {
+    var generalPrompts = filtered.filter(function (p) {
+      return !p.character;
     });
-    var usingPartitioned =
-      hasAnyCharBind &&
-      !searchQuery &&
-      filterState.includeTags.length === 0 &&
-      filterState.excludeTags.length === 0 &&
-      !filterState.onlyCurrentChar;
-
-    if (isIP && !searchQuery) {
-      var memberH =
-        '<div style="padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.04);display:flex;align-items:center;gap:6px;flex-wrap:wrap;">';
-      var _memberKeys = getIPGroupCharKeys(g);
-      memberH +=
-        '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);"><i class="fa-solid fa-users" style="margin-right:3px;"></i>成员角色 (' +
-        _memberKeys.length +
-        ")</span>";
-      _memberKeys.forEach(function (k) {
-        var dn = getCharDisplayName(k);
-        var ap = getCharAvatarPathSafe(k);
-        var av = ap
-          ? '<img src="' +
-            esc(ap) +
-            '" style="width:16px;height:16px;border-radius:3px;object-fit:cover;vertical-align:middle;margin-right:3px;" onerror="this.style.display=\'none\';this.onerror=null;">'
-          : '<i class="fa-solid fa-user" style="font-size:10px;margin-right:3px;opacity:0.6;"></i>';
-        memberH +=
-          '<span class="ms-tag-toggle" data-nav-char="' +
-          esc(k) +
-          '" title="点击查看 ' +
-          esc(dn) +
-          ' 的剧场，长按切换到 TA 的聊天档" style="padding:2px 8px;font-size:11px;cursor:pointer;">' +
-          av +
-          esc(dn) +
-          "</span>";
-      });
-      memberH += "</div>";
-      bodyHtml += memberH;
-    }
-
-    if (filtered.length === 0) {
+    var charPrompts = {};
+    filtered.forEach(function (p) {
+      if (p.character) {
+        if (!charPrompts[p.character]) charPrompts[p.character] = [];
+        charPrompts[p.character].push(p);
+      }
+    });
+    if (generalPrompts.length > 0) {
+      if (!data.settings.generalCollapsed) data.settings.generalCollapsed = {};
+      var _genCollapsed = !!data.settings.generalCollapsed[gid];
+      var _genSid = "ms-general-" + simpleHash(gid || "_");
       bodyHtml +=
-        '<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无内容</div>';
-    } else if (usingPartitioned) {
-      var generalPrompts = filtered.filter(function (p) {
-        return !p.character;
-      });
-      var charPrompts = {};
-      filtered.forEach(function (p) {
-        if (p.character) {
-          if (!charPrompts[p.character]) charPrompts[p.character] = [];
-          charPrompts[p.character].push(p);
-        }
-      });
-      if (generalPrompts.length > 0) {
-        if (!data.settings.generalCollapsed)
-          data.settings.generalCollapsed = {};
-        var _genCollapsed = !!data.settings.generalCollapsed[gid];
-        var _genSid = "ms-general-" + simpleHash(gid || "_");
-        bodyHtml +=
-          '<div class="ms-series-header" data-general-toggle="' +
-          gid +
-          '" data-general-body="' +
-          _genSid +
-          '" style="padding:6px 14px;background:rgba(var(--ms-accent-rgb),0.04);">' +
-          '<i class="fa-solid fa-angle-right ms-series-arrow' +
-          (_genCollapsed ? "" : " open") +
-          '"></i>' +
-          '<i class="fa-solid fa-scroll" style="color:var(--ms-accent);font-size:12px;opacity:0.8;"></i>' +
-          '<span class="ms-series-title" style="font-weight:500;">通用剧场</span>' +
-          '<span class="ms-series-cnt">' +
-          generalPrompts.length +
-          " 条</span></div>" +
-          '<div class="ms-series-body' +
-          (_genCollapsed ? "" : " open") +
-          '" id="' +
-          _genSid +
-          '">' +
-          renderGroupBodyWithSeries(generalPrompts) +
-          "</div>";
-      }
-      var orderedKeys = [];
-      var currentKey2 = getCurrentCharKeySafe();
-      var _userOrder = g ? getCharDisplayOrder(g) : [];
-      var _hasUserOrder =
-        g && Array.isArray(g.charDisplayOrder) && g.charDisplayOrder.length > 0;
-      if (!_hasUserOrder && currentKey2 && charPrompts[currentKey2]) {
-        orderedKeys.push(currentKey2);
-      }
-      _userOrder.forEach(function (k) {
-        if (orderedKeys.indexOf(k) < 0 && charPrompts[k]) orderedKeys.push(k);
-      });
-      Object.keys(charPrompts).forEach(function (k) {
-        if (orderedKeys.indexOf(k) < 0) orderedKeys.push(k);
-      });
-      orderedKeys.forEach(function (k) {
-        var ps = charPrompts[k];
-        var dn = getCharDisplayName(k);
-        var ap = getCharAvatarPathSafe(k);
-        var sid = "ms-charsec-" + simpleHash(k);
-        var avH = ap
-          ? '<img src="' +
-            esc(ap) +
-            '" style="width:16px;height:16px;border-radius:3px;object-fit:cover;" onerror="this.style.display=\'none\';this.onerror=null;">'
-          : '<i class="fa-solid fa-user" style="font-size:11px;opacity:0.6;"></i>';
-        var isCur = k === currentKey2;
-        var cnt2 = ps.length;
-        bodyHtml +=
-          '<div class="ms-series-group">' +
-          '<div class="ms-series-header" data-charsec-id="' +
-          sid +
-          '" style="padding:6px 14px;">' +
-          '<i class="fa-solid fa-angle-right ms-series-arrow' +
-          (isCur ? " open" : "") +
-          '"></i>' +
-          avH +
-          '<span class="ms-series-title" style="font-weight:500;' +
-          (isCur ? "color:var(--ms-accent);" : "") +
-          '">' +
-          esc(dn) +
-          (isCur
-            ? ' <span style="font-size:9px;opacity:0.7;">(当前)</span>'
-            : "") +
-          "</span>" +
-          '<span class="ms-series-cnt">' +
-          cnt2 +
-          " 条</span>" +
-          "</div>" +
-          '<div class="ms-series-body' +
-          (isCur ? " open" : "") +
-          '" id="' +
-          sid +
-          '">' +
-          renderGroupBodyWithSeries(ps) +
-          "</div></div>";
-      });
-    } else {
-      bodyHtml += _applyPagedRender(getGroupBodySeriesBlocks(filtered));
+        '<div class="ms-series-header" data-general-toggle="' +
+        gid +
+        '" data-general-body="' +
+        _genSid +
+        '" style="padding:6px 14px;background:rgba(var(--ms-accent-rgb),0.04);">' +
+        '<i class="fa-solid fa-angle-right ms-series-arrow' +
+        (_genCollapsed ? "" : " open") +
+        '"></i>' +
+        '<i class="fa-solid fa-scroll" style="color:var(--ms-accent);font-size:12px;opacity:0.8;"></i>' +
+        '<span class="ms-series-title" style="font-weight:500;">通用剧场</span>' +
+        '<span class="ms-series-cnt">' +
+        generalPrompts.length +
+        " 条</span></div>" +
+        '<div class="ms-series-body' +
+        (_genCollapsed ? "" : " open") +
+        '" id="' +
+        _genSid +
+        '">' +
+        renderGroupBodyWithSeries(generalPrompts) +
+        "</div>";
     }
+    var orderedKeys = [];
+    var currentKey2 = getCurrentCharKeySafe();
+    var _userOrder = g ? getCharDisplayOrder(g) : [];
+    var _hasUserOrder =
+      g && Array.isArray(g.charDisplayOrder) && g.charDisplayOrder.length > 0;
+    if (!_hasUserOrder && currentKey2 && charPrompts[currentKey2]) {
+      orderedKeys.push(currentKey2);
+    }
+    _userOrder.forEach(function (k) {
+      if (orderedKeys.indexOf(k) < 0 && charPrompts[k]) orderedKeys.push(k);
+    });
+    Object.keys(charPrompts).forEach(function (k) {
+      if (orderedKeys.indexOf(k) < 0) orderedKeys.push(k);
+    });
+    orderedKeys.forEach(function (k) {
+      var ps = charPrompts[k];
+      var dn = getCharDisplayName(k);
+      var ap = getCharAvatarPathSafe(k);
+      var sid = "ms-charsec-" + simpleHash(k);
+      var avH = ap
+        ? '<img src="' +
+          esc(ap) +
+          '" style="width:16px;height:16px;border-radius:3px;object-fit:cover;" onerror="this.style.display=\'none\';this.onerror=null;">'
+        : '<i class="fa-solid fa-user" style="font-size:11px;opacity:0.6;"></i>';
+      var isCur = k === currentKey2;
+      var cnt2 = ps.length;
+      bodyHtml +=
+        '<div class="ms-series-group">' +
+        '<div class="ms-series-header" data-charsec-id="' +
+        sid +
+        '" style="padding:6px 14px;">' +
+        '<i class="fa-solid fa-angle-right ms-series-arrow' +
+        (isCur ? " open" : "") +
+        '"></i>' +
+        avH +
+        '<span class="ms-series-title" style="font-weight:500;' +
+        (isCur ? "color:var(--ms-accent);" : "") +
+        '">' +
+        esc(dn) +
+        (isCur
+          ? ' <span style="font-size:9px;opacity:0.7;">(当前)</span>'
+          : "") +
+        "</span>" +
+        '<span class="ms-series-cnt">' +
+        cnt2 +
+        " 条</span>" +
+        "</div>" +
+        '<div class="ms-series-body' +
+        (isCur ? " open" : "") +
+        '" id="' +
+        sid +
+        '">' +
+        renderGroupBodyWithSeries(ps) +
+        "</div></div>";
+    });
+  } else {
+    bodyHtml += _applyPagedRender(getGroupBodySeriesBlocks(filtered));
+  }
 
-    $p.find("#ms-body").html(bodyHtml);
-    $p.find("#ms-footer")
-      .html(
-        selectMode
-          ? buildBatchFooter()
-          : `<span>${filtered.length}/${list.length} 条${isIP ? " · IP 分组" : ""}</span>` +
-              (!isU
-                ? `<div class="ms-footer-btns"><a data-action="group-settings"><i class="fa-solid fa-gear"></i> 分组设置</a></div>`
-                : ``),
-      )
-      .show();
-    bindAllEvents();
-    $p.find("#ms-toolbar").on("click.ms", "#ms-btn-new-in-group", () =>
-      navigateTo({
-        name: "edit",
-        promptId: null,
-        defaultGroupId: isU ? null : gid,
-      }),
-    );
-    $p.find("#ms-toolbar").on("click.ms", "#ms-btn-export-group", () => {
-      if (!isU && gid) doExportGroup(gid);
-    });
-    $p.find("#ms-toolbar").on("click.ms", "#ms-btn-reorder", () => {
-      if (!isU && gid) navigateTo({ name: "reorder-prompts", groupId: gid });
-    });
-    $p.find("#ms-body").on(
-      "pointerdown.ms",
-      ".ms-tag-toggle[data-nav-char]",
-      function (e) {
-        var $el = $(this);
-        var charKey = $el.data("nav-char");
-        if (!charKey) return;
-        var sx = e.clientX || 0,
-          sy = e.clientY || 0;
-        var timer = setTimeout(function () {
-          timer = null;
-          $el.data("ms-mblp-fired", true);
-          if (navigator.vibrate) navigator.vibrate(30);
-          try {
-            if (typeof SillyTavern !== "undefined" && SillyTavern.characters) {
-              var charIdx = SillyTavern.characters.findIndex(function (c) {
-                return c && c.avatar === charKey;
-              });
-              if (
-                charIdx >= 0 &&
-                typeof SillyTavern.selectCharacterById === "function"
-              ) {
-                if (String(SillyTavern.characterId) === String(charIdx)) {
-                  toast(
-                    "info",
-                    "现在就在「" + getCharDisplayName(charKey) + "」的聊天里哦",
-                  );
-                } else {
-                  SillyTavern.selectCharacterById(charIdx);
-                  toast(
-                    "success",
-                    "已切换到「" + getCharDisplayName(charKey) + "」的聊天",
-                  );
-                }
+  $p.find("#ms-body").html(bodyHtml);
+  $p.find("#ms-footer")
+    .html(
+      selectMode
+        ? buildBatchFooter()
+        : `<span>${filtered.length}/${list.length} 条${isIP ? " · IP 分组" : ""}</span>` +
+            (!isU
+              ? `<div class="ms-footer-btns"><a data-action="group-settings"><i class="fa-solid fa-gear"></i> 分组设置</a></div>`
+              : ``),
+    )
+    .show();
+  bindAllEvents();
+  $p.find("#ms-toolbar").on("click.ms", "#ms-btn-new-in-group", () =>
+    navigateTo({
+      name: "edit",
+      promptId: null,
+      defaultGroupId: isU ? null : gid,
+    }),
+  );
+  $p.find("#ms-toolbar").on("click.ms", "#ms-btn-export-group", () => {
+    if (!isU && gid) doExportGroup(gid);
+  });
+  $p.find("#ms-toolbar").on("click.ms", "#ms-btn-reorder", () => {
+    if (!isU && gid) navigateTo({ name: "reorder-prompts", groupId: gid });
+  });
+  $p.find("#ms-body").on(
+    "pointerdown.ms",
+    ".ms-tag-toggle[data-nav-char]",
+    function (e) {
+      var $el = $(this);
+      var charKey = $el.data("nav-char");
+      if (!charKey) return;
+      var sx = e.clientX || 0,
+        sy = e.clientY || 0;
+      var timer = setTimeout(function () {
+        timer = null;
+        $el.data("ms-mblp-fired", true);
+        if (navigator.vibrate) navigator.vibrate(30);
+        try {
+          if (typeof SillyTavern !== "undefined" && SillyTavern.characters) {
+            var charIdx = SillyTavern.characters.findIndex(function (c) {
+              return c && c.avatar === charKey;
+            });
+            if (
+              charIdx >= 0 &&
+              typeof SillyTavern.selectCharacterById === "function"
+            ) {
+              if (String(SillyTavern.characterId) === String(charIdx)) {
+                toast(
+                  "info",
+                  "现在就在「" + getCharDisplayName(charKey) + "」的聊天里哦",
+                );
               } else {
-                toast("warning", "本地没有这张角色卡");
+                SillyTavern.selectCharacterById(charIdx);
+                toast(
+                  "success",
+                  "已切换到「" + getCharDisplayName(charKey) + "」的聊天",
+                );
               }
             } else {
-              toast("warning", "无法切换角色");
+              toast("warning", "本地没有这张角色卡");
             }
-          } catch (err) {
-            toast("error", "切换失败: " + err.message);
+          } else {
+            toast("warning", "无法切换角色");
           }
-        }, 600);
-        var onMove = function (ev) {
-          if (!timer) return;
-          var dx = (ev.clientX || 0) - sx,
-            dy = (ev.clientY || 0) - sy;
-          if (dx * dx + dy * dy > 100) {
-            clearTimeout(timer);
-            timer = null;
-          }
-        };
-        var onUp = function () {
-          if (timer) {
-            clearTimeout(timer);
-            timer = null;
-          }
-          $p.off("pointermove.ms-mblp pointerup.ms-mblp pointercancel.ms-mblp");
-        };
-        $p.off("pointermove.ms-mblp pointerup.ms-mblp pointercancel.ms-mblp")
-          .on("pointermove.ms-mblp", onMove)
-          .on("pointerup.ms-mblp pointercancel.ms-mblp", onUp);
-      },
-    );
-    $p.find("#ms-body").on("click.ms", "[data-nav-char]", function () {
-      if ($(this).data("ms-mblp-fired")) {
-        $(this).removeData("ms-mblp-fired");
-        return;
-      }
-      navigateTo({ name: "character", charKey: $(this).data("nav-char") });
-    });
-
-    $p.find("#ms-body").on("click.ms", "[data-general-toggle]", function () {
-      var ggid = $(this).data("general-toggle");
-      var bodyId = $(this).data("general-body");
-      $(this).find(".ms-series-arrow").toggleClass("open");
-      $p.find("#" + bodyId).toggleClass("open");
-      if (!data.settings.generalCollapsed) data.settings.generalCollapsed = {};
-      data.settings.generalCollapsed[ggid] = !$p
-        .find("#" + bodyId)
-        .hasClass("open");
-      saveData();
-    });
-
-    $p.find("#ms-body").on("click.ms", "[data-charsec-id]", function () {
-      var sid = $(this).data("charsec-id");
-      $(this).find(".ms-series-arrow").toggleClass("open");
-      $p.find("#" + sid).toggleClass("open");
-    });
-    if (!isU) {
-      $p.find("#ms-footer").on(
-        "click.ms",
-        "[data-action='group-settings']",
-        function () {
-          navigateTo({ name: "group-edit", groupId: gid });
-        },
-      );
-    }
-  }
-
-  function renderStarred() {
-    const $p = $("#" + PANEL_ID),
-      list = sortPrompts(
-        filterPrompts(searchPrompts(getStarredPrompts(), searchQuery)),
-      );
-    $p.find("#ms-title").text("收藏");
-    $p.find("#ms-toolbar").html(
-      buildToolbar({
-        back: true,
-        search: true,
-        filter: true,
-        select: true,
-        sort: true,
-        random: list.length > 0,
-      }),
-    );
-    var _starredHtml = list.length > 0
-      ? _applyPagedRender(getPromptCardBlocks(list, true))
-      : `<div class="ms-empty"><i class="fa-solid fa-star"></i>还没有收藏</div>`;
-    $p.find("#ms-body").html(buildRangeModeHint() + _starredHtml);
-    $p.find("#ms-footer")
-      .html(
-        selectMode ? buildBatchFooter() : `<span>${list.length} 条收藏</span>`,
-      )
-      .show();
-    bindAllEvents();
-  }
-
-  function renderRecent() {
-    const $p = $("#" + PANEL_ID),
-      list = searchPrompts(getRecentPrompts(), searchQuery);
-    $p.find("#ms-title").text("最近使用");
-    $p.find("#ms-toolbar").html(buildToolbar({ back: true, search: true }));
-    var _recentHtml = list.length > 0
-      ? _applyPagedRender(getPromptCardBlocks(list, true))
-      : `<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>还没有记录</div>`;
-    $p.find("#ms-body").html(_recentHtml);
-    $p.find("#ms-footer")
-      .html(
-        `<span>${list.length} 条</span><div class="ms-footer-btns">${list.length > 0 ? '<a data-action="clear-recent"><i class="fa-solid fa-broom"></i> 清空记录</a>' : ""}</div>`,
-      )
-      .show();
-    bindAllEvents();
-    $p.find("#ms-footer").on(
-      "click.ms",
-      "[data-action='clear-recent']",
-      function () {
-        msConfirm("确定清空所有最近使用记录吗？\n\n（不会影响使用次数统计）", {
-          title: "清空最近使用",
-          dangerous: true,
-          okText: "清空",
-        }).then(function (ok) {
-          if (!ok) return;
-          data.prompts.forEach(function (p) {
-            p.lastUsedAt = null;
-          });
-          saveData();
-          toast("success", "已清空");
-          renderRecent();
-        });
-      },
-    );
-  }
-
-  function renderCharacters() {
-    const $p = $("#" + PANEL_ID);
-    $p.find("#ms-title").text("角色专属");
-    $p.find("#ms-toolbar").html(
-      buildToolbar({
-        back: true,
-        search: true,
-        searchPlaceholder: "搜索角色名...",
-      }),
-    );
-    const charMap = getAllCharactersWithStages();
-    const currentKey = getCurrentCharKeySafe();
-    const currentName = currentKey ? getCharDisplayName(currentKey) : null;
-    let keys = Object.keys(charMap);
-    if (searchQuery) {
-      const lq = searchQuery.toLowerCase();
-      keys = keys.filter(function (k) {
-        return getCharDisplayName(k).toLowerCase().indexOf(lq) >= 0;
-      });
-    }
-    keys.sort(function (a, b) {
-      var au = 0,
-        bu = 0;
-      (charMap[a] || []).forEach(function (p) {
-        au += p.usageCount || 0;
-      });
-      (charMap[b] || []).forEach(function (p) {
-        bu += p.usageCount || 0;
-      });
-      if (au !== bu) return bu - au;
-      return getCharDisplayName(a).localeCompare(getCharDisplayName(b));
-    });
-    let html = "";
-    if (currentKey && !searchQuery) {
-      const myList = charMap[currentKey] || [];
-      if (myList.length > 0) {
-        html += `<div class="ms-nav-item" data-nav-char-cur="exists" style="background:rgba(var(--ms-accent-rgb),0.06);"><div class="ms-nav-icon" style="background:rgba(var(--ms-accent-rgb),0.18);color:var(--ms-accent);"><i class="fa-solid fa-user-check"></i></div><div class="ms-nav-info"><div class="ms-nav-title">当前角色：${esc(currentName)}</div><div class="ms-nav-note">查看 ${myList.length} 条专属剧场</div></div><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
-      } else {
-        html += `<div class="ms-nav-item" data-nav-char-cur="empty" style="background:rgba(var(--ms-accent-rgb),0.06);"><div class="ms-nav-icon" style="background:rgba(var(--ms-accent-rgb),0.18);color:var(--ms-accent);"><i class="fa-solid fa-user-plus"></i></div><div class="ms-nav-info"><div class="ms-nav-title">为「${esc(currentName)}」创建专属</div><div class="ms-nav-note">还没有专属剧场，去新建一条？</div></div><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
-      }
-      html += '<div class="ms-divider"></div>';
-    } else if (!currentKey && !searchQuery) {
-      html += `<div style="padding:8px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>当前未打开任何角色卡</div>`;
-    }
-    var _ipGroupsForList = getIPGroups();
-    if (!searchQuery && _ipGroupsForList.length > 0) {
-      html += '<div class="ms-section-label">IP 分组</div>';
-      _ipGroupsForList.forEach(function (cg) {
-        var charsInGroup = getIPGroupCharKeys(cg).filter(function (k) {
-          return charMap[k];
-        });
-        var totalStages = 0;
-        charsInGroup.forEach(function (k) {
-          totalStages += (charMap[k] || []).length;
-        });
-        var avatar = buildGroupAvatarHTML(cg, 32);
-        html +=
-          '<div class="ms-nav-item" data-nav-cg="' +
-          cg.id +
-          '">' +
-          avatar +
-          '<div class="ms-nav-info"><div class="ms-nav-title">' +
-          esc(cg.name) +
-          "</div>" +
-          '<div class="ms-nav-note">' +
-          charsInGroup.length +
-          " 个角色 · " +
-          totalStages +
-          " 条剧场</div></div>" +
-          '<i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>';
-      });
-      html += '<div class="ms-divider"></div>';
-    }
-    var groupedKeys = new Set();
-    _ipGroupsForList.forEach(function (cg) {
-      getIPGroupCharKeys(cg).forEach(function (k) {
-        groupedKeys.add(k);
-      });
-    });
-    var ungroupedKeys = keys.filter(function (k) {
-      return !groupedKeys.has(k);
-    });
-    var hasCharGroups = _ipGroupsForList.length > 0;
-    if (!searchQuery && hasCharGroups && ungroupedKeys.length > 0) {
-      html += '<div class="ms-section-label">未分组角色</div>';
-    }
-    var displayKeys = searchQuery ? keys : hasCharGroups ? ungroupedKeys : keys;
-    if (displayKeys.length === 0 && !hasCharGroups) {
-      if (searchQuery) {
-        html += `<div class="ms-empty"><i class="fa-solid fa-magnifying-glass"></i>没有匹配「${esc(searchQuery)}」的角色</div>`;
-      } else {
-        html += `<div class="ms-empty"><i class="fa-solid fa-user-tag"></i>还没有任何角色专属剧场<br><span style="font-size:11px;opacity:0.6;margin-top:6px;display:block;">在剧场详情页可以绑定角色</span></div>`;
-      }
-    } else {
-      displayKeys.forEach(function (key) {
-        const list = charMap[key];
-        const displayName = getCharDisplayName(key);
-        const avatarPath = getCharAvatarPathSafe(key);
-        let avatarH;
-        if (avatarPath) {
-          avatarH = `<div class="ms-nav-icon" style="padding:0;overflow:hidden;background:rgba(180,140,200,0.12);"><img src="${esc(avatarPath)}" loading="eager" decoding="sync" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';this.onerror=null;"></div>`;
-        } else {
-          avatarH = `<div class="ms-nav-icon" style="background:rgba(180,140,200,0.12);color:#b48cc8;"><i class="fa-solid fa-user"></i></div>`;
+        } catch (err) {
+          toast("error", "切换失败: " + err.message);
         }
-        var totalUse = 0;
-        list.forEach(function (p) {
-          totalUse += p.usageCount || 0;
-        });
-        var nameH = searchQuery
-          ? highlightText(displayName, searchQuery)
-          : esc(displayName);
-        var noteH =
-          totalUse > 0
-            ? `<div class="ms-nav-note">互动 ${totalUse} 次</div>`
-            : "";
-        var fnameTip = String(key).replace(/\.[^.]+$/, "");
-        html += `<div class="ms-nav-item" data-nav-char="${esc(key)}" title="${esc(fnameTip)}">${avatarH}<div class="ms-nav-info"><div class="ms-nav-title">${nameH}</div>${noteH}</div><span class="ms-nav-cnt">${list.length}</span><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
-      });
-    }
-    $p.find("#ms-body").html(html);
-    const totalChars = Object.keys(charMap).length;
-    const totalExclusive = data.prompts.filter(function (p) {
-      return p.character && p.character.trim();
-    }).length;
-    $p.find("#ms-footer")
-      .html(
-        searchQuery
-          ? `<span>找到 ${keys.length} / ${totalChars} 个角色</span>`
-          : `<span>${totalChars} 个角色 · 共 ${totalExclusive} 条专属</span><div class="ms-footer-btns"><a data-action="manage-ipgroups"><i class="fa-solid fa-layer-group"></i> 管理 IP 分组</a></div>`,
-      )
-      .show();
-    bindAllEvents();
-    $p.find("#ms-body").on(
-      "click.ms",
-      "[data-nav-char-cur='exists']",
-      function () {
-        navigateTo({ name: "character", charKey: currentKey });
-      },
-    );
-    $p.find("#ms-body").on(
-      "click.ms",
-      "[data-nav-char-cur='empty']",
-      function () {
-        navigateTo({
-          name: "edit",
-          promptId: null,
-          defaultCharacter: currentKey,
-        });
-      },
-    );
-    $p.find("#ms-body").on("click.ms", "[data-nav-char]", function () {
-      navigateTo({ name: "character", charKey: $(this).data("nav-char") });
-    });
-    $p.find("#ms-body").on("click.ms", "[data-nav-cg]", function () {
-      navigateTo({ name: "group", groupId: $(this).data("nav-cg") });
-    });
-    $p.find("#ms-footer").on(
-      "click.ms",
-      "[data-action='manage-ipgroups']",
-      function () {
-        navigateTo({ name: "groups" });
-      },
-    );
-  }
-
-  function renderCharacter(v) {
-    const $p = $("#" + PANEL_ID);
-    const key = v.charKey || v.charName;
-    const list = getPromptsByCharacter(key);
-    if (list.length === 0) {
-      navigateBack();
+      }, 600);
+      var onMove = function (ev) {
+        if (!timer) return;
+        var dx = (ev.clientX || 0) - sx,
+          dy = (ev.clientY || 0) - sy;
+        if (dx * dx + dy * dy > 100) {
+          clearTimeout(timer);
+          timer = null;
+        }
+      };
+      var onUp = function () {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        $p.off("pointermove.ms-mblp pointerup.ms-mblp pointercancel.ms-mblp");
+      };
+      $p.off("pointermove.ms-mblp pointerup.ms-mblp pointercancel.ms-mblp")
+        .on("pointermove.ms-mblp", onMove)
+        .on("pointerup.ms-mblp pointercancel.ms-mblp", onUp);
+    },
+  );
+  $p.find("#ms-body").on("click.ms", "[data-nav-char]", function () {
+    if ($(this).data("ms-mblp-fired")) {
+      $(this).removeData("ms-mblp-fired");
       return;
     }
-    const filtered = sortPrompts(
-      filterPrompts(searchPrompts(list, searchQuery)),
+    navigateTo({ name: "character", charKey: $(this).data("nav-char") });
+  });
+
+  $p.find("#ms-body").on("click.ms", "[data-general-toggle]", function () {
+    var ggid = $(this).data("general-toggle");
+    var bodyId = $(this).data("general-body");
+    $(this).find(".ms-series-arrow").toggleClass("open");
+    $p.find("#" + bodyId).toggleClass("open");
+    if (!data.settings.generalCollapsed) data.settings.generalCollapsed = {};
+    data.settings.generalCollapsed[ggid] = !$p
+      .find("#" + bodyId)
+      .hasClass("open");
+    saveData();
+  });
+
+  $p.find("#ms-body").on("click.ms", "[data-charsec-id]", function () {
+    var sid = $(this).data("charsec-id");
+    $(this).find(".ms-series-arrow").toggleClass("open");
+    $p.find("#" + sid).toggleClass("open");
+  });
+  if (!isU) {
+    $p.find("#ms-footer").on(
+      "click.ms",
+      "[data-action='group-settings']",
+      function () {
+        navigateTo({ name: "group-edit", groupId: gid });
+      },
     );
-    const displayName = getCharDisplayName(key);
-    var charBd = (data.settings.charBirthdays || {})[key] || "";
-    var charCg = getCharGroupOfChar(key);
-    var isOwnBd = !!((data.settings.ownBirthdays || {})[key] === true);
-    var canEditBd = !charBd || isOwnBd;
-    var isBdToday = isCharBdToday(key);
-    if (isBdToday) markTodayBirthdaysUnlocked();
-    var bdVersions = getDisplayableBdVersions(key);
-    var hasAnyBd = bdVersions.length > 0;
-    var hasShowableBd = bdVersions.some(function (it) {
-      return it.unlocked;
-    });
-    var hasOwnBdVer = bdVersions.some(function (it) {
-      return it.data.isOwn === true;
-    });
-    var canShowPreview = hasShowableBd;
-    var isLockedByDate = hasAnyBd && !hasShowableBd;
-    $p.find("#ms-title").text(displayName);
-    $p.find("#ms-toolbar").html(
-      buildToolbar({
-        back: true,
-        search: true,
-        filter: true,
-        select: true,
-        sort: true,
-        random: list.length > 0,
-        add: true,
-        addId: "ms-btn-new-in-char",
-      }),
+  }
+}
+
+function renderStarred() {
+  const $p = $("#" + PANEL_ID),
+    list = sortPrompts(
+      filterPrompts(searchPrompts(getStarredPrompts(), searchQuery)),
     );
-    var _charHtml = filtered.length > 0
-      ? _applyPagedRender(getGroupBodySeriesBlocks(filtered))
-      : `<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无内容</div>`;
-    $p.find("#ms-body").html(buildRangeModeHint() + _charHtml);
-    var metaParts = [];
-    if (charCg)
-      metaParts.push(
-        '<span style="color:' +
-          charCg.color +
-          ';"><i class="fa-solid fa-layer-group" style="font-size:9px;margin-right:2px;"></i>' +
-          esc(charCg.name) +
-          "</span>",
-      );
-    $p.find("#ms-footer")
-      .html(
-        selectMode
-          ? buildBatchFooter()
-          : "<span>" +
-              filtered.length +
-              "/" +
-              list.length +
-              " 条 · 角色专属" +
-              (metaParts.length ? " · " + metaParts.join(" · ") : "") +
-              '</span><div class="ms-footer-btns">' +
-              (canEditBd
-                ? '<a data-action="char-bd"><i class="fa-solid fa-cake-candles"></i> ' +
-                  (charBd ? "改生日 " + esc(charBd) : "设生日") +
-                  "</a>"
-                : '<span style="color:var(--SmartThemeQuoteColor,#666);font-size:11px;font-style:italic;opacity:0.7;"><i class="fa-solid fa-cake-candles" style="margin-right:3px;font-size:9px;color:#e88;"></i>生日 ' +
-                  esc(charBd) +
-                  " (作者已锁定)</span>") +
-              (canShowPreview
-                ? ' <a data-action="char-bd-preview"><i class="fa-solid fa-eye"></i> 预览祝福</a>'
-                : "") +
-              ' <a data-action="char-bd-msg"><i class="fa-solid fa-envelope-open-text"></i> ' +
-              (hasOwnBdVer ? "改祝福" : hasAnyBd ? "添加祝福" : "写祝福") +
-              "</a>" +
-              (isLockedByDate
-                ? ' <span style="color:var(--SmartThemeQuoteColor,#666);font-size:10px;font-style:italic;opacity:0.7;margin-left:6px;">🎁 生日当天解锁</span>'
-                : "") +
-              "</div>",
-      )
-      .show();
-    bindAllEvents();
-    $p.find("#ms-toolbar").on("click.ms", "#ms-btn-new-in-char", function () {
-      var parentGid = null;
-      if (viewStack.length >= 2) {
-        var parentView = viewStack[viewStack.length - 2];
-        if (
-          parentView &&
-          parentView.name === "group" &&
-          parentView.groupId &&
-          parentView.groupId !== "_ungrouped"
-        ) {
-          var parentG = getGroup(parentView.groupId);
-          if (parentG && isIPGroup(parentG)) {
-            parentGid = parentView.groupId;
-          }
-        }
+  $p.find("#ms-title").text("收藏");
+  $p.find("#ms-toolbar").html(
+    buildToolbar({
+      back: true,
+      search: true,
+      filter: true,
+      select: true,
+      sort: true,
+      random: list.length > 0,
+    }),
+  );
+  var _starredHtml =
+    list.length > 0
+      ? _applyPagedRender(getPromptCardBlocks(list, true))
+      : `<div class="ms-empty"><i class="fa-solid fa-star"></i>还没有收藏</div>`;
+  $p.find("#ms-body").html(buildRangeModeHint() + _starredHtml);
+  $p.find("#ms-footer")
+    .html(
+      selectMode ? buildBatchFooter() : `<span>${list.length} 条收藏</span>`,
+    )
+    .show();
+  bindAllEvents();
+}
+
+function renderRecent() {
+  const $p = $("#" + PANEL_ID),
+    list = searchPrompts(getRecentPrompts(), searchQuery);
+  $p.find("#ms-title").text("最近使用");
+  $p.find("#ms-toolbar").html(buildToolbar({ back: true, search: true }));
+  var _recentHtml =
+    list.length > 0
+      ? _applyPagedRender(getPromptCardBlocks(list, true))
+      : `<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>还没有记录</div>`;
+  $p.find("#ms-body").html(_recentHtml);
+  $p.find("#ms-footer")
+    .html(
+      `<span>${list.length} 条</span><div class="ms-footer-btns">${list.length > 0 ? '<a data-action="clear-recent"><i class="fa-solid fa-broom"></i> 清空记录</a>' : ""}</div>`,
+    )
+    .show();
+  bindAllEvents();
+  $p.find("#ms-footer").on(
+    "click.ms",
+    "[data-action='clear-recent']",
+    function () {
+      msConfirm("确定清空所有最近使用记录吗？\n\n（不会影响使用次数统计）", {
+        title: "清空最近使用",
+        dangerous: true,
+        okText: "清空",
+      }).then(function (ok) {
+        if (!ok) return;
+        data.prompts.forEach(function (p) {
+          p.lastUsedAt = null;
+        });
+        saveData();
+        toast("success", "已清空");
+        renderRecent();
+      });
+    },
+  );
+}
+
+function renderCharacters() {
+  const $p = $("#" + PANEL_ID);
+  $p.find("#ms-title").text("角色专属");
+  $p.find("#ms-toolbar").html(
+    buildToolbar({
+      back: true,
+      search: true,
+      searchPlaceholder: "搜索角色名...",
+    }),
+  );
+  const charMap = getAllCharactersWithStages();
+  const currentKey = getCurrentCharKeySafe();
+  const currentName = currentKey ? getCharDisplayName(currentKey) : null;
+  let keys = Object.keys(charMap);
+  if (searchQuery) {
+    const lq = searchQuery.toLowerCase();
+    keys = keys.filter(function (k) {
+      return getCharDisplayName(k).toLowerCase().indexOf(lq) >= 0;
+    });
+  }
+  keys.sort(function (a, b) {
+    var au = 0,
+      bu = 0;
+    (charMap[a] || []).forEach(function (p) {
+      au += p.usageCount || 0;
+    });
+    (charMap[b] || []).forEach(function (p) {
+      bu += p.usageCount || 0;
+    });
+    if (au !== bu) return bu - au;
+    return getCharDisplayName(a).localeCompare(getCharDisplayName(b));
+  });
+  let html = "";
+  if (currentKey && !searchQuery) {
+    const myList = charMap[currentKey] || [];
+    if (myList.length > 0) {
+      html += `<div class="ms-nav-item" data-nav-char-cur="exists" style="background:rgba(var(--ms-accent-rgb),0.06);"><div class="ms-nav-icon" style="background:rgba(var(--ms-accent-rgb),0.18);color:var(--ms-accent);"><i class="fa-solid fa-user-check"></i></div><div class="ms-nav-info"><div class="ms-nav-title">当前角色：${esc(currentName)}</div><div class="ms-nav-note">查看 ${myList.length} 条专属剧场</div></div><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
+    } else {
+      html += `<div class="ms-nav-item" data-nav-char-cur="empty" style="background:rgba(var(--ms-accent-rgb),0.06);"><div class="ms-nav-icon" style="background:rgba(var(--ms-accent-rgb),0.18);color:var(--ms-accent);"><i class="fa-solid fa-user-plus"></i></div><div class="ms-nav-info"><div class="ms-nav-title">为「${esc(currentName)}」创建专属</div><div class="ms-nav-note">还没有专属剧场，去新建一条？</div></div><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
+    }
+    html += '<div class="ms-divider"></div>';
+  } else if (!currentKey && !searchQuery) {
+    html += `<div style="padding:8px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>当前未打开任何角色卡</div>`;
+  }
+  var _ipGroupsForList = getIPGroups();
+  if (!searchQuery && _ipGroupsForList.length > 0) {
+    html += '<div class="ms-section-label">IP 分组</div>';
+    _ipGroupsForList.forEach(function (cg) {
+      var charsInGroup = getIPGroupCharKeys(cg).filter(function (k) {
+        return charMap[k];
+      });
+      var totalStages = 0;
+      charsInGroup.forEach(function (k) {
+        totalStages += (charMap[k] || []).length;
+      });
+      var avatar = buildGroupAvatarHTML(cg, 32);
+      html +=
+        '<div class="ms-nav-item" data-nav-cg="' +
+        cg.id +
+        '">' +
+        avatar +
+        '<div class="ms-nav-info"><div class="ms-nav-title">' +
+        esc(cg.name) +
+        "</div>" +
+        '<div class="ms-nav-note">' +
+        charsInGroup.length +
+        " 个角色 · " +
+        totalStages +
+        " 条剧场</div></div>" +
+        '<i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>';
+    });
+    html += '<div class="ms-divider"></div>';
+  }
+  var groupedKeys = new Set();
+  _ipGroupsForList.forEach(function (cg) {
+    getIPGroupCharKeys(cg).forEach(function (k) {
+      groupedKeys.add(k);
+    });
+  });
+  var ungroupedKeys = keys.filter(function (k) {
+    return !groupedKeys.has(k);
+  });
+  var hasCharGroups = _ipGroupsForList.length > 0;
+  if (!searchQuery && hasCharGroups && ungroupedKeys.length > 0) {
+    html += '<div class="ms-section-label">未分组角色</div>';
+  }
+  var displayKeys = searchQuery ? keys : hasCharGroups ? ungroupedKeys : keys;
+  if (displayKeys.length === 0 && !hasCharGroups) {
+    if (searchQuery) {
+      html += `<div class="ms-empty"><i class="fa-solid fa-magnifying-glass"></i>没有匹配「${esc(searchQuery)}」的角色</div>`;
+    } else {
+      html += `<div class="ms-empty"><i class="fa-solid fa-user-tag"></i>还没有任何角色专属剧场<br><span style="font-size:11px;opacity:0.6;margin-top:6px;display:block;">在剧场详情页可以绑定角色</span></div>`;
+    }
+  } else {
+    displayKeys.forEach(function (key) {
+      const list = charMap[key];
+      const displayName = getCharDisplayName(key);
+      const avatarPath = getCharAvatarPathSafe(key);
+      let avatarH;
+      if (avatarPath) {
+        avatarH = `<div class="ms-nav-icon" style="padding:0;overflow:hidden;background:rgba(180,140,200,0.12);"><img src="${esc(avatarPath)}" loading="eager" decoding="sync" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';this.onerror=null;"></div>`;
+      } else {
+        avatarH = `<div class="ms-nav-icon" style="background:rgba(180,140,200,0.12);color:#b48cc8;"><i class="fa-solid fa-user"></i></div>`;
       }
+      var totalUse = 0;
+      list.forEach(function (p) {
+        totalUse += p.usageCount || 0;
+      });
+      var nameH = searchQuery
+        ? highlightText(displayName, searchQuery)
+        : esc(displayName);
+      var noteH =
+        totalUse > 0
+          ? `<div class="ms-nav-note">互动 ${totalUse} 次</div>`
+          : "";
+      var fnameTip = String(key).replace(/\.[^.]+$/, "");
+      html += `<div class="ms-nav-item" data-nav-char="${esc(key)}" title="${esc(fnameTip)}">${avatarH}<div class="ms-nav-info"><div class="ms-nav-title">${nameH}</div>${noteH}</div><span class="ms-nav-cnt">${list.length}</span><i class="ms-nav-chevron fa-solid fa-angle-right"></i></div>`;
+    });
+  }
+  $p.find("#ms-body").html(html);
+  const totalChars = Object.keys(charMap).length;
+  const totalExclusive = data.prompts.filter(function (p) {
+    return p.character && p.character.trim();
+  }).length;
+  $p.find("#ms-footer")
+    .html(
+      searchQuery
+        ? `<span>找到 ${keys.length} / ${totalChars} 个角色</span>`
+        : `<span>${totalChars} 个角色 · 共 ${totalExclusive} 条专属</span><div class="ms-footer-btns"><a data-action="manage-ipgroups"><i class="fa-solid fa-layer-group"></i> 管理 IP 分组</a></div>`,
+    )
+    .show();
+  bindAllEvents();
+  $p.find("#ms-body").on(
+    "click.ms",
+    "[data-nav-char-cur='exists']",
+    function () {
+      navigateTo({ name: "character", charKey: currentKey });
+    },
+  );
+  $p.find("#ms-body").on(
+    "click.ms",
+    "[data-nav-char-cur='empty']",
+    function () {
       navigateTo({
         name: "edit",
         promptId: null,
-        defaultCharacter: key,
-        defaultGroupId: parentGid,
+        defaultCharacter: currentKey,
       });
-    });
-    $p.find("#ms-footer").on(
-      "click.ms",
-      "[data-action='char-bd']",
-      function () {
-        var cur = (data.settings.charBirthdays || {})[key] || "";
-        msBirthdayPrompt(
-          "输入「" +
-            displayName +
-            "」的生日\n\n格式 MM-DD（如 03-21），留空可清除",
-          {
-            title: "设置生日",
-            icon: "fa-cake-candles",
-            defaultValue: cur,
-            placeholder: "MM-DD",
-            validate: function (v) {
-              v = (v || "").trim();
-              if (!v) return null;
-              if (!/^\d{2}-\d{2}$/.test(v))
-                return "格式不对，要写成 MM-DD（例如 03-21）";
-              var parts = v.split("-");
-              var m = parseInt(parts[0]),
-                d = parseInt(parts[1]);
-              var maxDays = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-              if (m < 1 || m > 12 || d < 1 || d > maxDays[m - 1])
-                return "日期不合理";
-              return null;
-            },
-          },
-        ).then(function (input) {
-          if (input === null) return;
-          var v = input.trim();
-          var _savedScroll = $p.find("#ms-body").scrollTop();
-          function _restoreScroll() {
-            setTimeout(function () {
-              $p.find("#ms-body").scrollTop(_savedScroll);
-            }, 30);
-          }
-          if (!v) {
-            delete data.settings.charBirthdays[key];
-            if (data.settings.ownBirthdays)
-              delete data.settings.ownBirthdays[key];
-            saveData();
-            toast("success", "已清除生日");
-            renderCharacter(viewStack[viewStack.length - 1]);
-            _restoreScroll();
-            return;
-          }
-          if (!data.settings.charBirthdays) data.settings.charBirthdays = {};
-          if (!data.settings.ownBirthdays) data.settings.ownBirthdays = {};
-          data.settings.charBirthdays[key] = v;
-          data.settings.ownBirthdays[key] = true;
-          saveData();
-          toast("success", "已设置生日: " + v);
-          renderCharacter(viewStack[viewStack.length - 1]);
-          _restoreScroll();
-        });
-      },
-    );
-    $p.find("#ms-footer").on(
-      "click.ms",
-      "[data-action='char-bd-preview']",
-      function () {
-        showBirthdayMessageView(key, displayName);
-      },
-    );
-    $p.find("#ms-footer").on(
-      "click.ms",
-      "[data-action='char-bd-msg']",
-      function () {
-        showBirthdayMessageEditor(key, displayName);
-      },
-    );
-  }
+    },
+  );
+  $p.find("#ms-body").on("click.ms", "[data-nav-char]", function () {
+    navigateTo({ name: "character", charKey: $(this).data("nav-char") });
+  });
+  $p.find("#ms-body").on("click.ms", "[data-nav-cg]", function () {
+    navigateTo({ name: "group", groupId: $(this).data("nav-cg") });
+  });
+  $p.find("#ms-footer").on(
+    "click.ms",
+    "[data-action='manage-ipgroups']",
+    function () {
+      navigateTo({ name: "groups" });
+    },
+  );
+}
 
-  function buildPvChip(iconCls, text, iconColor) {
-    var colorCss = iconColor ? ";color:" + iconColor : "";
-    return (
-      '<span class="ms-pv-chip"><i class="fa-solid ' +
-      iconCls +
-      '" style="font-size:9px' +
-      colorCss +
-      ';"></i>' +
-      esc(text) +
-      "</span>"
-    );
+function renderCharacter(v) {
+  const $p = $("#" + PANEL_ID);
+  const key = v.charKey || v.charName;
+  const list = getPromptsByCharacter(key);
+  if (list.length === 0) {
+    navigateBack();
+    return;
   }
-  function renderPreview(v) {
-    const $p = $("#" + PANEL_ID),
-      pr = getPrompt(v.promptId);
-    if (!pr) {
-      navigateBack();
-      return;
+  const filtered = sortPrompts(filterPrompts(searchPrompts(list, searchQuery)));
+  const displayName = getCharDisplayName(key);
+  var charBd = (data.settings.charBirthdays || {})[key] || "";
+  var charCg = getCharGroupOfChar(key);
+  var isOwnBd = !!((data.settings.ownBirthdays || {})[key] === true);
+  var canEditBd = !charBd || isOwnBd;
+  var isBdToday = isCharBdToday(key);
+  if (isBdToday) markTodayBirthdaysUnlocked();
+  var bdVersions = getDisplayableBdVersions(key);
+  var hasAnyBd = bdVersions.length > 0;
+  var hasShowableBd = bdVersions.some(function (it) {
+    return it.unlocked;
+  });
+  var hasOwnBdVer = bdVersions.some(function (it) {
+    return it.data.isOwn === true;
+  });
+  var canShowPreview = hasShowableBd;
+  var isLockedByDate = hasAnyBd && !hasShowableBd;
+  $p.find("#ms-title").text(displayName);
+  $p.find("#ms-toolbar").html(
+    buildToolbar({
+      back: true,
+      search: true,
+      filter: true,
+      select: true,
+      sort: true,
+      random: list.length > 0,
+      add: true,
+      addId: "ms-btn-new-in-char",
+    }),
+  );
+  var _charHtml =
+    filtered.length > 0
+      ? _applyPagedRender(getGroupBodySeriesBlocks(filtered))
+      : `<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无内容</div>`;
+  $p.find("#ms-body").html(buildRangeModeHint() + _charHtml);
+  var metaParts = [];
+  if (charCg)
+    metaParts.push(
+      '<span style="color:' +
+        charCg.color +
+        ';"><i class="fa-solid fa-layer-group" style="font-size:9px;margin-right:2px;"></i>' +
+        esc(charCg.name) +
+        "</span>",
+    );
+  $p.find("#ms-footer")
+    .html(
+      selectMode
+        ? buildBatchFooter()
+        : "<span>" +
+            filtered.length +
+            "/" +
+            list.length +
+            " 条 · 角色专属" +
+            (metaParts.length ? " · " + metaParts.join(" · ") : "") +
+            '</span><div class="ms-footer-btns">' +
+            (canEditBd
+              ? '<a data-action="char-bd"><i class="fa-solid fa-cake-candles"></i> ' +
+                (charBd ? "改生日 " + esc(charBd) : "设生日") +
+                "</a>"
+              : '<span style="color:var(--SmartThemeQuoteColor,#666);font-size:11px;font-style:italic;opacity:0.7;"><i class="fa-solid fa-cake-candles" style="margin-right:3px;font-size:9px;color:#e88;"></i>生日 ' +
+                esc(charBd) +
+                " (作者已锁定)</span>") +
+            (canShowPreview
+              ? ' <a data-action="char-bd-preview"><i class="fa-solid fa-eye"></i> 预览祝福</a>'
+              : "") +
+            ' <a data-action="char-bd-msg"><i class="fa-solid fa-envelope-open-text"></i> ' +
+            (hasOwnBdVer ? "改祝福" : hasAnyBd ? "添加祝福" : "写祝福") +
+            "</a>" +
+            (isLockedByDate
+              ? ' <span style="color:var(--SmartThemeQuoteColor,#666);font-size:10px;font-style:italic;opacity:0.7;margin-left:6px;">🎁 生日当天解锁</span>'
+              : "") +
+            "</div>",
+    )
+    .show();
+  bindAllEvents();
+  $p.find("#ms-toolbar").on("click.ms", "#ms-btn-new-in-char", function () {
+    var parentGid = null;
+    if (viewStack.length >= 2) {
+      var parentView = viewStack[viewStack.length - 2];
+      if (
+        parentView &&
+        parentView.name === "group" &&
+        parentView.groupId &&
+        parentView.groupId !== "_ungrouped"
+      ) {
+        var parentG = getGroup(parentView.groupId);
+        if (parentG && isIPGroup(parentG)) {
+          parentGid = parentView.groupId;
+        }
+      }
     }
-    const siblingIds = v._siblingIds || [];
-    const currentIdx = siblingIds.indexOf(pr.id);
-    const prevId = currentIdx > 0 ? siblingIds[currentIdx - 1] : null;
-    const nextId =
-      currentIdx >= 0 && currentIdx < siblingIds.length - 1
-        ? siblingIds[currentIdx + 1]
-        : null;
-    const g = pr.groupId ? getGroup(pr.groupId) : null,
-      groupL = g ? g.name : "未分组";
-    var metaChips = buildPvChip(
-      "fa-folder",
-      groupL,
-      g ? g.color : "var(--SmartThemeQuoteColor,#888)",
-    );
-    if (pr.series)
-      metaChips += buildPvChip("fa-layer-group", pr.series, "var(--ms-accent)");
-    if (pr.author) metaChips += buildPvChip("fa-user", pr.author);
-    const starIcon = pr.starred ? "fa-solid" : "fa-regular",
-      starLabel = pr.starred ? "取消收藏" : "收藏",
-      starCls = pr.starred ? " starred" : "";
-    const pinLabel = pr.pinned ? "取消置顶" : "置顶",
-      pinIcon = "fa-solid fa-thumbtack";
-    let tagsH = "";
-    sortTagIds(pr.tags || []).forEach((tid) => {
-      const t = getTag(tid);
-      if (t)
-        tagsH += `<span class="ms-tag-chip" style="background:${t.color};margin-right:4px;">${esc(t.name)}</span>`;
+    navigateTo({
+      name: "edit",
+      promptId: null,
+      defaultCharacter: key,
+      defaultGroupId: parentGid,
     });
-    const stats = countStats(pr.content);
-    const historyCount = (pr.history || []).length;
-    $p.find("#ms-title").text(pr.title);
-    const navPosH =
-      siblingIds.length > 1
-        ? `<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;white-space:nowrap;">${currentIdx + 1}/${siblingIds.length}</span>`
-        : "";
-    const navPrevH =
-      siblingIds.length > 1
-        ? `<button class="ms-hbtn" id="ms-prev-prompt" title="上一条"${prevId ? "" : ' disabled style="opacity:0.2;"'}><i class="fa-solid fa-angle-up"></i></button>`
-        : "";
-    const navNextH =
-      siblingIds.length > 1
-        ? `<button class="ms-hbtn" id="ms-next-prompt" title="下一条"${nextId ? "" : ' disabled style="opacity:0.2;"'}><i class="fa-solid fa-angle-down"></i></button>`
-        : "";
-    $p.find("#ms-toolbar").html(
-      `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><div class="ms-pv-meta">${metaChips}</div>${navPosH}${navPrevH}${navNextH}`,
-    );
-    $p.find("#ms-body").html(`
+  });
+  $p.find("#ms-footer").on("click.ms", "[data-action='char-bd']", function () {
+    var cur = (data.settings.charBirthdays || {})[key] || "";
+    msBirthdayPrompt(
+      "输入「" + displayName + "」的生日\n\n格式 MM-DD（如 03-21），留空可清除",
+      {
+        title: "设置生日",
+        icon: "fa-cake-candles",
+        defaultValue: cur,
+        placeholder: "MM-DD",
+        validate: function (v) {
+          v = (v || "").trim();
+          if (!v) return null;
+          if (!/^\d{2}-\d{2}$/.test(v))
+            return "格式不对，要写成 MM-DD（例如 03-21）";
+          var parts = v.split("-");
+          var m = parseInt(parts[0]),
+            d = parseInt(parts[1]);
+          var maxDays = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+          if (m < 1 || m > 12 || d < 1 || d > maxDays[m - 1])
+            return "日期不合理";
+          return null;
+        },
+      },
+    ).then(function (input) {
+      if (input === null) return;
+      var v = input.trim();
+      var _savedScroll = $p.find("#ms-body").scrollTop();
+      function _restoreScroll() {
+        setTimeout(function () {
+          $p.find("#ms-body").scrollTop(_savedScroll);
+        }, 30);
+      }
+      if (!v) {
+        delete data.settings.charBirthdays[key];
+        if (data.settings.ownBirthdays) delete data.settings.ownBirthdays[key];
+        saveData();
+        toast("success", "已清除生日");
+        renderCharacter(viewStack[viewStack.length - 1]);
+        _restoreScroll();
+        return;
+      }
+      if (!data.settings.charBirthdays) data.settings.charBirthdays = {};
+      if (!data.settings.ownBirthdays) data.settings.ownBirthdays = {};
+      data.settings.charBirthdays[key] = v;
+      data.settings.ownBirthdays[key] = true;
+      saveData();
+      toast("success", "已设置生日: " + v);
+      renderCharacter(viewStack[viewStack.length - 1]);
+      _restoreScroll();
+    });
+  });
+  $p.find("#ms-footer").on(
+    "click.ms",
+    "[data-action='char-bd-preview']",
+    function () {
+      showBirthdayMessageView(key, displayName);
+    },
+  );
+  $p.find("#ms-footer").on(
+    "click.ms",
+    "[data-action='char-bd-msg']",
+    function () {
+      showBirthdayMessageEditor(key, displayName);
+    },
+  );
+}
+
+function buildPvChip(iconCls, text, iconColor) {
+  var colorCss = iconColor ? ";color:" + iconColor : "";
+  return (
+    '<span class="ms-pv-chip"><i class="fa-solid ' +
+    iconCls +
+    '" style="font-size:9px' +
+    colorCss +
+    ';"></i>' +
+    esc(text) +
+    "</span>"
+  );
+}
+function renderPreview(v) {
+  const $p = $("#" + PANEL_ID),
+    pr = getPrompt(v.promptId);
+  if (!pr) {
+    navigateBack();
+    return;
+  }
+  const siblingIds = v._siblingIds || [];
+  const currentIdx = siblingIds.indexOf(pr.id);
+  const prevId = currentIdx > 0 ? siblingIds[currentIdx - 1] : null;
+  const nextId =
+    currentIdx >= 0 && currentIdx < siblingIds.length - 1
+      ? siblingIds[currentIdx + 1]
+      : null;
+  const g = pr.groupId ? getGroup(pr.groupId) : null,
+    groupL = g ? g.name : "未分组";
+  var metaChips = buildPvChip(
+    "fa-folder",
+    groupL,
+    g ? g.color : "var(--SmartThemeQuoteColor,#888)",
+  );
+  if (pr.series)
+    metaChips += buildPvChip("fa-layer-group", pr.series, "var(--ms-accent)");
+  if (pr.author) metaChips += buildPvChip("fa-user", pr.author);
+  const starIcon = pr.starred ? "fa-solid" : "fa-regular",
+    starLabel = pr.starred ? "取消收藏" : "收藏",
+    starCls = pr.starred ? " starred" : "";
+  const pinLabel = pr.pinned ? "取消置顶" : "置顶",
+    pinIcon = "fa-solid fa-thumbtack";
+  let tagsH = "";
+  sortTagIds(pr.tags || []).forEach((tid) => {
+    const t = getTag(tid);
+    if (t)
+      tagsH += `<span class="ms-tag-chip" style="background:${t.color};margin-right:4px;">${esc(t.name)}</span>`;
+  });
+  const stats = countStats(pr.content);
+  const historyCount = (pr.history || []).length;
+  $p.find("#ms-title").text(pr.title);
+  const navPosH =
+    siblingIds.length > 1
+      ? `<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;white-space:nowrap;">${currentIdx + 1}/${siblingIds.length}</span>`
+      : "";
+  const navPrevH =
+    siblingIds.length > 1
+      ? `<button class="ms-hbtn" id="ms-prev-prompt" title="上一条"${prevId ? "" : ' disabled style="opacity:0.2;"'}><i class="fa-solid fa-angle-up"></i></button>`
+      : "";
+  const navNextH =
+    siblingIds.length > 1
+      ? `<button class="ms-hbtn" id="ms-next-prompt" title="下一条"${nextId ? "" : ' disabled style="opacity:0.2;"'}><i class="fa-solid fa-angle-down"></i></button>`
+      : "";
+  $p.find("#ms-toolbar").html(
+    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><div class="ms-pv-meta">${metaChips}</div>${navPosH}${navPrevH}${navNextH}`,
+  );
+  $p.find("#ms-body").html(`
       <div class="ms-preview-actions">
         <button class="ms-pa${starCls}" data-action="star"><i class="${starIcon} fa-star"></i> ${starLabel}</button>
         <button class="ms-pa" data-action="pin"><i class="${pinIcon}"></i> ${pinLabel}</button>
@@ -8932,224 +9106,222 @@
       ${tagsH ? `<div style="padding:6px 14px;">${tagsH}</div>` : ""}
       <div style="padding:2px 14px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);display:flex;justify-content:space-between;align-items:center;"><span>${stats.chars} 字 · ${stats.lines} 行${pr.usageCount ? " · 使用 " + pr.usageCount + " 次" : ""}</span>${pr.updatedAt && pr.updatedAt !== pr.createdAt ? '<span style="opacity:0.7;" title="修改日期"><i class="fa-solid fa-pen-to-square" style="margin-right:2px;font-size:9px;"></i>' + formatDate(pr.updatedAt) + "</span>" : pr.createdAt ? '<span style="opacity:0.7;" title="创建日期"><i class="fa-solid fa-calendar-plus" style="margin-right:2px;font-size:9px;"></i>' + formatDate(pr.createdAt) + "</span>" : ""}</div>
       <div class="ms-preview-content">${renderMd(pr.content)}</div>`);
-    var _isInjected =
-      (data.settings.stageSelectedIds || []).indexOf(pr.id) >= 0;
-    var _injectCount = (data.settings.stageSelectedIds || []).length;
-    var _injectBtnLabel = _isInjected
-      ? '<i class="fa-solid fa-syringe"></i>取消注入' +
-        (_injectCount > 1 ? "(" + _injectCount + ")" : "")
-      : '<i class="fa-solid fa-syringe"></i>选为注入' +
-        (_injectCount > 0 ? "(+" + _injectCount + ")" : "");
-    var _injectBtnCls = _isInjected ? " ms-inject-active" : "";
-    var _injectBtnH = data.settings.stageInjectEnabled
-      ? '<button class="ms-send-btn' +
-        _injectBtnCls +
-        '" data-action="toggle-inject">' +
-        _injectBtnLabel +
-        "</button>"
-      : "";
-    $p.find("#ms-footer")
-      .html(
-        '<div class="ms-preview-send" style="border:none;padding:0;width:100%;gap:4px;">' +
-          '<button class="ms-send-btn" data-action="send-input"><i class="fa-solid fa-right-to-bracket"></i>填入输入框</button>' +
-          _injectBtnH +
-          '<button class="ms-send-btn" data-action="send-gen" style="background:rgba(var(--ms-accent-rgb),0.1);border-color:var(--ms-accent);color:var(--ms-accent);"><i class="fa-solid fa-paper-plane"></i>发送并生成</button>' +
-          "</div>",
-      )
-      .show();
-    bindAllEvents();
-    $p.find("#ms-body").on("click.ms", "[data-action='star']", () => {
-      toggleStar(pr.id);
-      renderPreview(v);
+  var _isInjected = (data.settings.stageSelectedIds || []).indexOf(pr.id) >= 0;
+  var _injectCount = (data.settings.stageSelectedIds || []).length;
+  var _injectBtnLabel = _isInjected
+    ? '<i class="fa-solid fa-syringe"></i>取消注入' +
+      (_injectCount > 1 ? "(" + _injectCount + ")" : "")
+    : '<i class="fa-solid fa-syringe"></i>选为注入' +
+      (_injectCount > 0 ? "(+" + _injectCount + ")" : "");
+  var _injectBtnCls = _isInjected ? " ms-inject-active" : "";
+  var _injectBtnH = data.settings.stageInjectEnabled
+    ? '<button class="ms-send-btn' +
+      _injectBtnCls +
+      '" data-action="toggle-inject">' +
+      _injectBtnLabel +
+      "</button>"
+    : "";
+  $p.find("#ms-footer")
+    .html(
+      '<div class="ms-preview-send" style="border:none;padding:0;width:100%;gap:4px;">' +
+        '<button class="ms-send-btn" data-action="send-input"><i class="fa-solid fa-right-to-bracket"></i>填入输入框</button>' +
+        _injectBtnH +
+        '<button class="ms-send-btn" data-action="send-gen" style="background:rgba(var(--ms-accent-rgb),0.1);border-color:var(--ms-accent);color:var(--ms-accent);"><i class="bi bi-send-fill"></i>发送并生成</button>' +
+        "</div>",
+    )
+    .show();
+  bindAllEvents();
+  $p.find("#ms-body").on("click.ms", "[data-action='star']", () => {
+    toggleStar(pr.id);
+    renderPreview(v);
+  });
+  $p.find("#ms-body").on("click.ms", "[data-action='pin']", () => {
+    togglePin(pr.id);
+    renderPreview(v);
+  });
+  $p.find("#ms-body").on("click.ms", "[data-action='edit']", () =>
+    navigateTo({ name: "edit", promptId: pr.id }),
+  );
+  $p.find("#ms-body").on("click.ms", "[data-action='copy']", () =>
+    copyToClipboard(pr.content)
+      .then(() => toast("success", "已复制"))
+      .catch(() => toast("error", "复制失败")),
+  );
+  $p.find("#ms-body").on("click.ms", "[data-action='duplicate']", () => {
+    duplicatePrompt(pr.id);
+    toast("success", "已创建副本");
+    navigateBack();
+  });
+  $p.find("#ms-body").on("click.ms", "[data-action='quick-new']", () => {
+    navigateTo({
+      name: "edit",
+      promptId: null,
+      defaultGroupId: pr.groupId,
+      defaultSeries: pr.series || "",
+      defaultCharacter: pr.character || "",
     });
-    $p.find("#ms-body").on("click.ms", "[data-action='pin']", () => {
-      togglePin(pr.id);
+  });
+  $p.find("#ms-body").on("click.ms", "[data-action='export-single']", () =>
+    doExportSingle(pr),
+  );
+  $p.find("#ms-body").on("click.ms", "[data-action='bind-char']", () =>
+    showBindCharacterDropdown($p, pr.id, function () {
       renderPreview(v);
-    });
-    $p.find("#ms-body").on("click.ms", "[data-action='edit']", () =>
-      navigateTo({ name: "edit", promptId: pr.id }),
-    );
-    $p.find("#ms-body").on("click.ms", "[data-action='copy']", () =>
-      copyToClipboard(pr.content)
-        .then(() => toast("success", "已复制"))
-        .catch(() => toast("error", "复制失败")),
-    );
-    $p.find("#ms-body").on("click.ms", "[data-action='duplicate']", () => {
-      duplicatePrompt(pr.id);
-      toast("success", "已创建副本");
+    }),
+  );
+  $p.find("#ms-body").on("click.ms", "[data-action='history']", () =>
+    navigateTo({ name: "history", promptId: pr.id }),
+  );
+  $p.find("#ms-body").on("click.ms", "[data-action='delete']", () => {
+    msConfirm(
+      "确定删除「" + truncate(pr.title, 20) + "」吗？\n\n该操作不可撤销",
+      {
+        title: "删除剧场",
+        dangerous: true,
+        okText: "删除",
+      },
+    ).then(function (ok) {
+      if (!ok) return;
+      deletePrompt(pr.id);
       navigateBack();
     });
-    $p.find("#ms-body").on("click.ms", "[data-action='quick-new']", () => {
-      navigateTo({
-        name: "edit",
-        promptId: null,
-        defaultGroupId: pr.groupId,
-        defaultSeries: pr.series || "",
-        defaultCharacter: pr.character || "",
-      });
-    });
-    $p.find("#ms-body").on("click.ms", "[data-action='export-single']", () =>
-      doExportSingle(pr),
-    );
-    $p.find("#ms-body").on("click.ms", "[data-action='bind-char']", () =>
-      showBindCharacterDropdown($p, pr.id, function () {
-        renderPreview(v);
-      }),
-    );
-    $p.find("#ms-body").on("click.ms", "[data-action='history']", () =>
-      navigateTo({ name: "history", promptId: pr.id }),
-    );
-    $p.find("#ms-body").on("click.ms", "[data-action='delete']", () => {
-      msConfirm(
-        "确定删除「" + truncate(pr.title, 20) + "」吗？\n\n该操作不可撤销",
-        {
-          title: "删除剧场",
-          dangerous: true,
-          okText: "删除",
-        },
-      ).then(function (ok) {
-        if (!ok) return;
-        deletePrompt(pr.id);
-        navigateBack();
-      });
-    });
-    $p.find("#ms-footer").on("click.ms", "[data-action='send-input']", () =>
-      sendToInput(pr.id),
-    );
-    $p.find("#ms-footer").on("click.ms", "[data-action='send-gen']", () =>
-      sendAndGenerate(pr.id),
-    );
-    $p.find("#ms-footer").on(
-      "click.ms",
-      "[data-action='toggle-inject']",
-      function () {
-        if (!Array.isArray(data.settings.stageSelectedIds))
-          data.settings.stageSelectedIds = [];
-        var idx = data.settings.stageSelectedIds.indexOf(pr.id);
-        if (idx >= 0) {
-          data.settings.stageSelectedIds.splice(idx, 1);
-        } else {
-          data.settings.stageSelectedIds.push(pr.id);
-        }
-        saveData();
-        updateInjectIndicator();
-        var _isNowInjected = data.settings.stageSelectedIds.indexOf(pr.id) >= 0;
-        var _nowCount = data.settings.stageSelectedIds.length;
-        var $btn = $p.find("[data-action='toggle-inject']");
-        if (_isNowInjected) {
-          $btn
-            .addClass("ms-inject-active")
-            .html(
-              '<i class="fa-solid fa-syringe"></i>取消注入' +
-                (_nowCount > 1 ? "(" + _nowCount + ")" : ""),
-            );
-        } else {
-          $btn
-            .removeClass("ms-inject-active")
-            .html(
-              '<i class="fa-solid fa-syringe"></i>选为注入' +
-                (_nowCount > 0 ? "(+" + _nowCount + ")" : ""),
-            );
-        }
-      },
-    );
-    $p.find("#ms-body").on("change.ms", ".ms-task-cb", function () {
-      var idx = parseInt($(this).data("task-idx"));
-      var isChecked = $(this).is(":checked");
-      var lines = pr.content.split("\n");
-      var taskCount = 0;
-      var inCodeBlock = false;
-      for (var i = 0; i < lines.length; i++) {
-        if (/^\s*```/.test(lines[i])) {
-          inCodeBlock = !inCodeBlock;
-          continue;
-        }
-        if (inCodeBlock) continue;
-        if (/^\s*- \[[ x]\] /.test(lines[i])) {
-          if (taskCount === idx) {
-            if (isChecked) lines[i] = lines[i].replace("- [ ] ", "- [x] ");
-            else lines[i] = lines[i].replace("- [x] ", "- [ ] ");
-            break;
-          }
-          taskCount++;
-        }
-      }
-      pushHistory(pr);
-      var _oldContent = pr.content;
-      pr.content = lines.join("\n");
-      pr.fingerprint = contentFingerprint(pr);
-      pr.updatedAt = Date.now();
-      _invalidateLc(pr);
-      if (typeof _renderMdCache !== "undefined") {
-        _renderMdCache.delete(_oldContent);
+  });
+  $p.find("#ms-footer").on("click.ms", "[data-action='send-input']", () =>
+    sendToInput(pr.id),
+  );
+  $p.find("#ms-footer").on("click.ms", "[data-action='send-gen']", () =>
+    sendAndGenerate(pr.id),
+  );
+  $p.find("#ms-footer").on(
+    "click.ms",
+    "[data-action='toggle-inject']",
+    function () {
+      if (!Array.isArray(data.settings.stageSelectedIds))
+        data.settings.stageSelectedIds = [];
+      var idx = data.settings.stageSelectedIds.indexOf(pr.id);
+      if (idx >= 0) {
+        data.settings.stageSelectedIds.splice(idx, 1);
+      } else {
+        data.settings.stageSelectedIds.push(pr.id);
       }
       saveData();
-      var $li = $(this).closest("li.ms-task");
-      if (isChecked) $li.addClass("ms-task-done");
-      else $li.removeClass("ms-task-done");
+      updateInjectIndicator();
+      var _isNowInjected = data.settings.stageSelectedIds.indexOf(pr.id) >= 0;
+      var _nowCount = data.settings.stageSelectedIds.length;
+      var $btn = $p.find("[data-action='toggle-inject']");
+      if (_isNowInjected) {
+        $btn
+          .addClass("ms-inject-active")
+          .html(
+            '<i class="fa-solid fa-syringe"></i>取消注入' +
+              (_nowCount > 1 ? "(" + _nowCount + ")" : ""),
+          );
+      } else {
+        $btn
+          .removeClass("ms-inject-active")
+          .html(
+            '<i class="fa-solid fa-syringe"></i>选为注入' +
+              (_nowCount > 0 ? "(+" + _nowCount + ")" : ""),
+          );
+      }
+    },
+  );
+  $p.find("#ms-body").on("change.ms", ".ms-task-cb", function () {
+    var idx = parseInt($(this).data("task-idx"));
+    var isChecked = $(this).is(":checked");
+    var lines = pr.content.split("\n");
+    var taskCount = 0;
+    var inCodeBlock = false;
+    for (var i = 0; i < lines.length; i++) {
+      if (/^\s*```/.test(lines[i])) {
+        inCodeBlock = !inCodeBlock;
+        continue;
+      }
+      if (inCodeBlock) continue;
+      if (/^\s*- \[[ x]\] /.test(lines[i])) {
+        if (taskCount === idx) {
+          if (isChecked) lines[i] = lines[i].replace("- [ ] ", "- [x] ");
+          else lines[i] = lines[i].replace("- [x] ", "- [ ] ");
+          break;
+        }
+        taskCount++;
+      }
+    }
+    pushHistory(pr);
+    var _oldContent = pr.content;
+    pr.content = lines.join("\n");
+    pr.fingerprint = contentFingerprint(pr);
+    pr.updatedAt = Date.now();
+    _invalidateLc(pr);
+    if (typeof _renderMdCache !== "undefined") {
+      _renderMdCache.delete(_oldContent);
+    }
+    saveData();
+    var $li = $(this).closest("li.ms-task");
+    if (isChecked) $li.addClass("ms-task-done");
+    else $li.removeClass("ms-task-done");
+  });
+  if (prevId) {
+    $p.find("#ms-toolbar").on("click.ms", "#ms-prev-prompt", function () {
+      viewStack[viewStack.length - 1] = {
+        name: "preview",
+        promptId: prevId,
+        _siblingIds: siblingIds,
+      };
+      renderView();
     });
-    if (prevId) {
-      $p.find("#ms-toolbar").on("click.ms", "#ms-prev-prompt", function () {
+  }
+  if (nextId) {
+    $p.find("#ms-toolbar").on("click.ms", "#ms-next-prompt", function () {
+      viewStack[viewStack.length - 1] = {
+        name: "preview",
+        promptId: nextId,
+        _siblingIds: siblingIds,
+      };
+      renderView();
+    });
+  }
+  $p.off("keydown.ms-preview-nav").on("keydown.ms-preview-nav", function (e) {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+    if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+      if (prevId) {
+        e.preventDefault();
         viewStack[viewStack.length - 1] = {
           name: "preview",
           promptId: prevId,
           _siblingIds: siblingIds,
         };
         renderView();
-      });
-    }
-    if (nextId) {
-      $p.find("#ms-toolbar").on("click.ms", "#ms-next-prompt", function () {
+      }
+    } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+      if (nextId) {
+        e.preventDefault();
         viewStack[viewStack.length - 1] = {
           name: "preview",
           promptId: nextId,
           _siblingIds: siblingIds,
         };
         renderView();
-      });
-    }
-    $p.off("keydown.ms-preview-nav").on("keydown.ms-preview-nav", function (e) {
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")
-        return;
-      if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
-        if (prevId) {
-          e.preventDefault();
-          viewStack[viewStack.length - 1] = {
-            name: "preview",
-            promptId: prevId,
-            _siblingIds: siblingIds,
-          };
-          renderView();
-        }
-      } else if (e.key === "ArrowDown" || e.key === "ArrowRight") {
-        if (nextId) {
-          e.preventDefault();
-          viewStack[viewStack.length - 1] = {
-            name: "preview",
-            promptId: nextId,
-            _siblingIds: siblingIds,
-          };
-          renderView();
-        }
       }
-    });
-  }
-
-  function renderHistory(v) {
-    var pr = getPrompt(v.promptId);
-    if (!pr) {
-      navigateBack();
-      return;
     }
-    var history = pr.history || [];
-    var $p = setupPage("版本历史", "版本历史 · " + esc(truncate(pr.title, 20)));
-    let html = "";
-    if (history.length === 0) {
-      html = `<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>还没有历史版本</div>`;
-    } else {
-      [...history].reverse().forEach((h, ri) => {
-        const idx = history.length - 1 - ri;
-        html += `<div class="ms-history-item" data-hidx="${idx}">
+  });
+}
+
+function renderHistory(v) {
+  var pr = getPrompt(v.promptId);
+  if (!pr) {
+    navigateBack();
+    return;
+  }
+  var history = pr.history || [];
+  var $p = setupPage("版本历史", "版本历史 · " + esc(truncate(pr.title, 20)));
+  let html = "";
+  if (history.length === 0) {
+    html = `<div class="ms-empty"><i class="fa-solid fa-clock-rotate-left"></i>还没有历史版本</div>`;
+  } else {
+    [...history].reverse().forEach((h, ri) => {
+      const idx = history.length - 1 - ri;
+      html += `<div class="ms-history-item" data-hidx="${idx}">
           <div class="ms-history-info">
             <div class="ms-history-title">${esc(h.title || "未命名")}${h.author ? ` · ${esc(h.author)}` : ""}</div>
             <div class="ms-history-date">${formatDate(h.savedAt)}</div>
@@ -9160,197 +9332,193 @@
             <button class="ms-card-qbtn" data-haction="delete" data-hidx="${idx}" title="删除此记录"><i class="fa-solid fa-trash"></i></button>
           </div>
         </div>`;
-      });
-    }
-    $p.find("#ms-body").html(html);
-    $p.find("#ms-footer")
-      .html(
-        `<span>${history.length}/5 条历史</span><div class="ms-footer-btns">${history.length > 0 ? '<a data-action="clear-history"><i class="fa-solid fa-broom"></i> 清空</a>' : ""}</div>`,
-      )
-      .show();
-    bindAllEvents();
-    $p.find("#ms-body").on(
-      "click.ms",
-      "[data-haction='restore']",
-      function (e) {
-        e.stopPropagation();
-        const idx = parseInt($(this).data("hidx"));
-        const h = pr.history[idx];
-        if (!h) return;
-        msConfirm("回退后当前内容会被保存到历史中，确定吗？", {
-          title: "回退到此版本",
-          type: "warning",
-          okText: "回退",
-        }).then(function (ok) {
-          if (!ok) return;
-          pushHistory(pr);
-          pr.history.splice(idx, 1);
-          pr.title = h.title;
-          pr.content = h.content;
-          pr.author = h.author || pr.author;
-          pr.fingerprint = contentFingerprint(pr);
-          saveData();
-          navigateBack();
-        });
-      },
-    );
-    $p.find("#ms-body").on("click.ms", "[data-haction='delete']", function (e) {
-      e.stopPropagation();
-      const idx = parseInt($(this).data("hidx"));
-      msConfirm("确定删除此历史记录？", {
-        title: "删除历史",
+    });
+  }
+  $p.find("#ms-body").html(html);
+  $p.find("#ms-footer")
+    .html(
+      `<span>${history.length}/5 条历史</span><div class="ms-footer-btns">${history.length > 0 ? '<a data-action="clear-history"><i class="fa-solid fa-broom"></i> 清空</a>' : ""}</div>`,
+    )
+    .show();
+  bindAllEvents();
+  $p.find("#ms-body").on("click.ms", "[data-haction='restore']", function (e) {
+    e.stopPropagation();
+    const idx = parseInt($(this).data("hidx"));
+    const h = pr.history[idx];
+    if (!h) return;
+    msConfirm("回退后当前内容会被保存到历史中，确定吗？", {
+      title: "回退到此版本",
+      type: "warning",
+      okText: "回退",
+    }).then(function (ok) {
+      if (!ok) return;
+      pushHistory(pr);
+      pr.history.splice(idx, 1);
+      pr.title = h.title;
+      pr.content = h.content;
+      pr.author = h.author || pr.author;
+      pr.fingerprint = contentFingerprint(pr);
+      saveData();
+      navigateBack();
+    });
+  });
+  $p.find("#ms-body").on("click.ms", "[data-haction='delete']", function (e) {
+    e.stopPropagation();
+    const idx = parseInt($(this).data("hidx"));
+    msConfirm("确定删除此历史记录？", {
+      title: "删除历史",
+      dangerous: true,
+      okText: "删除",
+    }).then(function (ok) {
+      if (!ok) return;
+      pr.history.splice(idx, 1);
+      saveData();
+      renderHistory(v);
+    });
+  });
+  $p.find("#ms-footer").on(
+    "click.ms",
+    "[data-action='clear-history']",
+    function () {
+      msConfirm("确定清空本条剧场的所有版本历史吗？", {
+        title: "清空版本历史",
         dangerous: true,
-        okText: "删除",
+        okText: "清空",
       }).then(function (ok) {
         if (!ok) return;
-        pr.history.splice(idx, 1);
+        pr.history = [];
         saveData();
+        toast("success", "已清空");
         renderHistory(v);
       });
+    },
+  );
+  $p.find("#ms-body").on("click.ms", "[data-haction='diff']", function (e) {
+    e.stopPropagation();
+    var idx = parseInt($(this).data("hidx"));
+    navigateTo({
+      name: "history-diff",
+      promptId: v.promptId,
+      historyIdx: idx,
     });
-    $p.find("#ms-footer").on(
-      "click.ms",
-      "[data-action='clear-history']",
-      function () {
-        msConfirm("确定清空本条剧场的所有版本历史吗？", {
-          title: "清空版本历史",
-          dangerous: true,
-          okText: "清空",
-        }).then(function (ok) {
-          if (!ok) return;
-          pr.history = [];
-          saveData();
-          toast("success", "已清空");
-          renderHistory(v);
-        });
-      },
-    );
-    $p.find("#ms-body").on("click.ms", "[data-haction='diff']", function (e) {
-      e.stopPropagation();
-      var idx = parseInt($(this).data("hidx"));
-      navigateTo({
-        name: "history-diff",
-        promptId: v.promptId,
-        historyIdx: idx,
-      });
-    });
-  }
+  });
+}
 
-  function renderHistoryDiff(v) {
-    var pr = getPrompt(v.promptId);
-    if (!pr) {
-      navigateBack();
-      return;
-    }
-    var h = (pr.history || [])[v.historyIdx];
-    if (!h) {
-      navigateBack();
-      return;
-    }
-    var diff = computeLineDiff(h.content || "", pr.content || "");
-    var addCount = diff.filter(function (d) {
-      return d.type === "add";
-    }).length;
-    var delCount = diff.filter(function (d) {
-      return d.type === "del";
-    }).length;
-    var sameCount = diff.filter(function (d) {
-      return d.type === "same";
-    }).length;
-    var $p = setupPage("版本对比");
-    var metaH = "";
-    if ((h.title || "") !== (pr.title || "")) {
-      metaH +=
-        '<div style="padding:2px 0;font-size:12px;"><span style="opacity:0.5;">标题:</span> <span class="ms-diff-del-text">' +
-        esc(h.title || "未命名") +
-        '</span> <i class="fa-solid fa-arrow-right" style="font-size:9px;opacity:0.4;margin:0 4px;"></i> <span class="ms-diff-add-text">' +
-        esc(pr.title || "未命名") +
-        "</span></div>";
-    }
-    if ((h.author || "") !== (pr.author || "")) {
-      metaH +=
-        '<div style="padding:2px 0;font-size:12px;"><span style="opacity:0.5;">作者:</span> <span class="ms-diff-del-text">' +
-        esc(h.author || "无") +
-        '</span> <i class="fa-solid fa-arrow-right" style="font-size:9px;opacity:0.4;margin:0 4px;"></i> <span class="ms-diff-add-text">' +
-        esc(pr.author || "无") +
-        "</span></div>";
-    }
-    var html =
-      '<div class="ms-diff-header">' +
-      '<div class="ms-diff-label old"><i class="fa-solid fa-clock-rotate-left"></i> 历史版本</div>' +
-      '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#666);">' +
-      formatDate(h.savedAt) +
-      "</div>" +
-      '<i class="fa-solid fa-arrow-right" style="font-size:10px;opacity:0.3;"></i>' +
-      '<div class="ms-diff-label new"><i class="fa-solid fa-file-lines"></i> 当前版本</div>' +
-      "</div>";
-    if (metaH) {
-      html += '<div class="ms-diff-meta">' + metaH + "</div>";
-    }
+function renderHistoryDiff(v) {
+  var pr = getPrompt(v.promptId);
+  if (!pr) {
+    navigateBack();
+    return;
+  }
+  var h = (pr.history || [])[v.historyIdx];
+  if (!h) {
+    navigateBack();
+    return;
+  }
+  var diff = computeLineDiff(h.content || "", pr.content || "");
+  var addCount = diff.filter(function (d) {
+    return d.type === "add";
+  }).length;
+  var delCount = diff.filter(function (d) {
+    return d.type === "del";
+  }).length;
+  var sameCount = diff.filter(function (d) {
+    return d.type === "same";
+  }).length;
+  var $p = setupPage("版本对比");
+  var metaH = "";
+  if ((h.title || "") !== (pr.title || "")) {
+    metaH +=
+      '<div style="padding:2px 0;font-size:12px;"><span style="opacity:0.5;">标题:</span> <span class="ms-diff-del-text">' +
+      esc(h.title || "未命名") +
+      '</span> <i class="fa-solid fa-arrow-right" style="font-size:9px;opacity:0.4;margin:0 4px;"></i> <span class="ms-diff-add-text">' +
+      esc(pr.title || "未命名") +
+      "</span></div>";
+  }
+  if ((h.author || "") !== (pr.author || "")) {
+    metaH +=
+      '<div style="padding:2px 0;font-size:12px;"><span style="opacity:0.5;">作者:</span> <span class="ms-diff-del-text">' +
+      esc(h.author || "无") +
+      '</span> <i class="fa-solid fa-arrow-right" style="font-size:9px;opacity:0.4;margin:0 4px;"></i> <span class="ms-diff-add-text">' +
+      esc(pr.author || "无") +
+      "</span></div>";
+  }
+  var html =
+    '<div class="ms-diff-header">' +
+    '<div class="ms-diff-label old"><i class="fa-solid fa-clock-rotate-left"></i> 历史版本</div>' +
+    '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#666);">' +
+    formatDate(h.savedAt) +
+    "</div>" +
+    '<i class="fa-solid fa-arrow-right" style="font-size:10px;opacity:0.3;"></i>' +
+    '<div class="ms-diff-label new"><i class="fa-solid fa-file-lines"></i> 当前版本</div>' +
+    "</div>";
+  if (metaH) {
+    html += '<div class="ms-diff-meta">' + metaH + "</div>";
+  }
+  html +=
+    '<div class="ms-diff-stats">' +
+    '<span class="ms-diff-stat-add">+ ' +
+    addCount +
+    " 行新增</span>" +
+    '<span class="ms-diff-stat-del">- ' +
+    delCount +
+    " 行删除</span>" +
+    '<span class="ms-diff-stat-same">' +
+    sameCount +
+    " 行不变</span>" +
+    (sameCount > 0
+      ? '<button class="ms-diff-toggle" id="ms-diff-toggle-ctx">只看改动</button>'
+      : "") +
+    "</div>";
+  if (addCount === 0 && delCount === 0) {
     html +=
-      '<div class="ms-diff-stats">' +
-      '<span class="ms-diff-stat-add">+ ' +
-      addCount +
-      " 行新增</span>" +
-      '<span class="ms-diff-stat-del">- ' +
-      delCount +
-      " 行删除</span>" +
-      '<span class="ms-diff-stat-same">' +
-      sameCount +
-      " 行不变</span>" +
-      (sameCount > 0
-        ? '<button class="ms-diff-toggle" id="ms-diff-toggle-ctx">只看改动</button>'
+      '<div class="ms-empty" style="padding:30px 20px;"><i class="fa-solid fa-equals" style="font-size:24px;opacity:0.3;display:block;margin-bottom:10px;"></i>内容完全相同' +
+      (metaH
+        ? '<br><span style="font-size:11px;opacity:0.6;">仅标题或作者有变化</span>'
         : "") +
       "</div>";
-    if (addCount === 0 && delCount === 0) {
+  } else {
+    html += '<div class="ms-diff-body" id="ms-diff-body">';
+    diff.forEach(function (d) {
+      var sign = d.type === "add" ? "+" : d.type === "del" ? "−" : " ";
+      var lineText = d.text !== undefined ? d.text : "";
+      if (lineText === "" && d.type === "same") lineText = " ";
       html +=
-        '<div class="ms-empty" style="padding:30px 20px;"><i class="fa-solid fa-equals" style="font-size:24px;opacity:0.3;display:block;margin-bottom:10px;"></i>内容完全相同' +
-        (metaH
-          ? '<br><span style="font-size:11px;opacity:0.6;">仅标题或作者有变化</span>'
-          : "") +
-        "</div>";
-    } else {
-      html += '<div class="ms-diff-body" id="ms-diff-body">';
-      diff.forEach(function (d) {
-        var sign = d.type === "add" ? "+" : d.type === "del" ? "−" : " ";
-        var lineText = d.text !== undefined ? d.text : "";
-        if (lineText === "" && d.type === "same") lineText = " ";
-        html +=
-          '<div class="ms-diff-line ' +
-          d.type +
-          '"><span class="ms-diff-sign">' +
-          sign +
-          '</span><span class="ms-diff-text">' +
-          esc(lineText || " ") +
-          "</span></div>";
-      });
-      html += "</div>";
-    }
-    $p.find("#ms-body").html(html);
-    $p.find("#ms-footer")
-      .html(
-        "<span>" +
-          diff.length +
-          " 行对比 · " +
-          addCount +
-          " 增 · " +
-          delCount +
-          " 删</span>",
-      )
-      .show();
-    bindAllEvents();
-    var showAll = true;
-    $p.find("#ms-body").on("click.ms", "#ms-diff-toggle-ctx", function () {
-      showAll = !showAll;
-      $(this).text(showAll ? "只看改动" : "显示全部");
-      $(this).toggleClass("active", !showAll);
-      if (showAll) {
-        $p.find("#ms-diff-body").removeClass("ms-diff-changes-only");
-      } else {
-        $p.find("#ms-diff-body").addClass("ms-diff-changes-only");
-      }
+        '<div class="ms-diff-line ' +
+        d.type +
+        '"><span class="ms-diff-sign">' +
+        sign +
+        '</span><span class="ms-diff-text">' +
+        esc(lineText || " ") +
+        "</span></div>";
     });
+    html += "</div>";
   }
+  $p.find("#ms-body").html(html);
+  $p.find("#ms-footer")
+    .html(
+      "<span>" +
+        diff.length +
+        " 行对比 · " +
+        addCount +
+        " 增 · " +
+        delCount +
+        " 删</span>",
+    )
+    .show();
+  bindAllEvents();
+  var showAll = true;
+  $p.find("#ms-body").on("click.ms", "#ms-diff-toggle-ctx", function () {
+    showAll = !showAll;
+    $(this).text(showAll ? "只看改动" : "显示全部");
+    $(this).toggleClass("active", !showAll);
+    if (showAll) {
+      $p.find("#ms-diff-body").removeClass("ms-diff-changes-only");
+    } else {
+      $p.find("#ms-diff-body").addClass("ms-diff-changes-only");
+    }
+  });
+}
 
   function renderEdit(v) {
     if (v.promptId && !getPrompt(v.promptId)) {
@@ -10069,7 +10237,8 @@
           $(this).removeClass("active");
           $(this).find("i").attr("class", "fa-solid fa-expand");
           $(this).attr("title", "专注编辑");
-          if (setupKeyboardAdapt.refresh) setTimeout(setupKeyboardAdapt.refresh, 80);
+          if (setupKeyboardAdapt.refresh)
+            setTimeout(setupKeyboardAdapt.refresh, 80);
         } else {
           $panel.data("ms-focus-saved-pos", {
             left: el.style.getPropertyValue("left"),
@@ -10091,7 +10260,8 @@
           $(this).addClass("active");
           $(this).find("i").attr("class", "fa-solid fa-compress");
           $(this).attr("title", "退出专注");
-          if (setupKeyboardAdapt.refresh) setTimeout(setupKeyboardAdapt.refresh, 80);
+          if (setupKeyboardAdapt.refresh)
+            setTimeout(setupKeyboardAdapt.refresh, 80);
         }
         return;
       }
@@ -11155,7 +11325,8 @@
       if (!isNew && v.groupId) {
         var groupPrompts = getPromptsInGroup(v.groupId);
         var multiPrefixEnabled = g && g.multiPrefixEnabled;
-        var prefixTemplates = (g && Array.isArray(g.prefixTemplates)) ? g.prefixTemplates : [];
+        var prefixTemplates =
+          g && Array.isArray(g.prefixTemplates) ? g.prefixTemplates : [];
         var prefixAssignments = (g && g.prefixAssignments) || {};
         multiPrefixSectionH +=
           '<div class="ms-section-label" style="display:flex;align-items:center;gap:8px;padding:8px 14px 4px;">' +
@@ -11179,7 +11350,11 @@
           multiPrefixSectionH +=
             '<div style="padding:4px 14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
             '<button class="ms-tbtn" id="ms-gedit-add-template" style="font-size:11px;padding:4px 10px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:3px;"></i>添加前缀模板</button>' +
-            '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">' + prefixTemplates.length + ' 个模板，' + groupPrompts.length + ' 条剧场</span>' +
+            '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">' +
+            prefixTemplates.length +
+            " 个模板，" +
+            groupPrompts.length +
+            " 条剧场</span>" +
             "</div>";
           if (prefixTemplates.length === 0) {
             multiPrefixSectionH +=
@@ -11190,27 +11365,50 @@
             prefixTemplates.forEach(function (tpl, tplIdx) {
               var assignedIds = tplToPrompts[tpl.id] || [];
               multiPrefixSectionH +=
-                '<div class="ms-prefix-tpl-item" data-tpl-id="' + tpl.id + '" style="padding:6px 0 10px;border-bottom:1px dashed rgba(255,255,255,0.06);">' +
+                '<div class="ms-prefix-tpl-item" data-tpl-id="' +
+                tpl.id +
+                '" style="padding:6px 0 10px;border-bottom:1px dashed rgba(255,255,255,0.06);">' +
                 '<div style="display:flex;align-items:center;gap:4px;margin-bottom:5px;">' +
-                '<span style="font-size:10px;color:var(--ms-accent);font-weight:600;flex-shrink:0;min-width:28px;">#' + (tplIdx + 1) + '</span>' +
-                '<input type="text" class="ms-prefix-tpl-name" data-tpl-id="' + tpl.id + '" value="' + esc(tpl.name || "未命名模板") + '" placeholder="模板名" style="flex:1;min-width:0;padding:3px 8px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:4px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:12px;outline:none;">' +
-                '<i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-tpl-content-' + tpl.id + '" data-fs-title="编辑模板「' + esc(truncate(tpl.name || "未命名模板", 20)) + '」" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
-                '<i class="fa-solid fa-trash ms-prefix-tpl-del" data-tpl-id="' + tpl.id + '" title="删除模板" style="cursor:pointer;color:var(--ms-danger);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
+                '<span style="font-size:10px;color:var(--ms-accent);font-weight:600;flex-shrink:0;min-width:28px;">#' +
+                (tplIdx + 1) +
+                "</span>" +
+                '<input type="text" class="ms-prefix-tpl-name" data-tpl-id="' +
+                tpl.id +
+                '" value="' +
+                esc(tpl.name || "未命名模板") +
+                '" placeholder="模板名" style="flex:1;min-width:0;padding:3px 8px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:4px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:12px;outline:none;">' +
+                '<i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-tpl-content-' +
+                tpl.id +
+                '" data-fs-title="编辑模板「' +
+                esc(truncate(tpl.name || "未命名模板", 20)) +
+                '」" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
+                '<i class="fa-solid fa-trash ms-prefix-tpl-del" data-tpl-id="' +
+                tpl.id +
+                '" title="删除模板" style="cursor:pointer;color:var(--ms-danger);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
                 "</div>" +
-                '<textarea class="ms-prefix-tpl-content" id="ms-tpl-content-' + tpl.id + '" data-tpl-id="' + tpl.id + '" style="min-height:54px;width:100%;font-family:Consolas,monospace;font-size:11px;line-height:1.5;resize:vertical;box-sizing:border-box;margin-bottom:6px;" placeholder="模板内容，可用 {\u200B{stage}}、{\u200B{stage_title}} 等宏">' +
+                '<textarea class="ms-prefix-tpl-content" id="ms-tpl-content-' +
+                tpl.id +
+                '" data-tpl-id="' +
+                tpl.id +
+                '" style="min-height:54px;width:100%;font-family:Consolas,monospace;font-size:11px;line-height:1.5;resize:vertical;box-sizing:border-box;margin-bottom:6px;" placeholder="模板内容，可用 {\u200B{stage}}、{\u200B{stage_title}} 等宏">' +
                 esc(tpl.content || "") +
                 "</textarea>";
               if (groupPrompts.length === 0) {
-                multiPrefixSectionH += '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;padding-left:32px;">本分组还没有剧场</div>';
+                multiPrefixSectionH +=
+                  '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;padding-left:32px;">本分组还没有剧场</div>';
               } else {
                 multiPrefixSectionH +=
-                  '<button class="ms-tbtn ms-prefix-tpl-config" data-tpl-id="' + tpl.id + '" style="width:100%;text-align:center;font-size:11px;padding:5px 10px;display:flex;align-items:center;justify-content:center;gap:6px;">' +
+                  '<button class="ms-tbtn ms-prefix-tpl-config" data-tpl-id="' +
+                  tpl.id +
+                  '" style="width:100%;text-align:center;font-size:11px;padding:5px 10px;display:flex;align-items:center;justify-content:center;gap:6px;">' +
                   '<i class="fa-solid fa-list-check" style="color:var(--ms-accent);"></i>' +
-                  '<span>配置适用剧场</span>' +
+                  "<span>配置适用剧场</span>" +
                   (assignedIds.length > 0
-                    ? '<span style="font-size:11px;color:var(--ms-accent);font-weight:600;">已选 ' + assignedIds.length + ' 条</span>'
+                    ? '<span style="font-size:11px;color:var(--ms-accent);font-weight:600;">已选 ' +
+                      assignedIds.length +
+                      " 条</span>"
                     : '<span style="font-size:10px;opacity:0.55;">未配置</span>') +
-                  '</button>';
+                  "</button>";
               }
               multiPrefixSectionH += "</div>";
             });
@@ -11269,7 +11467,12 @@
     function _saveGroupEditNow() {
       if (!v.groupId) return false;
       var _curView = currentView();
-      if (!_curView || _curView.name !== "group-edit" || _curView.groupId !== v.groupId) return false;
+      if (
+        !_curView ||
+        _curView.name !== "group-edit" ||
+        _curView.groupId !== v.groupId
+      )
+        return false;
       var _g = getGroup(v.groupId);
       if (!_g) return false;
       var $name = $p.find("#ms-gedit-name");
@@ -11316,27 +11519,35 @@
       }, 350);
     }
     if (isNew) {
-      $p.find("#ms-body").on("input.ms-gd change.ms-gd", "input, textarea, select", function () {
-        groupEditDirty = true;
-      });
+      $p.find("#ms-body").on(
+        "input.ms-gd change.ms-gd",
+        "input, textarea, select",
+        function () {
+          groupEditDirty = true;
+        },
+      );
       $p.find("#ms-body").on(
         "click.ms-gd",
         "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-toggle-charsection, #ms-gedit-add-template, .ms-prefix-tpl-del, .ms-gedit-char-cb",
         function () {
           groupEditDirty = true;
-        }
+        },
       );
     } else {
       $p.find("#ms-body").on("input.ms-gd", "input, textarea", function () {
         _saveGroupEditDebounced();
       });
-      $p.find("#ms-body").on("change.ms-gd", "input, textarea, select", function () {
-        if (_gdSaveTimer) {
-          clearTimeout(_gdSaveTimer);
-          _gdSaveTimer = null;
-        }
-        _saveGroupEditNow();
-      });
+      $p.find("#ms-body").on(
+        "change.ms-gd",
+        "input, textarea, select",
+        function () {
+          if (_gdSaveTimer) {
+            clearTimeout(_gdSaveTimer);
+            _gdSaveTimer = null;
+          }
+          _saveGroupEditNow();
+        },
+      );
       $p.find("#ms-body").on("focusout.ms-gd", "input, textarea", function () {
         if (_gdSaveTimer) {
           clearTimeout(_gdSaveTimer);
@@ -11349,7 +11560,7 @@
         "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-add-template, .ms-prefix-tpl-del, .ms-gedit-char-cb",
         function () {
           setTimeout(_saveGroupEditNow, 0);
-        }
+        },
       );
     }
 
@@ -11400,17 +11611,27 @@
       });
     }
     var editMultiPrefixEnabled = !isNew && g && g.multiPrefixEnabled;
-    var editPrefixTemplates = !isNew && g && Array.isArray(g.prefixTemplates) ? JSON.parse(JSON.stringify(g.prefixTemplates)) : [];
-    var editPrefixAssignments = !isNew && g && g.prefixAssignments ? Object.assign({}, g.prefixAssignments) : {};
+    var editPrefixTemplates =
+      !isNew && g && Array.isArray(g.prefixTemplates)
+        ? JSON.parse(JSON.stringify(g.prefixTemplates))
+        : [];
+    var editPrefixAssignments =
+      !isNew && g && g.prefixAssignments
+        ? Object.assign({}, g.prefixAssignments)
+        : {};
     function _collectMultiPrefixFromUI() {
       $p.find(".ms-prefix-tpl-name").each(function () {
         var tid = $(this).data("tpl-id");
-        var tpl = editPrefixTemplates.find(function (t) { return t.id === tid; });
+        var tpl = editPrefixTemplates.find(function (t) {
+          return t.id === tid;
+        });
         if (tpl) tpl.name = $(this).val();
       });
       $p.find(".ms-prefix-tpl-content").each(function () {
         var tid = $(this).data("tpl-id");
-        var tpl = editPrefixTemplates.find(function (t) { return t.id === tid; });
+        var tpl = editPrefixTemplates.find(function (t) {
+          return t.id === tid;
+        });
         if (tpl) tpl.content = $(this).val();
       });
     }
@@ -11428,10 +11649,14 @@
       $body.html(buildBody());
       $body.scrollTop(sc);
     }
-    $p.find("#ms-body").on("change.ms", "#ms-gedit-multi-prefix-toggle", function () {
-      editMultiPrefixEnabled = $(this).is(":checked");
-      _refreshMultiPrefixUI();
-    });
+    $p.find("#ms-body").on(
+      "change.ms",
+      "#ms-gedit-multi-prefix-toggle",
+      function () {
+        editMultiPrefixEnabled = $(this).is(":checked");
+        _refreshMultiPrefixUI();
+      },
+    );
     $p.find("#ms-body").on("click.ms", "#ms-gedit-add-template", function () {
       _collectMultiPrefixFromUI();
       var newTpl = {
@@ -11444,30 +11669,48 @@
     });
     $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-name", function () {
       var tid = $(this).data("tpl-id");
-      var tpl = editPrefixTemplates.find(function (t) { return t.id === tid; });
+      var tpl = editPrefixTemplates.find(function (t) {
+        return t.id === tid;
+      });
       if (tpl) tpl.name = $(this).val();
     });
     $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-content", function () {
       var tid = $(this).data("tpl-id");
-      var tpl = editPrefixTemplates.find(function (t) { return t.id === tid; });
+      var tpl = editPrefixTemplates.find(function (t) {
+        return t.id === tid;
+      });
       if (tpl) tpl.content = $(this).val();
     });
     $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-del", function () {
       var tid = $(this).data("tpl-id");
-      var tpl = editPrefixTemplates.find(function (t) { return t.id === tid; });
+      var tpl = editPrefixTemplates.find(function (t) {
+        return t.id === tid;
+      });
       if (!tpl) return;
       var usedCount = 0;
       Object.keys(editPrefixAssignments).forEach(function (pid) {
         if (editPrefixAssignments[pid] === tid) usedCount++;
       });
-      var msg = usedCount > 0
-        ? "确定删除模板「" + (tpl.name || "未命名") + "」吗？\n\n有 " + usedCount + " 条剧场分配了这个模板，删除后会自动改用分组默认前缀。"
-        : "确定删除模板「" + (tpl.name || "未命名") + "」吗？";
-      msConfirm(msg, { title: "删除模板", dangerous: true, okText: "删除" }).then(function (ok) {
+      var msg =
+        usedCount > 0
+          ? "确定删除模板「" +
+            (tpl.name || "未命名") +
+            "」吗？\n\n有 " +
+            usedCount +
+            " 条剧场分配了这个模板，删除后会自动改用分组默认前缀。"
+          : "确定删除模板「" + (tpl.name || "未命名") + "」吗？";
+      msConfirm(msg, {
+        title: "删除模板",
+        dangerous: true,
+        okText: "删除",
+      }).then(function (ok) {
         if (!ok) return;
-        editPrefixTemplates = editPrefixTemplates.filter(function (t) { return t.id !== tid; });
+        editPrefixTemplates = editPrefixTemplates.filter(function (t) {
+          return t.id !== tid;
+        });
         Object.keys(editPrefixAssignments).forEach(function (pid) {
-          if (editPrefixAssignments[pid] === tid) delete editPrefixAssignments[pid];
+          if (editPrefixAssignments[pid] === tid)
+            delete editPrefixAssignments[pid];
         });
         _refreshMultiPrefixUI();
       });
@@ -11475,7 +11718,9 @@
     $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-config", function () {
       var tid = $(this).data("tpl-id");
       if (!tid) return;
-      var tpl = editPrefixTemplates.find(function (t) { return t.id === tid; });
+      var tpl = editPrefixTemplates.find(function (t) {
+        return t.id === tid;
+      });
       if (!tpl) return;
       _collectMultiPrefixFromUI();
       var groupPromptsForCfg = getPromptsInGroup(v.groupId);
@@ -11486,8 +11731,10 @@
         var lkw = cfgSearchKw.toLowerCase();
         var filtered = groupPromptsForCfg.filter(function (p) {
           if (!lkw) return true;
-          return (p.title || "").toLowerCase().indexOf(lkw) >= 0 ||
-                 (p.content || "").toLowerCase().indexOf(lkw) >= 0;
+          return (
+            (p.title || "").toLowerCase().indexOf(lkw) >= 0 ||
+            (p.content || "").toLowerCase().indexOf(lkw) >= 0
+          );
         });
         var assignedToThisCount = 0;
         var occupiedByOthersCount = 0;
@@ -11496,26 +11743,52 @@
           else if (workingAssignments[p.id]) occupiedByOthersCount++;
         });
         var html = "";
-        html += '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;line-height:1.6;">';
-        html += '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>';
-        html += '勾选要使用「<strong>' + esc(tpl.name || "未命名") + '</strong>」前缀的剧场。被其他模板占用的会显示灰色，可点击以更改至当前模板。';
+        html +=
+          '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;line-height:1.6;">';
+        html +=
+          '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>';
+        html +=
+          "勾选要使用「<strong>" +
+          esc(tpl.name || "未命名") +
+          "</strong>」前缀的剧场。被其他模板占用的会显示灰色，可点击以更改至当前模板。";
         html += "</div>";
-        html += '<input type="text" class="ms-modal-search" id="ms-tpl-cfg-search" placeholder="搜索剧场..." value="' + esc(cfgSearchKw) + '">';
-        html += '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px;flex-wrap:wrap;">';
-        html += '<span style="color:var(--SmartThemeQuoteColor,#888);flex:1;min-width:0;">共 ' + groupPromptsForCfg.length + ' 条 · 当前模板已选 <strong style="color:var(--ms-accent);">' + assignedToThisCount + '</strong> 条' + (occupiedByOthersCount > 0 ? ' · <span style="color:var(--ms-accent);opacity:0.85;">' + occupiedByOthersCount + ' 条被其他模板占用</span>' : "") + '</span>';
-        html += '<button class="ms-tbtn" data-tpl-cfg-action="select-free" style="font-size:10px;padding:3px 8px;flex-shrink:0;" title="只勾选未被任何模板占用的剧场">勾选空闲</button>';
-        html += '<button class="ms-tbtn" data-tpl-cfg-action="clear" style="font-size:10px;padding:3px 8px;color:var(--ms-danger);border-color:var(--ms-danger);flex-shrink:0;" title="把当前模板下的剧场全部释放">清空</button>';
+        html +=
+          '<input type="text" class="ms-modal-search" id="ms-tpl-cfg-search" placeholder="搜索剧场..." value="' +
+          esc(cfgSearchKw) +
+          '">';
+        html +=
+          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px;flex-wrap:wrap;">';
+        html +=
+          '<span style="color:var(--SmartThemeQuoteColor,#888);flex:1;min-width:0;">共 ' +
+          groupPromptsForCfg.length +
+          ' 条 · 当前模板已选 <strong style="color:var(--ms-accent);">' +
+          assignedToThisCount +
+          "</strong> 条" +
+          (occupiedByOthersCount > 0
+            ? ' · <span style="color:var(--ms-accent);opacity:0.85;">' +
+              occupiedByOthersCount +
+              " 条被其他模板占用</span>"
+            : "") +
+          "</span>";
+        html +=
+          '<button class="ms-tbtn" data-tpl-cfg-action="select-free" style="font-size:10px;padding:3px 8px;flex-shrink:0;" title="只勾选未被任何模板占用的剧场">勾选空闲</button>';
+        html +=
+          '<button class="ms-tbtn" data-tpl-cfg-action="clear" style="font-size:10px;padding:3px 8px;color:var(--ms-danger);border-color:var(--ms-danger);flex-shrink:0;" title="把当前模板下的剧场全部释放">清空</button>';
         html += "</div>";
         if (filtered.length === 0) {
-          html += '<div class="ms-empty" style="padding:20px;font-size:11px;"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的剧场</div>';
+          html +=
+            '<div class="ms-empty" style="padding:20px;font-size:11px;"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的剧场</div>';
         } else {
-          html += '<div id="ms-tpl-cfg-list" style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:3px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;padding:6px;">';
+          html +=
+            '<div id="ms-tpl-cfg-list" style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:3px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;padding:6px;">';
           filtered.forEach(function (p) {
             var assignedTo = workingAssignments[p.id];
             var isAssignedToThis = assignedTo === tid;
             var isAssignedToOther = assignedTo && assignedTo !== tid;
             var otherTpl = isAssignedToOther
-              ? editPrefixTemplates.find(function (t) { return t.id === assignedTo; })
+              ? editPrefixTemplates.find(function (t) {
+                  return t.id === assignedTo;
+                })
               : null;
             var rowBg = isAssignedToThis
               ? "background:rgba(var(--ms-accent-rgb),0.12);"
@@ -11527,20 +11800,40 @@
               : "";
             var noteH = "";
             if (isAssignedToOther && otherTpl) {
-              noteH = '<span style="font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.12);padding:1px 6px;border-radius:3px;flex-shrink:0;" title="点击会更改到当前模板">已属于「' + esc(truncate(otherTpl.name || "未命名", 12)) + '」</span>';
+              noteH =
+                '<span style="font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.12);padding:1px 6px;border-radius:3px;flex-shrink:0;" title="点击会更改到当前模板">已属于「' +
+                esc(truncate(otherTpl.name || "未命名", 12)) +
+                "」</span>";
             }
             var seriesH = "";
             if (p.series && String(p.series).trim()) {
-              seriesH = '<div style="font-size:9px;color:var(--ms-accent);opacity:0.75;display:flex;align-items:center;gap:3px;line-height:1.3;margin-bottom:2px;"><i class="fa-solid fa-layer-group" style="font-size:8px;"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(String(p.series).trim()) + '</span></div>';
+              seriesH =
+                '<div style="font-size:9px;color:var(--ms-accent);opacity:0.75;display:flex;align-items:center;gap:3px;line-height:1.3;margin-bottom:2px;"><i class="fa-solid fa-layer-group" style="font-size:8px;"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+                esc(String(p.series).trim()) +
+                "</span></div>";
             }
-            html += '<div class="ms-tpl-cfg-row" data-pid="' + p.id + '" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;transition:background 0.12s;' + rowBg + '">';
-            html += '<div class="ms-gitem-check" style="' + checkBg + '"><i class="fa-solid fa-check"></i></div>';
+            html +=
+              '<div class="ms-tpl-cfg-row" data-pid="' +
+              p.id +
+              '" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;transition:background 0.12s;' +
+              rowBg +
+              '">';
+            html +=
+              '<div class="ms-gitem-check" style="' +
+              checkBg +
+              '"><i class="fa-solid fa-check"></i></div>';
             html += '<div style="flex:1;min-width:0;overflow:hidden;">';
             html += seriesH;
-            html += '<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--SmartThemeBodyColor,#ddd);">' + esc(p.title || "未命名") + '</div>';
-            html += '</div>';
+            html +=
+              '<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--SmartThemeBodyColor,#ddd);">' +
+              esc(p.title || "未命名") +
+              "</div>";
+            html += "</div>";
             html += noteH;
-            html += '<button class="ms-card-qbtn ms-tpl-cfg-preview" data-pid="' + p.id + '" title="预览剧场内容" style="flex-shrink:0;width:24px;height:24px;font-size:10px;"><i class="fa-solid fa-eye"></i></button>';
+            html +=
+              '<button class="ms-card-qbtn ms-tpl-cfg-preview" data-pid="' +
+              p.id +
+              '" title="预览剧场内容" style="flex-shrink:0;width:24px;height:24px;font-size:10px;"><i class="fa-solid fa-eye"></i></button>';
             html += "</div>";
           });
           html += "</div>";
@@ -11548,13 +11841,14 @@
         return html;
       }
 
-       function refreshTplCfgBody($overlay, keepFocus) {
+      function refreshTplCfgBody($overlay, keepFocus) {
         var $oldInput = $overlay.find("#ms-tpl-cfg-search");
         var caretPos = -1;
         if (keepFocus && $oldInput.is(":focus") && $oldInput[0]) {
           caretPos = $oldInput[0].selectionStart || 0;
         }
-        var $oldList = $overlay.find("#ms-tpl-cfg-list"); var savedScroll = $oldList.length ? $oldList[0].scrollTop : 0;
+        var $oldList = $overlay.find("#ms-tpl-cfg-list");
+        var savedScroll = $oldList.length ? $oldList[0].scrollTop : 0;
         $overlay.find(".ms-modal-body").html(buildTplCfgModalBody());
         var $newList = $overlay.find("#ms-tpl-cfg-list");
         if ($newList.length && savedScroll > 0) {
@@ -11564,7 +11858,9 @@
           var $newInput = $overlay.find("#ms-tpl-cfg-search");
           if ($newInput.length) {
             $newInput.focus();
-            try { $newInput[0].setSelectionRange(caretPos, caretPos); } catch (e) {}
+            try {
+              $newInput[0].setSelectionRange(caretPos, caretPos);
+            } catch (e) {}
           }
         }
       }
@@ -11605,9 +11901,15 @@
               title: "预览：" + truncate(pp.title || "未命名", 24),
               iconType: "info",
               icon: "fa-eye",
-              modalStyle: "min-width:340px;max-width:92vw;width:480px;max-height:80vh;",
-              body: '<div class="ms-preview-content" style="padding:0;font-size:13px;">' + renderMd(pp.content || "") + '</div>',
-              buttons: [{ text: "关闭", cls: "primary", primary: true, value: true }],
+              modalStyle:
+                "min-width:340px;max-width:92vw;width:480px;max-height:80vh;",
+              body:
+                '<div class="ms-preview-content" style="padding:0;font-size:13px;">' +
+                renderMd(pp.content || "") +
+                "</div>",
+              buttons: [
+                { text: "关闭", cls: "primary", primary: true, value: true },
+              ],
             });
           });
           $overlay.on("click", ".ms-tpl-cfg-row", function () {
@@ -11620,14 +11922,18 @@
             }
             refreshTplCfgBody($overlay, false);
           });
-          $overlay.on("click", '[data-tpl-cfg-action="select-free"]', function () {
-            groupPromptsForCfg.forEach(function (p) {
-              if (!workingAssignments[p.id]) {
-                workingAssignments[p.id] = tid;
-              }
-            });
-            refreshTplCfgBody($overlay, false);
-          });
+          $overlay.on(
+            "click",
+            '[data-tpl-cfg-action="select-free"]',
+            function () {
+              groupPromptsForCfg.forEach(function (p) {
+                if (!workingAssignments[p.id]) {
+                  workingAssignments[p.id] = tid;
+                }
+              });
+              refreshTplCfgBody($overlay, false);
+            },
+          );
           $overlay.on("click", '[data-tpl-cfg-action="clear"]', function () {
             groupPromptsForCfg.forEach(function (p) {
               if (workingAssignments[p.id] === tid) {
@@ -11646,7 +11952,10 @@
       else delete editPrefixAssignments[pid];
       var tid = val;
       var $row = $(this).closest(".ms-prefix-assign-item");
-      $row.css("background", val ? "rgba(var(--ms-accent-rgb),0.06)" : "rgba(255,255,255,0.02)");
+      $row.css(
+        "background",
+        val ? "rgba(var(--ms-accent-rgb),0.06)" : "rgba(255,255,255,0.02)",
+      );
       var $tplList = $p.find("#ms-gedit-template-list");
       if ($tplList.length) {
         editPrefixTemplates.forEach(function (tpl) {
@@ -11654,11 +11963,23 @@
           Object.keys(editPrefixAssignments).forEach(function (ppid) {
             if (editPrefixAssignments[ppid] === tpl.id) usedCount++;
           });
-          var $badge = $tplList.find('.ms-prefix-tpl-item[data-tpl-id="' + tpl.id + '"] span').first();
+          var $badge = $tplList
+            .find('.ms-prefix-tpl-item[data-tpl-id="' + tpl.id + '"] span')
+            .first();
           if ($badge.length) {
             $badge.text(usedCount > 0 ? "已用 " + usedCount : "未使用");
-            $badge.css("color", usedCount > 0 ? "var(--ms-accent)" : "var(--SmartThemeQuoteColor,#666)");
-            $badge.css("background", "rgba(var(--ms-accent-rgb)," + (usedCount > 0 ? "0.12" : "0.04") + ")");
+            $badge.css(
+              "color",
+              usedCount > 0
+                ? "var(--ms-accent)"
+                : "var(--SmartThemeQuoteColor,#666)",
+            );
+            $badge.css(
+              "background",
+              "rgba(var(--ms-accent-rgb)," +
+                (usedCount > 0 ? "0.12" : "0.04") +
+                ")",
+            );
           }
         });
       }
@@ -15994,9 +16315,11 @@
         .map(function (g) {
           var sortedAssignments = {};
           if (g.prefixAssignments && typeof g.prefixAssignments === "object") {
-            Object.keys(g.prefixAssignments).sort().forEach(function (k) {
-              sortedAssignments[k] = g.prefixAssignments[k];
-            });
+            Object.keys(g.prefixAssignments)
+              .sort()
+              .forEach(function (k) {
+                sortedAssignments[k] = g.prefixAssignments[k];
+              });
           }
           return {
             id: g.id,
@@ -16007,9 +16330,15 @@
             stagePrefix: g.stagePrefix || "",
             multiStagePrefix: g.multiStagePrefix || "",
             multiPrefixEnabled: g.multiPrefixEnabled === true,
-            prefixTemplates: Array.isArray(g.prefixTemplates) ? g.prefixTemplates.map(function (t) {
-              return { id: t.id || "", name: t.name || "", content: t.content || "" };
-            }) : [],
+            prefixTemplates: Array.isArray(g.prefixTemplates)
+              ? g.prefixTemplates.map(function (t) {
+                  return {
+                    id: t.id || "",
+                    name: t.name || "",
+                    content: t.content || "",
+                  };
+                })
+              : [],
             prefixAssignments: sortedAssignments,
           };
         })
@@ -16026,10 +16355,15 @@
       charGroups: (imported.charGroups || [])
         .map(function (cg) {
           var sortedAssignments = {};
-          if (cg.prefixAssignments && typeof cg.prefixAssignments === "object") {
-            Object.keys(cg.prefixAssignments).sort().forEach(function (k) {
-              sortedAssignments[k] = cg.prefixAssignments[k];
-            });
+          if (
+            cg.prefixAssignments &&
+            typeof cg.prefixAssignments === "object"
+          ) {
+            Object.keys(cg.prefixAssignments)
+              .sort()
+              .forEach(function (k) {
+                sortedAssignments[k] = cg.prefixAssignments[k];
+              });
           }
           return {
             name: cg.name || "",
@@ -16044,9 +16378,15 @@
             charKeys: (cg.charKeys || []).slice().sort(),
             charDisplayOrder: (cg.charDisplayOrder || []).slice(),
             multiPrefixEnabled: cg.multiPrefixEnabled === true,
-            prefixTemplates: Array.isArray(cg.prefixTemplates) ? cg.prefixTemplates.map(function (t) {
-              return { id: t.id || "", name: t.name || "", content: t.content || "" };
-            }) : [],
+            prefixTemplates: Array.isArray(cg.prefixTemplates)
+              ? cg.prefixTemplates.map(function (t) {
+                  return {
+                    id: t.id || "",
+                    name: t.name || "",
+                    content: t.content || "",
+                  };
+                })
+              : [],
             prefixAssignments: sortedAssignments,
           };
         })
@@ -16134,10 +16474,16 @@
             if (g.defaultAuthor !== undefined)
               ex.defaultAuthor = g.defaultAuthor;
             if (g.stagePrefix !== undefined) ex.stagePrefix = g.stagePrefix;
-            if (g.multiStagePrefix !== undefined) ex.multiStagePrefix = g.multiStagePrefix;
-            if (g.multiPrefixEnabled !== undefined) ex.multiPrefixEnabled = g.multiPrefixEnabled === true;
-            if (Array.isArray(g.prefixTemplates)) ex.prefixTemplates = JSON.parse(JSON.stringify(g.prefixTemplates));
-            if (g.prefixAssignments && typeof g.prefixAssignments === "object") ex.prefixAssignments = Object.assign({}, g.prefixAssignments);
+            if (g.multiStagePrefix !== undefined)
+              ex.multiStagePrefix = g.multiStagePrefix;
+            if (g.multiPrefixEnabled !== undefined)
+              ex.multiPrefixEnabled = g.multiPrefixEnabled === true;
+            if (Array.isArray(g.prefixTemplates))
+              ex.prefixTemplates = JSON.parse(
+                JSON.stringify(g.prefixTemplates),
+              );
+            if (g.prefixAssignments && typeof g.prefixAssignments === "object")
+              ex.prefixAssignments = Object.assign({}, g.prefixAssignments);
           }
         } else {
           var ng = Object.assign({}, g, { id: uid() });
@@ -16290,9 +16636,17 @@
             if (icg.multiPrefixEnabled !== undefined)
               existing.multiPrefixEnabled = icg.multiPrefixEnabled === true;
             if (Array.isArray(icg.prefixTemplates))
-              existing.prefixTemplates = JSON.parse(JSON.stringify(icg.prefixTemplates));
-            if (icg.prefixAssignments && typeof icg.prefixAssignments === "object")
-              existing.prefixAssignments = Object.assign({}, icg.prefixAssignments);
+              existing.prefixTemplates = JSON.parse(
+                JSON.stringify(icg.prefixTemplates),
+              );
+            if (
+              icg.prefixAssignments &&
+              typeof icg.prefixAssignments === "object"
+            )
+              existing.prefixAssignments = Object.assign(
+                {},
+                icg.prefixAssignments,
+              );
           }
           if (
             Array.isArray(icg.charDisplayOrder) &&
@@ -16426,7 +16780,10 @@
         if (!localGroup || !srcAssign || typeof srcAssign !== "object") return;
         if (!localGroup.prefixAssignments) localGroup.prefixAssignments = {};
         Object.keys(srcAssign).forEach(function (oldPid) {
-          if (localGroup.prefixAssignments[oldPid] !== undefined && !_expIdToLocal[oldPid]) {
+          if (
+            localGroup.prefixAssignments[oldPid] !== undefined &&
+            !_expIdToLocal[oldPid]
+          ) {
             delete localGroup.prefixAssignments[oldPid];
           }
           var newPid = _expIdToLocal[oldPid];
@@ -16435,14 +16792,20 @@
       }
       (ig || []).forEach(function (impG) {
         if (!impG || !impG.prefixAssignments) return;
-        var localG = data.groups.find(function (g) { return g.name === impG.name; });
+        var localG = data.groups.find(function (g) {
+          return g.name === impG.name;
+        });
         _remapAssign(localG, impG.prefixAssignments);
       });
-      (Array.isArray(imported.charGroups) ? imported.charGroups : []).forEach(function (icg) {
-        if (!icg || !icg.prefixAssignments) return;
-        var localG = data.groups.find(function (g) { return g.name === icg.name; });
-        _remapAssign(localG, icg.prefixAssignments);
-      });
+      (Array.isArray(imported.charGroups) ? imported.charGroups : []).forEach(
+        function (icg) {
+          if (!icg || !icg.prefixAssignments) return;
+          var localG = data.groups.find(function (g) {
+            return g.name === icg.name;
+          });
+          _remapAssign(localG, icg.prefixAssignments);
+        },
+      );
     })();
     _invalidateCharGroupCache();
     saveData();
@@ -20339,8 +20702,14 @@
         Math.min(vv.width || 0, vv.height || 0) <= 900;
 
       if (isFull && isMobileLike) {
-        var viewW = Math.round(vv.width || window.innerWidth || document.documentElement.clientWidth);
-        var viewH = Math.round(vv.height || window.innerHeight || document.documentElement.clientHeight);
+        var viewW = Math.round(
+          vv.width || window.innerWidth || document.documentElement.clientWidth,
+        );
+        var viewH = Math.round(
+          vv.height ||
+            window.innerHeight ||
+            document.documentElement.clientHeight,
+        );
         var viewLeft = Math.round(vv.offsetLeft || 0);
         var viewTop = Math.round(vv.offsetTop || 0);
 
@@ -20877,7 +21246,8 @@
               data.settings.randomInject.enabled
             ) {
               if (data.settings.randomInject.multiEnabled) {
-                var rcount = parseInt(data.settings.randomInject.multiCount) || 2;
+                var rcount =
+                  parseInt(data.settings.randomInject.multiCount) || 2;
                 var rps = getRandomStagePrompts(rcount);
                 if (rps.length > 0) {
                   rps.forEach(function (rp) {
