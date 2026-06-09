@@ -1433,6 +1433,86 @@ function applyUICustomization() {
     }
   }
 }
+
+function getThemeInputCandidates(doc) {
+  var selectors = [
+    ".drawer-content .text_pole",
+    ".drawer-content textarea:not(#send_textarea)",
+    ".drawer-content input[type='number']",
+    ".drawer-content select",
+    ".text_pole",
+    "textarea:not(#send_textarea)",
+    "input[type='number']",
+    "select",
+    "input:not([type='file' i], [type='image' i], [type='checkbox' i], [type='radio' i], [type='range' i])",
+    "#send_textarea",
+  ];
+  for (var i = 0; i < selectors.length; i++) {
+    try {
+      var nodes = doc.querySelectorAll(selectors[i]);
+      for (var j = 0; j < nodes.length; j++) {
+        var el = nodes[j];
+        if (!el) continue;
+        try {
+          if (el.closest && el.closest("#" + PANEL_ID)) continue;
+        } catch (e) {}
+        return el;
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+function readControlStyle(win, el) {
+  if (!win || !el) return null;
+  var cs = win.getComputedStyle(el);
+  if (!cs) return null;
+  var bg = "";
+  if (cs.backgroundImage && cs.backgroundImage !== "none") {
+    bg = cs.background;
+  } else if (
+    cs.backgroundColor &&
+    cs.backgroundColor !== "rgba(0, 0, 0, 0)" &&
+    cs.backgroundColor !== "transparent"
+  ) {
+    bg = cs.backgroundColor;
+  } else {
+    bg = cs.background;
+  }
+  var borderStyle = cs.borderTopStyle || "solid";
+  var border = [
+    cs.borderTopWidth || "1px",
+    borderStyle === "none" ? "solid" : borderStyle,
+    cs.borderTopColor || "var(--SmartThemeBorderColor,#444)",
+  ].join(" ");
+  var radius = [
+    cs.borderTopLeftRadius,
+    cs.borderTopRightRadius,
+    cs.borderBottomRightRadius,
+    cs.borderBottomLeftRadius,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return {
+    background: bg || "",
+    border: border,
+    radius: radius || cs.borderRadius || "",
+    shadow: cs.boxShadow || "none",
+    color: cs.color || "",
+  };
+}
+
+function clearThemeInputStyleVars($p) {
+  [
+    "--ms-themed-input-bg",
+    "--ms-themed-input-border",
+    "--ms-themed-input-radius",
+    "--ms-themed-input-shadow",
+  ].forEach(function (name) {
+    $p[0].style.removeProperty(name);
+  });
+}
+
 function syncThemeColors() {
   const $p = $("#" + PANEL_ID);
   if (!$p.length) return;
@@ -1441,11 +1521,12 @@ function syncThemeColors() {
     _tbcName && data.settings.themeBindings
       ? data.settings.themeBindings[_tbcName]
       : null;
+  var hasBoundText = !!(_tbc && _tbc.textColor);
   if (_tbc && _tbc.textColor) {
     $p[0].style.setProperty("--ms-themed-input-color", _tbc.textColor);
-    return;
+  } else {
+    $p[0].style.removeProperty("--ms-themed-input-color");
   }
-  $p[0].style.removeProperty("--ms-themed-input-color");
   try {
     let parentDoc = null;
     let parentWin = null;
@@ -1457,29 +1538,28 @@ function syncThemeColors() {
     } catch (e) {}
     const doc = parentDoc || document;
     const win = parentWin || window;
-    var inputColor = "";
-    var selects = doc.querySelectorAll(".drawer-content select");
-    for (var i = 0; i < selects.length; i++) {
-      var cs = win.getComputedStyle(selects[i]);
-      if (cs.color) {
-        inputColor = cs.color;
-        break;
+    var sample = getThemeInputCandidates(doc);
+    var style = readControlStyle(win, sample);
+    if (style) {
+      if (style.background)
+        $p[0].style.setProperty("--ms-themed-input-bg", style.background);
+      if (style.border)
+        $p[0].style.setProperty("--ms-themed-input-border", style.border);
+      if (style.radius)
+        $p[0].style.setProperty("--ms-themed-input-radius", style.radius);
+      $p[0].style.setProperty(
+        "--ms-themed-input-shadow",
+        style.shadow || "none",
+      );
+      if (!hasBoundText && style.color) {
+        $p[0].style.setProperty("--ms-themed-input-color", style.color);
       }
+    } else {
+      clearThemeInputStyleVars($p);
     }
-    if (!inputColor) {
-      var textPoles = doc.querySelectorAll(".text_pole");
-      for (var j = 0; j < textPoles.length; j++) {
-        var cs2 = win.getComputedStyle(textPoles[j]);
-        if (cs2.color) {
-          inputColor = cs2.color;
-          break;
-        }
-      }
-    }
-    if (inputColor) {
-      $p[0].style.setProperty("--ms-themed-input-color", inputColor);
-    }
-  } catch (e) {}
+  } catch (e) {
+    clearThemeInputStyleVars($p);
+  }
 }
 
 function closeActiveDropdown() {

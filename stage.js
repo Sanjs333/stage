@@ -1439,6 +1439,86 @@ function applyUICustomization() {
     }
   }
 }
+
+function getThemeInputCandidates(doc) {
+  var selectors = [
+    ".drawer-content .text_pole",
+    ".drawer-content textarea:not(#send_textarea)",
+    ".drawer-content input[type='number']",
+    ".drawer-content select",
+    ".text_pole",
+    "textarea:not(#send_textarea)",
+    "input[type='number']",
+    "select",
+    "input:not([type='file' i], [type='image' i], [type='checkbox' i], [type='radio' i], [type='range' i])",
+    "#send_textarea",
+  ];
+  for (var i = 0; i < selectors.length; i++) {
+    try {
+      var nodes = doc.querySelectorAll(selectors[i]);
+      for (var j = 0; j < nodes.length; j++) {
+        var el = nodes[j];
+        if (!el) continue;
+        try {
+          if (el.closest && el.closest("#" + PANEL_ID)) continue;
+        } catch (e) {}
+        return el;
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+function readControlStyle(win, el) {
+  if (!win || !el) return null;
+  var cs = win.getComputedStyle(el);
+  if (!cs) return null;
+  var bg = "";
+  if (cs.backgroundImage && cs.backgroundImage !== "none") {
+    bg = cs.background;
+  } else if (
+    cs.backgroundColor &&
+    cs.backgroundColor !== "rgba(0, 0, 0, 0)" &&
+    cs.backgroundColor !== "transparent"
+  ) {
+    bg = cs.backgroundColor;
+  } else {
+    bg = cs.background;
+  }
+  var borderStyle = cs.borderTopStyle || "solid";
+  var border = [
+    cs.borderTopWidth || "1px",
+    borderStyle === "none" ? "solid" : borderStyle,
+    cs.borderTopColor || "var(--SmartThemeBorderColor,#444)",
+  ].join(" ");
+  var radius = [
+    cs.borderTopLeftRadius,
+    cs.borderTopRightRadius,
+    cs.borderBottomRightRadius,
+    cs.borderBottomLeftRadius,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return {
+    background: bg || "",
+    border: border,
+    radius: radius || cs.borderRadius || "",
+    shadow: cs.boxShadow || "none",
+    color: cs.color || "",
+  };
+}
+
+function clearThemeInputStyleVars($p) {
+  [
+    "--ms-themed-input-bg",
+    "--ms-themed-input-border",
+    "--ms-themed-input-radius",
+    "--ms-themed-input-shadow",
+  ].forEach(function (name) {
+    $p[0].style.removeProperty(name);
+  });
+}
+
 function syncThemeColors() {
   const $p = $("#" + PANEL_ID);
   if (!$p.length) return;
@@ -1447,11 +1527,12 @@ function syncThemeColors() {
     _tbcName && data.settings.themeBindings
       ? data.settings.themeBindings[_tbcName]
       : null;
+  var hasBoundText = !!(_tbc && _tbc.textColor);
   if (_tbc && _tbc.textColor) {
     $p[0].style.setProperty("--ms-themed-input-color", _tbc.textColor);
-    return;
+  } else {
+    $p[0].style.removeProperty("--ms-themed-input-color");
   }
-  $p[0].style.removeProperty("--ms-themed-input-color");
   try {
     let parentDoc = null;
     let parentWin = null;
@@ -1463,29 +1544,28 @@ function syncThemeColors() {
     } catch (e) {}
     const doc = parentDoc || document;
     const win = parentWin || window;
-    var inputColor = "";
-    var selects = doc.querySelectorAll(".drawer-content select");
-    for (var i = 0; i < selects.length; i++) {
-      var cs = win.getComputedStyle(selects[i]);
-      if (cs.color) {
-        inputColor = cs.color;
-        break;
+    var sample = getThemeInputCandidates(doc);
+    var style = readControlStyle(win, sample);
+    if (style) {
+      if (style.background)
+        $p[0].style.setProperty("--ms-themed-input-bg", style.background);
+      if (style.border)
+        $p[0].style.setProperty("--ms-themed-input-border", style.border);
+      if (style.radius)
+        $p[0].style.setProperty("--ms-themed-input-radius", style.radius);
+      $p[0].style.setProperty(
+        "--ms-themed-input-shadow",
+        style.shadow || "none",
+      );
+      if (!hasBoundText && style.color) {
+        $p[0].style.setProperty("--ms-themed-input-color", style.color);
       }
+    } else {
+      clearThemeInputStyleVars($p);
     }
-    if (!inputColor) {
-      var textPoles = doc.querySelectorAll(".text_pole");
-      for (var j = 0; j < textPoles.length; j++) {
-        var cs2 = win.getComputedStyle(textPoles[j]);
-        if (cs2.color) {
-          inputColor = cs2.color;
-          break;
-        }
-      }
-    }
-    if (inputColor) {
-      $p[0].style.setProperty("--ms-themed-input-color", inputColor);
-    }
-  } catch (e) {}
+  } catch (e) {
+    clearThemeInputStyleVars($p);
+  }
 }
 
 function closeActiveDropdown() {
@@ -5451,7 +5531,7 @@ function getCSS() {
 .ms-hbtn{width:26px;height:26px;border:none;background:transparent;color:var(--SmartThemeBodyColor,#aaa);cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:13px;flex-shrink:0;padding:0;transition:background 0.15s;}
 .ms-hbtn:hover{background:rgba(255,255,255,0.08);}
 .ms-toolbar{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid var(--SmartThemeBorderColor,#333);flex-shrink:0;flex-wrap:wrap;}
-.ms-search{flex:1;min-width:100px;padding:6px 10px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:8px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:13px;font-family:inherit;outline:none;}
+.ms-search{flex:1;min-width:100px;padding:6px 10px;background:var(--ms-themed-input-bg,var(--SmartThemeBlurTintColor,#222))!important;border:var(--ms-themed-input-border,1px solid var(--SmartThemeBorderColor,#444))!important;border-radius:var(--ms-themed-input-radius,8px)!important;box-shadow:var(--ms-themed-input-shadow,none)!important;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc))!important;font-size:13px;font-family:inherit;outline:none;}
 .ms-search:focus{border-color:var(--SmartThemeQuoteColor,#666);}
 .ms-toolbar-actions{display:flex;gap:4px;margin-left:auto;flex-shrink:0;}
 .ms-tbtn{padding:5px 10px;border:1px solid var(--SmartThemeBorderColor,#444);background:transparent;color:var(--SmartThemeBodyColor,#aaa);border-radius:8px;cursor:pointer;font-size:12px;font-family:inherit;white-space:nowrap;transition:background 0.15s,color 0.15s;box-sizing:border-box;}
@@ -5609,7 +5689,7 @@ function getCSS() {
 .ms-form-row{display:flex;gap:8px;flex-shrink:0;flex-wrap:wrap;}
 .ms-field{display:flex;flex-direction:column;gap:3px;}
 .ms-field label{font-size:12px;color:var(--SmartThemeQuoteColor,#888);font-weight:500;}
-.ms-field input,.ms-field select,.ms-field textarea{padding:7px 10px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:8px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:13px;font-family:inherit;outline:none;width:100%;box-sizing:border-box;}
+.ms-field input,.ms-field select,.ms-field textarea{padding:7px 10px;background:var(--ms-themed-input-bg,var(--SmartThemeBlurTintColor,#222))!important;border:var(--ms-themed-input-border,1px solid var(--SmartThemeBorderColor,#444))!important;border-radius:var(--ms-themed-input-radius,8px)!important;box-shadow:var(--ms-themed-input-shadow,none)!important;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc))!important;font-size:13px;font-family:inherit;outline:none;width:100%;box-sizing:border-box;}
 .ms-field input,.ms-field select{height:33px;}
 .ms-field input:focus,.ms-field select:focus,.ms-field textarea:focus{border-color:var(--SmartThemeQuoteColor,#777);}
 .ms-field textarea{min-height:180px;max-height:60vh;resize:vertical;line-height:1.6;border-radius:0 0 8px 8px;overflow-y:auto;width:100%!important;max-width:none!important;margin:0!important;box-sizing:border-box!important;}
@@ -5814,7 +5894,7 @@ function getCSS() {
 .ms-series-body{display:none;border-left:2px solid rgba(var(--ms-accent-rgb),0.2);margin-left:14px;}
 .ms-series-body.open{display:block;}
 .ms-find-bar{display:flex;align-items:center;gap:4px;padding:4px 6px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-bottom:none;flex-shrink:0;flex-wrap:wrap;}
-.ms-find-input{flex:1;padding:4px 8px;background:rgba(255,255,255,0.05);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:4px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:12px;font-family:inherit;outline:none;min-width:60px;}
+.ms-find-input{flex:1;padding:4px 8px;background:var(--ms-themed-input-bg,rgba(255,255,255,0.05))!important;border:var(--ms-themed-input-border,1px solid var(--SmartThemeBorderColor,#444))!important;border-radius:var(--ms-themed-input-radius,4px)!important;box-shadow:var(--ms-themed-input-shadow,none)!important;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc))!important;font-size:12px;font-family:inherit;outline:none;min-width:60px;}
 .ms-find-input:focus{border-color:var(--SmartThemeQuoteColor,#666);}
 .ms-find-count{font-size:11px;color:var(--SmartThemeQuoteColor,#888);white-space:nowrap;min-width:32px;text-align:center;flex-shrink:0;}
 .ms-find-count.no-match{color:var(--ms-danger);}
@@ -5824,7 +5904,7 @@ function getCSS() {
 .ms-fs-editor-overlay .ms-fs-title-text{font-size:13px;font-weight:600;flex:1;color:var(--SmartThemeBodyColor,#ddd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ms-fs-editor-overlay .ms-md-toolbar{flex-shrink:0;}
 .ms-fs-editor-overlay .ms-fs-content-wrap{flex:1;display:flex;flex-direction:column;min-height:0;position:relative;}
-.ms-fs-editor-overlay .ms-fs-textarea{flex:1;min-height:0;resize:none;padding:10px 12px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-top:none;border-radius:0 0 8px 8px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:13px;font-family:Consolas,"Courier New",monospace;line-height:1.6;outline:none;width:100%;box-sizing:border-box;}
+.ms-fs-editor-overlay .ms-fs-textarea{flex:1;min-height:0;resize:none;padding:10px 12px;background:var(--ms-themed-input-bg,var(--SmartThemeBlurTintColor,#222))!important;border:var(--ms-themed-input-border,1px solid var(--SmartThemeBorderColor,#444))!important;border-top:none!important;border-radius:var(--ms-themed-input-radius,0 0 8px 8px)!important;box-shadow:var(--ms-themed-input-shadow,none)!important;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc))!important;font-size:13px;font-family:Consolas,"Courier New",monospace;line-height:1.6;outline:none;width:100%;box-sizing:border-box;}
 .ms-fs-editor-overlay .ms-fs-preview-pane{flex:1;overflow-y:auto;min-height:0;border:1px solid var(--SmartThemeBorderColor,#444);border-top:none;border-radius:0 0 8px 8px;padding:14px;}
 .ms-fs-editor-overlay .ms-fs-footer-bar{display:flex;align-items:center;gap:8px;padding:4px 0;flex-shrink:0;}
 .ms-fs-editor-overlay .ms-fs-footer-bar .ms-char-count{flex:1;text-align:left;padding:0;}
@@ -5900,10 +5980,10 @@ function getCSS() {
 .ms-modal-body{padding:6px 16px 14px;font-size:13px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;overflow-y:auto;flex:1;min-height:0;scrollbar-width:none;-ms-overflow-style:none;}
 .ms-modal-body::-webkit-scrollbar{width:0;height:0;display:none;}
 .ms-modal-message{white-space:pre-wrap;word-break:break-word;margin-bottom:6px;}
-.ms-modal-input,.ms-modal-textarea{width:100%;padding:7px 10px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:13px;font-family:inherit;outline:none;margin-top:8px;box-sizing:border-box;}
+.ms-modal-input,.ms-modal-textarea{width:100%;padding:7px 10px;background:var(--ms-themed-input-bg,var(--SmartThemeBlurTintColor,#222))!important;border:var(--ms-themed-input-border,1px solid var(--SmartThemeBorderColor,#444))!important;border-radius:var(--ms-themed-input-radius,6px)!important;box-shadow:var(--ms-themed-input-shadow,none)!important;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc))!important;font-size:13px;font-family:inherit;outline:none;margin-top:8px;box-sizing:border-box;}
 .ms-modal-textarea{min-height:80px;resize:vertical;line-height:1.5;}
 .ms-modal-input:focus,.ms-modal-textarea:focus{border-color:var(--ms-accent);}
-.ms-modal-search{width:100%;padding:6px 10px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:12px;font-family:inherit;outline:none;margin-bottom:8px;box-sizing:border-box;}
+.ms-modal-search{width:100%;padding:6px 10px;background:var(--ms-themed-input-bg,var(--SmartThemeBlurTintColor,#222))!important;border:var(--ms-themed-input-border,1px solid var(--SmartThemeBorderColor,#444))!important;border-radius:var(--ms-themed-input-radius,6px)!important;box-shadow:var(--ms-themed-input-shadow,none)!important;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc))!important;font-size:12px;font-family:inherit;outline:none;margin-bottom:8px;box-sizing:border-box;}
 .ms-modal-footer{padding:8px 16px 14px;display:flex;justify-content:flex-end;gap:8px;flex-shrink:0;flex-wrap:wrap;}
 .ms-modal-btn{padding:6px 16px;border:1px solid var(--SmartThemeBorderColor,#444);background:transparent;color:var(--SmartThemeBodyColor,#ccc);border-radius:6px;cursor:pointer;font-size:13px;font-family:inherit;transition:background 0.15s;min-width:60px;}
 .ms-modal-btn:hover{background:rgba(255,255,255,0.06);}
@@ -13163,7 +13243,7 @@ function renderSettings() {
   <div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-top:6px;border-top:1px dashed rgba(255,255,255,0.08);padding-top:6px;">
     ⚠️ <code style="font-style:normal;">{\u200B{stage}}</code> 与 <code style="font-style:normal;">{\u200B{stages}}</code> 的多任务行为不同，<a href="#" id="ms-goto-inject-guide" style="color:var(--ms-accent);cursor:pointer;">查看使用说明</a>
   </div>
-</div><div id="ms-depth-opts" style="${data.settings.stageInjectMode === "depth" ? "" : "display:none;"}padding:0 14px;"><div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>注入深度</label><input type="number" id="ms-inject-depth" min="0" max="999" value="${data.settings.stageInjectDepth || 0}" style="width:100%;"></div><div class="ms-field" style="flex:1;"><label>消息角色</label><select id="ms-inject-role" style="width:100%;"><option value="system"${data.settings.stageInjectRole === "system" ? " selected" : ""}>System</option><option value="user"${data.settings.stageInjectRole === "user" ? " selected" : ""}>User</option><option value="assistant"${data.settings.stageInjectRole === "assistant" ? " selected" : ""}>Assistant</option></select></div></div></div><div class="ms-field" style="padding:6px 14px 0;"><label>默认前缀指令 <span style="font-weight:350;opacity:0.5;">(用 {\u200B{stage}} 标记剧场插入位置，不写则拼接在末尾)</span><i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-default-prefix" data-fs-title="编辑默认前缀指令" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-default-prefix" style="min-height:120px;resize:vertical;" placeholder="例：在正文最后输出以下剧场内容...">${esc(data.settings.defaultStagePrefix || "")}</textarea></div><div class="ms-field" style="padding:6px 14px 0;"><label>多条外壳模板 <span style="font-weight:350;opacity:0.5;">(选多条剧场时的整体结构，用 {\u200B{stage_count}} 表示数量，{\u200B{stage_tasks}} 表示所有任务块)</span> <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-multi-prefix" data-fs-title="编辑多条外壳模板" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-multi-prefix" style="min-height:80px;resize:vertical;" placeholder="留空使用内置默认模板">${esc(data.settings.multiStagePrefix || "")}</textarea><div style="padding:4px 2px;font-size:10px;color:var(--ms-danger);line-height:1.5;"><i class="fa-solid fa-triangle-exclamation" style="margin-right:3px;"></i>多条外壳模板中必须包含 {\u200B{stage_tasks}}，否则会自动回退使用内置默认模板</div></div><div class="ms-section-label" style="margin-top:6px;">生成后行为</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-clear-after-gen-toggle" ${data.settings.clearStageAfterGeneration ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">生成完成后自动清除选中的注入</span></div><div style="padding:4px 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);line-height:1.5;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>开启后每次成功生成会自动取消已选注入；API 报错、空回复或用户中止时不会清除，方便直接重试</div><div class="ms-section-label" style="margin-top:6px;">随机注入</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-random-toggle" ${data.settings.randomInject && data.settings.randomInject.enabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">没有手动选中时，自动从随机池中抽取</span></div><div id="ms-random-multi-wrap" style="${data.settings.randomInject && data.settings.randomInject.enabled ? "" : "display:none;"}"><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-random-multi-toggle" ${data.settings.randomInject && data.settings.randomInject.multiEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">随机抽取多条剧场</span></div><div id="ms-random-multi-count-wrap" style="${data.settings.randomInject && data.settings.randomInject.multiEnabled ? "" : "display:none;"}padding:4px 14px;"><div class="ms-field"><label>每次随机抽取的数量</label><div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-random-multi-count" min="1" max="10" step="1" value="${(data.settings.randomInject && data.settings.randomInject.multiCount) || 2}" style="width:80px;"><span style="font-size:12px;color:var(--SmartThemeQuoteColor,#888);">条（建议 2-5 条，过多会污染上下文）</span></div></div></div></div></div><button class="ms-tbtn" id="ms-go-random-pool" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-sliders"></i> 管理随机池</button><button class="ms-tbtn" id="ms-go-qp" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-bolt"></i> 管理快捷短语 (${data.quickPhrases.length})</button><button class="ms-tbtn" id="ms-go-stats" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-chart-bar"></i> 使用统计</button><div class="ms-section-label">订阅设置</div><div class="ms-field"><label>自动检查间隔 <span style="font-weight:350;opacity:0.5;">(打开面板时，超过此时间未检查的订阅会自动静默检查)</span></label><div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-auto-check-interval" min="0" max="168" step="1" value="${data.settings.autoCheckInterval || 6}" style="width:80px;"><span style="font-size:12px;color:var(--SmartThemeQuoteColor,#888);">小时（设为 0 关闭自动检查）</span></div></div><button class="ms-tbtn" id="ms-go-subs" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-rss"></i> 订阅管理 (${data.subscriptions.length})</button><div class="ms-section-label">界面自定义</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-ui-custom-toggle" ${data.settings.uiCustomEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">启用自定义字号和面板尺寸</span></div><div id="ms-ui-custom-details" style="${data.settings.uiCustomEnabled ? "" : "display:none;"}padding:4px 14px;"><div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>字号 (px)</label><input type="number" id="ms-ui-font-size" min="10" max="24" value="${data.settings.uiFontSize}"></div><div class="ms-field" style="flex:1;"><label>面板宽度 (px)</label><input type="number" id="ms-ui-panel-width" min="320" max="1400" value="${data.settings.uiPanelWidth}"></div><div class="ms-field" style="flex:1;"><label>最大高度 (vh)</label><input type="number" id="ms-ui-panel-height" min="40" max="100" value="${data.settings.uiPanelHeight}"></div></div></div><div class="ms-section-label">主题适配</div><button class="ms-tbtn" id="ms-tb-open" style="width:100%;text-align:center;"><i class="fa-solid fa-palette"></i> 主题绑定 (${Object.keys(data.settings.themeBindings || {}).length})</button><div style="font-size:10px;color:var(--SmartThemeQuoteColor,#555);padding:4px 14px;line-height:1.5;">为抓取背景失败、撞色严重的美化主题单独指定面板背景和文字色。</div><div class="ms-section-label">使用说明</div><button class="ms-tbtn" id="ms-regen-guide" style="width:100%;text-align:center;"><i class="fa-solid fa-book"></i> 重新生成使用说明</button><div class="ms-section-label">脚本更新 <span style="font-weight:400;opacity:0.6;text-transform:none;letter-spacing:0;margin-left:4px;">当前 v${SCRIPT_VERSION}</span></div><button class="ms-tbtn" id="ms-update-script" style="width:100%;text-align:center;"><i class="fa-solid fa-arrows-rotate"></i> 检查脚本更新</button>
+</div><div id="ms-depth-opts" style="${data.settings.stageInjectMode === "depth" ? "" : "display:none;"}padding:0 14px;"><div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>注入深度</label><input type="number" id="ms-inject-depth" min="0" max="999" value="${data.settings.stageInjectDepth || 0}" style="width:100%;"></div><div class="ms-field" style="flex:1;"><label>消息角色</label><select id="ms-inject-role" style="width:100%;"><option value="system"${data.settings.stageInjectRole === "system" ? " selected" : ""}>System</option><option value="user"${data.settings.stageInjectRole === "user" ? " selected" : ""}>User</option><option value="assistant"${data.settings.stageInjectRole === "assistant" ? " selected" : ""}>Assistant</option></select></div></div></div><div class="ms-field" style="padding:6px 14px 0;"><label>默认前缀指令 <span style="font-weight:350;opacity:0.5;">(用 {\u200B{stage}} 标记剧场插入位置，不写则拼接在末尾)</span><i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-default-prefix" data-fs-title="编辑默认前缀指令" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-default-prefix" style="min-height:120px;resize:vertical;" placeholder="例：在正文最后输出以下剧场内容...">${esc(data.settings.defaultStagePrefix || "")}</textarea></div><div class="ms-field" style="padding:6px 14px 0;"><label>多条外壳模板 <span style="font-weight:350;opacity:0.5;">(选多条剧场时的整体结构，用 {\u200B{stage_count}} 表示数量，{\u200B{stage_tasks}} 表示所有任务块)</span> <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-multi-prefix" data-fs-title="编辑多条外壳模板" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-multi-prefix" style="min-height:80px;resize:vertical;" placeholder="留空使用内置默认模板">${esc(data.settings.multiStagePrefix || "")}</textarea><div style="padding:4px 2px;font-size:10px;color:var(--ms-danger);line-height:1.5;"><i class="fa-solid fa-triangle-exclamation" style="margin-right:3px;"></i>多条外壳模板中必须包含 {\u200B{stage_tasks}}，否则会自动回退使用内置默认模板</div></div><div class="ms-section-label" style="margin-top:6px;">生成后行为</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-clear-after-gen-toggle" ${data.settings.clearStageAfterGeneration ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">生成完成后自动清除选中的注入</span></div><div style="padding:4px 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);line-height:1.5;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>开启后每次成功生成会自动取消已选注入；API 报错、空回复或用户中止时不会清除，方便直接重试</div><div class="ms-section-label" style="margin-top:6px;">随机注入</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-random-toggle" ${data.settings.randomInject && data.settings.randomInject.enabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">没有手动选中时，自动从随机池中抽取</span></div><div id="ms-random-multi-wrap" style="${data.settings.randomInject && data.settings.randomInject.enabled ? "" : "display:none;"}"><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-random-multi-toggle" ${data.settings.randomInject && data.settings.randomInject.multiEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">随机抽取多条剧场</span></div><div id="ms-random-multi-count-wrap" style="${data.settings.randomInject && data.settings.randomInject.multiEnabled ? "" : "display:none;"}padding:4px 14px;"><div class="ms-field"><label>每次随机抽取的数量</label><div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-random-multi-count" min="1" max="10" step="1" value="${(data.settings.randomInject && data.settings.randomInject.multiCount) || 2}" style="width:80px;"><span style="font-size:12px;color:var(--SmartThemeQuoteColor,#888);">条（建议 2-5 条，过多会污染上下文）</span></div></div></div></div></div><button class="ms-tbtn" id="ms-go-random-pool" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-sliders"></i> 管理随机池</button><button class="ms-tbtn" id="ms-go-qp" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-bolt"></i> 管理快捷短语 (${data.quickPhrases.length})</button><button class="ms-tbtn" id="ms-go-stats" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-chart-bar"></i> 使用统计</button><div class="ms-section-label">订阅设置</div><div class="ms-field"><label>自动检查间隔 <span style="font-weight:350;opacity:0.5;">(打开面板时，超过此时间未检查的订阅会自动静默检查)</span></label><div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-auto-check-interval" min="0" max="168" step="1" value="${data.settings.autoCheckInterval || 6}" style="width:80px;"><span style="font-size:12px;color:var(--SmartThemeQuoteColor,#888);">小时（设为 0 关闭自动检查）</span></div></div><button class="ms-tbtn" id="ms-go-subs" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-rss"></i> 订阅管理 (${data.subscriptions.length})</button><div class="ms-section-label">界面自定义</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-ui-custom-toggle" ${data.settings.uiCustomEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">启用自定义字号和面板尺寸</span></div><div id="ms-ui-custom-details" style="${data.settings.uiCustomEnabled ? "" : "display:none;"}padding:4px 14px;"><div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>字号 (px)</label><input type="number" id="ms-ui-font-size" min="10" max="24" value="${data.settings.uiFontSize}"></div><div class="ms-field" style="flex:1;"><label>面板宽度 (px)</label><input type="number" id="ms-ui-panel-width" min="320" max="1400" value="${data.settings.uiPanelWidth}"></div><div class="ms-field" style="flex:1;"><label>最大高度 (vh)</label><input type="number" id="ms-ui-panel-height" min="40" max="100" value="${data.settings.uiPanelHeight}"></div></div></div><div class="ms-section-label">主题适配</div><button class="ms-tbtn" id="ms-tb-open" style="width:100%;text-align:center;"><i class="fa-solid fa-palette"></i> 主题绑定 (${Object.keys(data.settings.themeBindings || {}).length})</button><div style="font-size:10px;color:var(--SmartThemeQuoteColor,#555);padding:4px 14px;line-height:1.5;">为抓取背景失败、撞色严重的美化主题指定面板背景和文字色。</div><div class="ms-section-label">使用说明</div><button class="ms-tbtn" id="ms-regen-guide" style="width:100%;text-align:center;"><i class="fa-solid fa-book"></i> 重新生成使用说明</button><div class="ms-section-label">脚本更新 <span style="font-weight:400;opacity:0.6;text-transform:none;letter-spacing:0;margin-left:4px;">当前 v${SCRIPT_VERSION}</span></div><button class="ms-tbtn" id="ms-update-script" style="width:100%;text-align:center;"><i class="fa-solid fa-arrows-rotate"></i> 检查脚本更新</button>
 <button class="ms-tbtn" id="ms-view-changelog" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-clipboard-list"></i> 查看更新日志</button><div style="font-size:10px;color:var(--SmartThemeQuoteColor,#555);padding:4px 14px;line-height:1.5;">刷新浏览器缓存并重载脚本，获取最新版本。</div><div class="ms-section-label">数据管理</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-history-warn-toggle" ${data.settings.historyWarnEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">历史超过30条时在底栏变红提醒</span></div><button class="ms-tbtn" id="ms-go-history-list" style="width:100%;text-align:center;margin-bottom:6px;"><i class="fa-solid fa-clock-rotate-left"></i> 查看有历史记录的剧场(${
       data.prompts.filter(function (p) {
         return p.history && p.history.length > 0;
