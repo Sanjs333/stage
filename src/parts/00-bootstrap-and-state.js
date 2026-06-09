@@ -1438,14 +1438,15 @@ function getThemeInputCandidates(doc) {
   var selectors = [
     ".drawer-content .text_pole",
     ".drawer-content textarea:not(#send_textarea)",
-    ".drawer-content input[type='number']",
-    ".drawer-content select",
+    ".drawer-content input:not([type='file' i], [type='image' i], [type='checkbox' i], [type='radio' i], [type='range' i])",
     ".text_pole",
     "textarea:not(#send_textarea)",
-    "input[type='number']",
-    "select",
     "input:not([type='file' i], [type='image' i], [type='checkbox' i], [type='radio' i], [type='range' i])",
     "#send_textarea",
+    ".drawer-content input[type='number']",
+    "input[type='number']",
+    ".drawer-content select",
+    "select",
   ];
   for (var i = 0; i < selectors.length; i++) {
     try {
@@ -1467,18 +1468,8 @@ function readControlStyle(win, el) {
   if (!win || !el) return null;
   var cs = win.getComputedStyle(el);
   if (!cs) return null;
-  var bg = "";
-  if (cs.backgroundImage && cs.backgroundImage !== "none") {
-    bg = cs.background;
-  } else if (
-    cs.backgroundColor &&
-    cs.backgroundColor !== "rgba(0, 0, 0, 0)" &&
-    cs.backgroundColor !== "transparent"
-  ) {
-    bg = cs.backgroundColor;
-  } else {
-    bg = cs.background;
-  }
+  var bg = cs.backgroundColor || "";
+  if (bg === "rgba(0, 0, 0, 0)" || bg === "transparent") bg = "";
   var borderStyle = cs.borderTopStyle || "solid";
   var border = [
     cs.borderTopWidth || "1px",
