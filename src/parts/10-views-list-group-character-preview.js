@@ -29,6 +29,58 @@ function renderGroup(v) {
   const filtered = sortPrompts(filterPrompts(searchPrompts(list, searchQuery)));
   const isIP = g && isIPGroup(g);
   $p.find("#ms-title").text(title);
+  if (g && g.note) {
+    var $infoBtn = $p.find("#ms-title-info");
+    var $noteInline = $p.find("#ms-title-note-inline");
+    var $notePanel = $p.find("#ms-title-note-panel");
+    var rawNote = String(g.note || "").trim();
+    var noteText = rawNote.replace(
+      /(^|[\s(（])((?:https?:\/\/|www\.)[^\s<>"'）)]+)/g,
+      function (m, prefix, url) {
+        var href = url.indexOf("www.") === 0 ? "https://" + url : url;
+        return prefix + "[" + url + "](" + href + ")";
+      },
+    );
+    $notePanel.html(
+      '<div class="ms-preview-content">' + renderMd(noteText) + "</div>",
+    );
+    var noteHasRichContent =
+      /[\r\n]/.test(rawNote) ||
+      /\[[^\]]+\]\([^)]+\)/.test(rawNote) ||
+      /(?:https?:\/\/|www\.)/.test(rawNote);
+    $noteInline.text(rawNote).data("fits-inline", false);
+    requestAnimationFrame(function () {
+      if (!$noteInline.length) return;
+      $noteInline.addClass("open");
+      var fitsInline =
+        !noteHasRichContent &&
+        $noteInline[0] &&
+        $noteInline[0].scrollWidth <= $noteInline[0].clientWidth + 1;
+      $noteInline.removeClass("open").data("fits-inline", fitsInline);
+    });
+    $infoBtn
+      .css("display", "flex")
+      .off("click.ms-note")
+      .on("click.ms-note", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        $infoBtn.toggleClass("open");
+        var showInline = $noteInline.data("fits-inline") === true;
+        if (!noteHasRichContent && $noteInline[0]) {
+          $noteInline.addClass("open");
+          showInline =
+            $noteInline[0].scrollWidth <= $noteInline[0].clientWidth + 1;
+          $noteInline.removeClass("open").data("fits-inline", showInline);
+        }
+        if ($infoBtn.hasClass("open")) {
+          if (showInline) $noteInline.addClass("open");
+          else $notePanel.addClass("open");
+        } else {
+          $noteInline.removeClass("open");
+          $notePanel.removeClass("open");
+        }
+      });
+  }
   $p.find("#ms-toolbar").html(
     buildToolbar({
       back: true,

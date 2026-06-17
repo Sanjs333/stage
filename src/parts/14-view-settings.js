@@ -213,9 +213,11 @@
       .prop("disabled", true)
       .html('<i class="fa-solid fa-spinner fa-spin"></i> 正在更新...');
     try {
-      await fetch("https://cdn.jsdelivr.net/gh/Sanjs333/stage/stage.js", {
-        cache: "reload",
-      });
+      await msFetch(
+        "https://cdn.jsdelivr.net/gh/Sanjs333/stage/stage.js",
+        { cache: "reload" },
+        15000,
+      );
       toast("success", "缓存已刷新，3秒后自动刷新页面...");
       setTimeout(function () {
         try {
@@ -225,6 +227,7 @@
         }
       }, 2000);
     } catch (e) {
+      if (isShutdownFetchError(e)) return;
       toast("error", "更新失败: " + e.message);
       $btn
         .prop("disabled", false)

@@ -2,9 +2,12 @@
   return `<div id="${PANEL_ID}">
       <div class="ms-header" id="ms-header">
         <i class="fa-solid fa-grip ms-drag-handle"></i>
-        <span class="ms-title" id="ms-title">小剧场</span>
+        <div class="ms-title-wrap">
+          <span class="ms-title" id="ms-title">小剧场</span><button class="ms-title-info" id="ms-title-info" title="查看分组备注"><i class="fa-solid fa-circle-info"></i></button><span class="ms-title-note-inline" id="ms-title-note-inline"></span>
+        </div>
         <span class="ms-inject-indicator" id="ms-inject-indicator"></span><span class="ms-count" id="ms-count"></span>
         <button class="ms-hbtn" id="ms-btn-collapse" title="收起"><i class="fa-solid fa-window-minimize"></i></button><button class="ms-hbtn" id="ms-btn-close" title="关闭"><i class="fa-solid fa-xmark"></i></button>
+        <div class="ms-title-note-panel" id="ms-title-note-panel"></div>
       </div>
       <div class="ms-toolbar" id="ms-toolbar"></div>
       <div class="ms-filter-panel" id="ms-filter-panel"></div>
@@ -24,7 +27,11 @@ function renderView() {
   if (!$p.length) return;
   $p.find("#ms-count").text(data.prompts.length + " 条");
   $p.find("#ms-filter-panel").removeClass("open").empty();
+  $p.find("#ms-title-info").hide().removeClass("open").off("click.ms-note");
+  $p.find("#ms-title-note-inline").removeClass("open").empty();
+  $p.find("#ms-title-note-panel").removeClass("open").empty();
   const v = currentView();
+  if (v.name !== "group-edit") flushGroupEdit = null;
   const map = {
     "lost-chars": renderLostChars,
     list: renderList,

@@ -8,7 +8,7 @@
 const STORAGE_KEY = "miniStage_data";
 const PANEL_ID = "mini-stage-panel";
 const STYLE_ID = "mini-stage-styles";
-const SCRIPT_VERSION = "3.5";
+const SCRIPT_VERSION = "3.6";
 const GROUP_COLORS = [
   "#D6A2A2",
   "#DDAA90",
@@ -94,6 +94,7 @@ let tagSelectMode = false,
 let editDirty = false;
 let editSnapshot = "";
 let groupEditDirty = false;
+let flushGroupEdit = null;
 let activeDropdownCleanup = null;
 let longPressTimer = null;
 let _editDraftTimer = null;
@@ -106,6 +107,59 @@ let _macroInjectBusy = false;
 let _macroBusyWarned = false;
 let _imgPreloaded = new Set();
 let _inputAppendList = [];
+let _msShuttingDown = false;
+let _msActiveFetchControllers = new Set();
+
+function isShutdownFetchError(e) {
+  var msg = e && e.message ? String(e.message) : "";
+  return (
+    _msShuttingDown ||
+    (e && e.name === "AbortError") ||
+    msg.indexOf("global scope is shutting down") >= 0
+  );
+}
+
+function abortActiveFetches() {
+  _msShuttingDown = true;
+  _msActiveFetchControllers.forEach(function (ctrl) {
+    try {
+      ctrl.abort();
+    } catch (e) {}
+  });
+  _msActiveFetchControllers.clear();
+}
+
+async function msFetch(url, options, timeoutMs) {
+  var ctrl = new AbortController();
+  var timer = null;
+  var opts = Object.assign({}, options || {});
+  var parentSignal = opts.signal;
+  var onParentAbort = function () {
+    ctrl.abort();
+  };
+  if (parentSignal) {
+    if (parentSignal.aborted) ctrl.abort();
+    else parentSignal.addEventListener("abort", onParentAbort, { once: true });
+  }
+  opts.signal = ctrl.signal;
+  _msActiveFetchControllers.add(ctrl);
+  if (timeoutMs && timeoutMs > 0) {
+    timer = setTimeout(function () {
+      ctrl.abort();
+    }, timeoutMs);
+  }
+  try {
+    return await fetch(url, opts);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (parentSignal) {
+      try {
+        parentSignal.removeEventListener("abort", onParentAbort);
+      } catch (e) {}
+    }
+    _msActiveFetchControllers.delete(ctrl);
+  }
+}
 
 function preloadPanelImages() {
   try {
@@ -1139,10 +1193,7 @@ function getSelectedThemeNameFromDom() {
     var sel = selects[i];
     try {
       var opt = sel.options && sel.options[sel.selectedIndex];
-      var name =
-        (opt && (opt.value || opt.textContent)) ||
-        sel.value ||
-        "";
+      var name = (opt && (opt.value || opt.textContent)) || sel.value || "";
       name = String(name || "").trim();
       if (name) return name;
     } catch (e) {}
@@ -1652,7 +1703,7 @@ function loadData() {
         data.settings.panelWasVisible = false;
       if (data.settings.defaultStagePrefix === undefined)
         data.settings.defaultStagePrefix =
-          "<stage>\n在正文最后输出以下剧场内容，使用以下html折叠包裹。\n<details>\n<summary>小剧场 {{random::1::2::3::4::5::6::7::8}}| {{stage_title}}</summary>\n在此处输出剧场内容，纯文字直接输出，网页代码上下需```包裹\n</details>\n\n以下是需要输出的剧场内容：\n{{stage}}\n</stage>";
+          "<stage>\n在正文最后输出剧场内容，使用以下html折叠包裹\n<details>\n<summary>小剧场 {{random::1::2::3::4::5::6::7::8::9::10}} | {{stage_title}}</summary>\n在此处输出剧场内容，不重复剧场标题\n</details>\n\n【输出格式规则】\n- <details> 块裸输出为 HTML，外层不加代码块包裹\n- <details> 块之间不添加任何额外标记\n- 块内内容按以下规则处理：\n  - 纯文字：直接输出，不加任何包裹\n  - 网页代码（HTML/CSS/JS）：上下用 ``` 包裹\n\n以下是需要输出的剧场内容：\n{{stage}}\n\n</stage>";
       if (data.settings.uiCustomEnabled === undefined)
         data.settings.uiCustomEnabled = false;
       if (data.settings.uiFontSize === undefined) data.settings.uiFontSize = 14;
@@ -2057,21 +2108,13 @@ async function fetchRemoteGuide(url) {
   try {
     var fetchUrl =
       url + (url.indexOf("?") >= 0 ? "&" : "?") + "_t=" + Date.now();
-    var ctrl = new AbortController();
-    var timer = setTimeout(function () {
-      ctrl.abort();
-    }, 10000);
-    var response;
-    try {
-      response = await fetch(fetchUrl, { signal: ctrl.signal });
-    } finally {
-      clearTimeout(timer);
-    }
+    var response = await msFetch(fetchUrl, null, 10000);
     if (!response.ok) throw new Error("HTTP " + response.status);
     var text = await response.text();
     if (!text || text.length < 20) throw new Error("内容为空");
     return text;
   } catch (e) {
+    if (isShutdownFetchError(e)) return null;
     console.warn("[小剧场] 云端指南加载失败:", url, e);
     return null;
   }
@@ -5385,6 +5428,8 @@ function _buildIPGroupFromImport(icg) {
       return;
     }
     if (currentView().name === "group-edit" && groupEditDirty) {
+      if (typeof flushGroupEdit === "function") flushGroupEdit();
+      if (!groupEditDirty) return navigateTo(view, reset);
       msConfirm("分组设置尚未保存，确定要离开吗？", {
         title: "未保存的改动",
         type: "warning",
@@ -5396,6 +5441,11 @@ function _buildIPGroupFromImport(icg) {
       });
       return;
     }
+    if (
+      currentView().name === "group-edit" &&
+      typeof flushGroupEdit === "function"
+    )
+      flushGroupEdit();
     editDirty = false;
     closeActiveDropdown();
     if (typeof _searchTimer !== "undefined" && _searchTimer) {
@@ -5459,6 +5509,8 @@ function _buildIPGroupFromImport(icg) {
       return;
     }
     if (currentView().name === "group-edit" && groupEditDirty) {
+      if (typeof flushGroupEdit === "function") flushGroupEdit();
+      if (!groupEditDirty) return navigateBack();
       msConfirm("分组设置尚未保存，确定要离开吗？", {
         title: "未保存的改动",
         type: "warning",
@@ -5470,6 +5522,11 @@ function _buildIPGroupFromImport(icg) {
       });
       return;
     }
+    if (
+      currentView().name === "group-edit" &&
+      typeof flushGroupEdit === "function"
+    )
+      flushGroupEdit();
     editDirty = false;
     closeActiveDropdown();
     $("#" + PANEL_ID).off("keydown.ms-preview-nav");
@@ -5512,16 +5569,28 @@ function getCSS() {
 #${PANEL_ID}{--ms-accent:var(--SmartThemeFavColor,#c9957a);--ms-accent-rgb:201,149,122;--ms-danger:#a93226;--ms-danger-rgb:169,50,38;--ms-success:#3a8a3a;}
 #${PANEL_ID}{position:fixed;z-index:9998;background-color:var(--SmartThemeBlurTintColor,#1a1a2e);border:1px solid var(--SmartThemeBorderColor,#333);border-radius:10px;box-shadow:0 4px 24px rgba(0,0,0,0.45);display:none;flex-direction:column;color:var(--SmartThemeBodyColor,#ccc);font-family:inherit;font-size:14px;overflow:hidden;width:500px;max-width:92vw;max-height:82vh;min-width:320px;left:50%;top:60px;transform:translateX(-50%);}
 #${PANEL_ID}.ms-visible{display:flex;}
-#${PANEL_ID}.ms-collapsed .ms-body,#${PANEL_ID}.ms-collapsed .ms-toolbar,#${PANEL_ID}.ms-collapsed .ms-footer,#${PANEL_ID}.ms-collapsed .ms-filter-panel{display:none!important;}
+#${PANEL_ID}.ms-collapsed .ms-body,#${PANEL_ID}.ms-collapsed .ms-toolbar,#${PANEL_ID}.ms-collapsed .ms-footer,#${PANEL_ID}.ms-collapsed .ms-filter-panel,#${PANEL_ID}.ms-collapsed .ms-title-note-panel{display:none!important;}
 #${PANEL_ID}.ms-collapsed .ms-header{border-bottom:none;padding:1px 10px;min-height:18px;}
 #${PANEL_ID}.ms-collapsed .ms-hbtn{width:18px;height:18px;font-size:10px;}
-.ms-header{display:flex;align-items:center;min-height:28px;padding:3px 10px;cursor:move;user-select:none;border-bottom:1px solid var(--SmartThemeBorderColor,#333);gap:6px;flex-shrink:0;touch-action:none;}
+#${PANEL_ID}.ms-collapsed .ms-title-wrap{flex:1;}
+.ms-header{display:flex;align-items:center;min-height:28px;padding:3px 10px;cursor:move;user-select:none;border-bottom:none;gap:6px;flex-shrink:0;touch-action:none;flex-wrap:wrap;}
 .ms-header .ms-drag-handle{color:var(--SmartThemeBodyColor,#888);font-size:12px;opacity:0.4;flex-shrink:0;}
-.ms-header .ms-title{font-weight:600;font-size:14px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ms-title-wrap{flex:1;min-width:0;display:flex;align-items:center;gap:4px;}
+.ms-header .ms-title{font-weight:600;font-size:14px;min-width:0;max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;}
 .ms-header .ms-count{font-size:11px;color:var(--SmartThemeQuoteColor,#888);flex-shrink:0;}
+.ms-title-info{display:none;width:22px;height:22px;border:none;background:transparent;color:var(--SmartThemeQuoteColor,#777);cursor:pointer;border-radius:6px;padding:0;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;transition:background 0.15s,color 0.15s;}
+.ms-title-info:hover,.ms-title-info.open{background:rgba(var(--ms-accent-rgb),0.12);color:var(--ms-accent);}
+.ms-title-note-inline{display:none;min-width:0;max-width:45%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;line-height:1;color:var(--SmartThemeQuoteColor,#999);opacity:0.92;}
+.ms-title-note-inline.open{display:inline-block;}
+.ms-title-note-panel{display:none;flex:0 0 100%;box-sizing:border-box;margin:-2px 0 0 20px;padding:0 0 3px 0;background:transparent;max-height:min(30vh,220px);overflow-y:auto;cursor:auto;}
+.ms-title-note-panel.open{display:block;}
+.ms-title-note-panel::-webkit-scrollbar{width:4px;}
+.ms-title-note-panel::-webkit-scrollbar-thumb{background:var(--SmartThemeBorderColor,#444);border-radius:4px;}
+.ms-title-note-panel .ms-preview-content{padding:0;font-size:12px;line-height:1.65;color:var(--SmartThemeQuoteColor,#999);}
+.ms-title-note-panel .ms-preview-content>*{margin-top:0!important;margin-bottom:0!important;}
 .ms-hbtn{width:26px;height:26px;border:none;background:transparent;color:var(--SmartThemeBodyColor,#aaa);cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:13px;flex-shrink:0;padding:0;transition:background 0.15s;}
 .ms-hbtn:hover{background:rgba(255,255,255,0.08);}
-.ms-toolbar{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:1px solid var(--SmartThemeBorderColor,#333);flex-shrink:0;flex-wrap:wrap;}
+.ms-toolbar{display:flex;align-items:center;gap:6px;padding:8px 12px;border-bottom:none;flex-shrink:0;flex-wrap:wrap;}
 .ms-search{appearance:none!important;-webkit-appearance:none!important;flex:1;min-width:100px;padding:6px 10px;background-color:var(--ms-themed-input-bg,var(--SmartThemeBlurTintColor,#222))!important;background-image:none!important;border:var(--ms-themed-input-border,1px solid var(--SmartThemeBorderColor,#444))!important;border-radius:var(--ms-themed-input-radius,8px)!important;box-shadow:var(--ms-themed-input-shadow,none)!important;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc))!important;font-size:13px;font-family:inherit;outline:none;}
 .ms-search:focus{border-color:var(--SmartThemeQuoteColor,#666);}
 .ms-toolbar-actions{display:flex;gap:4px;margin-left:auto;flex-shrink:0;}
@@ -5549,7 +5618,7 @@ function getCSS() {
 .ms-batch-btn.danger:hover{background:rgba(var(--ms-danger-rgb),0.12);}
 .ms-nav-item{display:flex;align-items:center;padding:10px 14px;cursor:pointer;gap:10px;transition:background 0.12s;border-bottom:1px solid rgba(255,255,255,0.03);}
 .ms-swipe-wrap{position:relative;overflow:hidden;}
-.ms-swipe-row{display:flex;transition:transform 0.25s cubic-bezier(0.25,0.8,0.25,1);will-change:transform;}
+.ms-swipe-row{display:flex;transition:transform 0.25s cubic-bezier(0.25,0.8,0.25,1);will-change:transform;touch-action:pan-y;}
 .ms-swipe-wrap.ms-swiping .ms-swipe-row{transition:none;}
 .ms-swipe-content{flex:0 0 100%;width:100%;box-sizing:border-box;}
 .ms-swipe-del{flex:0 0 80px;width:80px;border:none;background:var(--ms-danger);color:#fff;font-size:12px;font-family:inherit;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;-webkit-tap-highlight-color:transparent;}
@@ -5560,7 +5629,7 @@ function getCSS() {
 .ms-nav-icon img{content-visibility:auto;}
 .ms-nav-info{flex:1;min-width:0;}
 .ms-nav-title{font-size:13px;font-weight:500;color:var(--SmartThemeBodyColor,#ddd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.ms-nav-note{font-size:10px;color:var(--SmartThemeQuoteColor,#555);margin-top:1px;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ms-nav-note{font-size:10px;color:var(--SmartThemeQuoteColor,#555);margin-top:2px;font-style:italic;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;word-break:break-word;}
 .ms-nav-cnt{font-size:11px;color:var(--SmartThemeQuoteColor,#777);flex-shrink:0;margin-left:auto;padding-left:8px;}
 .ms-nav-chevron{color:var(--SmartThemeQuoteColor,#555);font-size:11px;flex-shrink:0;}
 .ms-nav-sel-badge{font-size:9px;color:var(--ms-accent);flex-shrink:0;margin-left:4px;}
@@ -5954,6 +6023,7 @@ function getCSS() {
 #${PANEL_ID} .ms-modal,
 #${PANEL_ID} .ms-dropdown,
 #${PANEL_ID} #ms-char-search-popup{
+  background-color:var(--ms-popup-bg,var(--SmartThemeBlurTintColor,#2a2a3a))!important;
   background-image:var(--ms-panel-bg-image,none)!important;
   background-size:var(--ms-panel-bg-size,cover)!important;
   background-position:var(--ms-panel-bg-position,center)!important;
@@ -6043,9 +6113,12 @@ function getPanelHTML() {
   return `<div id="${PANEL_ID}">
       <div class="ms-header" id="ms-header">
         <i class="fa-solid fa-grip ms-drag-handle"></i>
-        <span class="ms-title" id="ms-title">小剧场</span>
+        <div class="ms-title-wrap">
+          <span class="ms-title" id="ms-title">小剧场</span><button class="ms-title-info" id="ms-title-info" title="查看分组备注"><i class="fa-solid fa-circle-info"></i></button><span class="ms-title-note-inline" id="ms-title-note-inline"></span>
+        </div>
         <span class="ms-inject-indicator" id="ms-inject-indicator"></span><span class="ms-count" id="ms-count"></span>
         <button class="ms-hbtn" id="ms-btn-collapse" title="收起"><i class="fa-solid fa-window-minimize"></i></button><button class="ms-hbtn" id="ms-btn-close" title="关闭"><i class="fa-solid fa-xmark"></i></button>
+        <div class="ms-title-note-panel" id="ms-title-note-panel"></div>
       </div>
       <div class="ms-toolbar" id="ms-toolbar"></div>
       <div class="ms-filter-panel" id="ms-filter-panel"></div>
@@ -6065,7 +6138,11 @@ function renderView() {
   if (!$p.length) return;
   $p.find("#ms-count").text(data.prompts.length + " 条");
   $p.find("#ms-filter-panel").removeClass("open").empty();
+  $p.find("#ms-title-info").hide().removeClass("open").off("click.ms-note");
+  $p.find("#ms-title-note-inline").removeClass("open").empty();
+  $p.find("#ms-title-note-panel").removeClass("open").empty();
   const v = currentView();
+  if (v.name !== "group-edit") flushGroupEdit = null;
   const map = {
     "lost-chars": renderLostChars,
     list: renderList,
@@ -7758,75 +7835,80 @@ function closeAllSwipes(except) {
   });
 }
 
-  function bindAllEvents() {
-    const $p = $("#" + PANEL_ID);
-    $p.find("#ms-body, #ms-toolbar, #ms-footer, #ms-filter-panel")
-      .off(".ms")
-      .off(".ms-gd");
-    if (bindReorderDrag._cleanup) {
-      bindReorderDrag._cleanup();
-      bindReorderDrag._cleanup = null;
+function bindAllEvents() {
+  const $p = $("#" + PANEL_ID);
+  $p.find("#ms-body, #ms-toolbar, #ms-footer, #ms-filter-panel")
+    .off(".ms")
+    .off(".ms-gd");
+  if (bindReorderDrag._cleanup) {
+    bindReorderDrag._cleanup();
+    bindReorderDrag._cleanup = null;
+  }
+  var $body = $p.find("#ms-body"),
+    $toolbar = $p.find("#ms-toolbar"),
+    $footer = $p.find("#ms-footer");
+  $toolbar.on("compositionstart.ms", "#ms-search", function () {
+    $(this).data("ms-composing", true);
+  });
+  $toolbar.on("compositionend.ms", "#ms-search", function () {
+    $(this).data("ms-composing", false);
+    if (_searchTimer) {
+      clearTimeout(_searchTimer);
+      _searchTimer = null;
     }
-    var $body = $p.find("#ms-body"),
-      $toolbar = $p.find("#ms-toolbar"),
-      $footer = $p.find("#ms-footer");
-    $toolbar.on("compositionstart.ms", "#ms-search", function () {
-      $(this).data("ms-composing", true);
-    });
-    $toolbar.on("compositionend.ms", "#ms-search", function () {
-      $(this).data("ms-composing", false);
-      if (_searchTimer) {
-        clearTimeout(_searchTimer);
-        _searchTimer = null;
-      }
-      searchQuery = $(this).val();
-      $p.find("#ms-search-clear").toggle(!!searchQuery);
+    searchQuery = $(this).val();
+    $p.find("#ms-search-clear").toggle(!!searchQuery);
+    renderBodyOnly();
+  });
+  $toolbar.on("input.ms", "#ms-search", function () {
+    if ($(this).data("ms-composing")) return;
+    var val = $(this).val();
+    $p.find("#ms-search-clear").toggle(!!val);
+    if (_searchTimer) clearTimeout(_searchTimer);
+    var delay =
+      data.prompts.length > 1000 ? 450 : data.prompts.length > 300 ? 300 : 180;
+    _searchTimer = setTimeout(function () {
+      _searchTimer = null;
+      searchQuery = val;
       renderBodyOnly();
-    });
-    $toolbar.on("input.ms", "#ms-search", function () {
-      if ($(this).data("ms-composing")) return;
-      var val = $(this).val();
-      $p.find("#ms-search-clear").toggle(!!val);
-      if (_searchTimer) clearTimeout(_searchTimer);
-      var delay =
-        data.prompts.length > 1000
-          ? 450
-          : data.prompts.length > 300
-            ? 300
-            : 180;
-      _searchTimer = setTimeout(function () {
-        _searchTimer = null;
-        searchQuery = val;
-        renderBodyOnly();
-      }, delay);
-    });
-    $toolbar.on("click.ms", "#ms-search-clear", function () {
-      if (_searchTimer) {
-        clearTimeout(_searchTimer);
-        _searchTimer = null;
-      }
-      searchQuery = "";
-      $p.find("#ms-search").val("").focus();
-      $(this).hide();
-      renderBodyOnly();
-    });
-    $toolbar.on("click.ms", "#ms-btn-new", () =>
-      navigateTo({ name: "edit", promptId: null, defaultGroupId: null }),
-    );
-    $toolbar.on("click.ms", "#ms-btn-sort", () => showSortDropdown($p));
-    $toolbar.on("click.ms", "#ms-btn-random", () => doRandomPick());
-    $toolbar.on("click.ms", "#ms-btn-range", () => {
-      rangeSelectMode = !rangeSelectMode;
-      if (rangeSelectMode && selectedIds.size > 0) {
-        var vis = getVisiblePromptIds();
-        rangeSelectAnchor = null;
-        rangeSelectAnchorPids = [];
-        var selArr = Array.from(selectedIds);
-        var firstP = selArr.length > 0 ? getPrompt(selArr[0]) : null;
-        if (firstP && firstP.series && firstP.series.trim()) {
-          var sname = firstP.series.trim();
-          var sgid = firstP.groupId || null;
-          var allSame = selArr.every(function (pid) {
+    }, delay);
+  });
+  $toolbar.on("click.ms", "#ms-search-clear", function () {
+    if (_searchTimer) {
+      clearTimeout(_searchTimer);
+      _searchTimer = null;
+    }
+    searchQuery = "";
+    $p.find("#ms-search").val("").focus();
+    $(this).hide();
+    renderBodyOnly();
+  });
+  $toolbar.on("click.ms", "#ms-btn-new", () =>
+    navigateTo({ name: "edit", promptId: null, defaultGroupId: null }),
+  );
+  $toolbar.on("click.ms", "#ms-btn-sort", () => showSortDropdown($p));
+  $toolbar.on("click.ms", "#ms-btn-random", () => doRandomPick());
+  $toolbar.on("click.ms", "#ms-btn-range", () => {
+    rangeSelectMode = !rangeSelectMode;
+    if (rangeSelectMode && selectedIds.size > 0) {
+      var vis = getVisiblePromptIds();
+      rangeSelectAnchor = null;
+      rangeSelectAnchorPids = [];
+      var selArr = Array.from(selectedIds);
+      var firstP = selArr.length > 0 ? getPrompt(selArr[0]) : null;
+      if (firstP && firstP.series && firstP.series.trim()) {
+        var sname = firstP.series.trim();
+        var sgid = firstP.groupId || null;
+        var allSame = selArr.every(function (pid) {
+          var pp = getPrompt(pid);
+          return (
+            pp &&
+            (pp.series || "").trim() === sname &&
+            (pp.groupId || null) === sgid
+          );
+        });
+        if (allSame) {
+          var seriesItemsInVis = vis.filter(function (pid) {
             var pp = getPrompt(pid);
             return (
               pp &&
@@ -7834,432 +7916,220 @@ function closeAllSwipes(except) {
               (pp.groupId || null) === sgid
             );
           });
-          if (allSame) {
-            var seriesItemsInVis = vis.filter(function (pid) {
-              var pp = getPrompt(pid);
-              return (
-                pp &&
-                (pp.series || "").trim() === sname &&
-                (pp.groupId || null) === sgid
+          if (
+            selArr.length === seriesItemsInVis.length &&
+            seriesItemsInVis.length > 1
+          ) {
+            var _sid =
+              "ms-series-" +
+              simpleHash(
+                sname + "||" + (sgid || "") + "||" + seriesItemsInVis.length,
               );
-            });
-            if (
-              selArr.length === seriesItemsInVis.length &&
-              seriesItemsInVis.length > 1
-            ) {
-              var _sid =
-                "ms-series-" +
-                simpleHash(
-                  sname + "||" + (sgid || "") + "||" + seriesItemsInVis.length,
-                );
-              rangeSelectAnchor = "series:" + _sid;
-              rangeSelectAnchorPids = seriesItemsInVis.slice();
-            }
+            rangeSelectAnchor = "series:" + _sid;
+            rangeSelectAnchorPids = seriesItemsInVis.slice();
           }
         }
-        if (!rangeSelectAnchor) {
-          for (var i = 0; i < vis.length; i++) {
-            if (selectedIds.has(vis[i])) {
-              rangeSelectAnchor = vis[i];
-              rangeSelectAnchorPids = [vis[i]];
-              break;
-            }
-          }
-        }
-      } else {
-        rangeSelectAnchor = null;
-        rangeSelectAnchorPids = [];
       }
-      rerenderAfterSelectChange();
-    });
-    $toolbar.on("click.ms", "#ms-btn-select", () => {
-      selectMode = !selectMode;
-      if (!selectMode) {
-        selectedIds.clear();
-        rangeSelectMode = false;
-        rangeSelectAnchor = null;
+      if (!rangeSelectAnchor) {
+        for (var i = 0; i < vis.length; i++) {
+          if (selectedIds.has(vis[i])) {
+            rangeSelectAnchor = vis[i];
+            rangeSelectAnchorPids = [vis[i]];
+            break;
+          }
+        }
       }
-      rerenderAfterSelectChange();
-      $p.find("#ms-btn-select").toggleClass("active", selectMode);
-    });
-    $toolbar.on("click.ms", "#ms-btn-filter", () => {
-      const $fp = $p.find("#ms-filter-panel");
-      if ($fp.hasClass("open")) $fp.removeClass("open");
-      else {
-        $fp.html(buildFilterPanel()).addClass("open");
-        bindFilterEvents($p);
-      }
-    });
-    $body.on("pointerdown.ms", ".ms-nav-item[data-nav='group']", function (e) {
-      if ($(e.target).closest("button, a, input").length) return;
-      var gid = $(this).data("gid");
-      if (!gid || gid === "_ungrouped") return;
-      if (selectMode) return;
-      var $el = $(this);
-      var $row = $el.closest(".ms-swipe-row");
-      var $wrap = $el.closest(".ms-swipe-wrap");
-      var canSwipe = $row.length > 0 && $wrap.length > 0;
-      $el.data("ms-nav-press-time", Date.now());
-      var sx = e.clientX || 0,
-        sy = e.clientY || 0;
-      var swiping = false;
-      var dirLocked = false;
-      var startOffset = $wrap.hasClass("ms-swiped") ? -80 : 0;
-      var navTimer = setTimeout(function () {
-        if (swiping) return;
-        if (gid === "_builtin_guide_group") return;
-        $el.data("ms-nav-lp-fired", true);
-        if (navigator.vibrate) navigator.vibrate(30);
-        navigateTo({ name: "group-edit", groupId: gid });
-      }, 600);
-      var onMove2 = function (ev) {
-        var dx = (ev.clientX || 0) - sx,
-          dy = (ev.clientY || 0) - sy;
-        if (!dirLocked) {
-          if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-            dirLocked = true;
-            if (canSwipe && Math.abs(dx) > Math.abs(dy)) {
-              swiping = true;
-              $wrap.addClass("ms-swiping");
-            }
-            if (navTimer) {
-              clearTimeout(navTimer);
-              navTimer = null;
-            }
+    } else {
+      rangeSelectAnchor = null;
+      rangeSelectAnchorPids = [];
+    }
+    rerenderAfterSelectChange();
+  });
+  $toolbar.on("click.ms", "#ms-btn-select", () => {
+    selectMode = !selectMode;
+    if (!selectMode) {
+      selectedIds.clear();
+      rangeSelectMode = false;
+      rangeSelectAnchor = null;
+    }
+    rerenderAfterSelectChange();
+    $p.find("#ms-btn-select").toggleClass("active", selectMode);
+  });
+  $toolbar.on("click.ms", "#ms-btn-filter", () => {
+    const $fp = $p.find("#ms-filter-panel");
+    if ($fp.hasClass("open")) $fp.removeClass("open");
+    else {
+      $fp.html(buildFilterPanel()).addClass("open");
+      bindFilterEvents($p);
+    }
+  });
+  $body.on("pointerdown.ms", ".ms-nav-item[data-nav='group']", function (e) {
+    if ($(e.target).closest("button, a, input").length) return;
+    var gid = $(this).data("gid");
+    if (!gid || gid === "_ungrouped") return;
+    if (selectMode) return;
+    var $el = $(this);
+    var $row = $el.closest(".ms-swipe-row");
+    var $wrap = $el.closest(".ms-swipe-wrap");
+    var canSwipe = $row.length > 0 && $wrap.length > 0;
+    $el.data("ms-nav-press-time", Date.now());
+    var sx = e.clientX || 0,
+      sy = e.clientY || 0;
+    var swiping = false;
+    var dirLocked = false;
+    var startOffset = $wrap.hasClass("ms-swiped") ? -80 : 0;
+    var lastDx = 0;
+    var navTimer = setTimeout(function () {
+      if (swiping) return;
+      if (gid === "_builtin_guide_group") return;
+      $el.data("ms-nav-lp-fired", true);
+      if (navigator.vibrate) navigator.vibrate(30);
+      navigateTo({ name: "group-edit", groupId: gid });
+    }, 600);
+    var onMove2 = function (ev) {
+      var dx = (ev.clientX || 0) - sx,
+        dy = (ev.clientY || 0) - sy;
+      if (!dirLocked) {
+        if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+          dirLocked = true;
+          if (canSwipe && Math.abs(dx) > Math.abs(dy)) {
+            swiping = true;
+            $wrap.addClass("ms-swiping");
           }
-          return;
-        }
-        if (swiping) {
-          ev.preventDefault();
-          var off = startOffset + dx;
-          if (off > 0) off = 0;
-          if (off < -80) off = -80;
-          $row.css("transform", "translateX(" + off + "px)");
-        }
-      };
-      var onUp2 = function (ev) {
-        if (navTimer) {
-          clearTimeout(navTimer);
-          navTimer = null;
-        }
-        if (swiping) {
-          $wrap.removeClass("ms-swiping");
-          var dx =
-            (ev && typeof ev.clientX === "number" ? ev.clientX : sx) - sx;
-          var open;
-          if (startOffset < 0) {
-            open = !(dx > 20);
-          } else {
-            open = dx < -40;
+          if (navTimer) {
+            clearTimeout(navTimer);
+            navTimer = null;
           }
-          closeAllSwipes($wrap);
-          if (open) {
-            $wrap.addClass("ms-swiped");
-            $row.css("transform", "translateX(-80px)");
-          } else {
-            $wrap.removeClass("ms-swiped");
-            $row.css("transform", "");
-          }
-          $el.data("ms-swipe-just", true);
-          setTimeout(function () {
-            $el.removeData("ms-swipe-just");
-          }, 350);
         }
-        $p.off("pointermove.msnlp pointerup.msnlp pointercancel.msnlp");
-      };
-      $p.off("pointermove.msnlp pointerup.msnlp pointercancel.msnlp")
-        .on("pointermove.msnlp", onMove2)
-        .on("pointerup.msnlp pointercancel.msnlp", onUp2);
-    });
-    $body.on("click.ms", ".ms-nav-item", function () {
-      var nav = $(this).data("nav");
-      if ($(this).data("ms-swipe-just")) {
-        $(this).removeData("ms-swipe-just");
         return;
       }
-      var $swWrap = $(this).closest(".ms-swipe-wrap");
-      if ($swWrap.length && $swWrap.hasClass("ms-swiped")) {
+      if (swiping) {
+        ev.preventDefault();
+        lastDx = dx;
+        var off = startOffset + dx;
+        if (off > 0) off = 0;
+        if (off < -80) off = -80;
+        $row.css("transform", "translateX(" + off + "px)");
+      }
+    };
+    var onUp2 = function (ev) {
+      if (navTimer) {
+        clearTimeout(navTimer);
+        navTimer = null;
+      }
+      if (swiping) {
+        $wrap.removeClass("ms-swiping");
+        var dx = lastDx;
+        var open;
+        if (startOffset < 0) {
+          open = !(dx > 20);
+        } else {
+          open = dx < -40;
+        }
+        closeAllSwipes($wrap);
+        if (open) {
+          $wrap.addClass("ms-swiped");
+          $row.css("transform", "translateX(-80px)");
+        } else {
+          $wrap.removeClass("ms-swiped");
+          $row.css("transform", "");
+        }
+        $el.data("ms-swipe-just", true);
+        setTimeout(function () {
+          $el.removeData("ms-swipe-just");
+        }, 350);
+      }
+      $p.off("pointermove.msnlp pointerup.msnlp pointercancel.msnlp");
+    };
+    $p.off("pointermove.msnlp pointerup.msnlp pointercancel.msnlp")
+      .on("pointermove.msnlp", onMove2)
+      .on("pointerup.msnlp pointercancel.msnlp", onUp2);
+  });
+  $body.on("click.ms", ".ms-nav-item", function () {
+    var nav = $(this).data("nav");
+    if ($(this).data("ms-swipe-just")) {
+      $(this).removeData("ms-swipe-just");
+      return;
+    }
+    var $swWrap = $(this).closest(".ms-swipe-wrap");
+    if ($swWrap.length && $swWrap.hasClass("ms-swiped")) {
+      closeAllSwipes();
+      return;
+    }
+    if ($(this).data("ms-nav-lp-fired")) {
+      $(this).removeData("ms-nav-lp-fired");
+      return;
+    }
+    var pressTime = $(this).data("ms-nav-press-time") || 0;
+    if (pressTime && Date.now() - pressTime > 600) {
+      $(this).removeData("ms-nav-press-time");
+      return;
+    }
+    $(this).removeData("ms-nav-press-time");
+    if (nav === "starred") navigateTo({ name: "starred" });
+    else if (nav === "recent") navigateTo({ name: "recent" });
+    else if (nav === "characters") navigateTo({ name: "characters" });
+    else if (nav === "group")
+      navigateTo({ name: "group", groupId: $(this).data("gid") });
+  });
+  $body.on("click.ms", ".ms-swipe-del", function (e) {
+    e.stopPropagation();
+    var gid = $(this).data("swipe-del-gid");
+    var g = getGroup(gid);
+    if (!g) return;
+    var cnt = getPromptsInGroup(gid).length;
+    var isGuide = gid === "_builtin_guide_group";
+    var msg;
+    if (isGuide) {
+      msg =
+        "确定删除「" +
+        g.name +
+        "」分组吗？\n\n这是内置使用指南，里面的说明文档会一起删除。\n删除后可在「设置 → 重新生成使用说明」里恢复。";
+    } else if (cnt > 0) {
+      msg =
+        "确定删除「" +
+        g.name +
+        "」分组吗？\n\n分组下的 " +
+        cnt +
+        " 条剧场会一起被删除，此操作不可撤销！";
+    } else {
+      msg = "确定删除「" + g.name + "」分组吗？";
+    }
+    msConfirm(msg, {
+      title: "删除分组",
+      dangerous: true,
+      okText: "删除",
+    }).then(function (ok) {
+      if (!ok) {
         closeAllSwipes();
         return;
       }
-      if ($(this).data("ms-nav-lp-fired")) {
-        $(this).removeData("ms-nav-lp-fired");
-        return;
-      }
-      var pressTime = $(this).data("ms-nav-press-time") || 0;
-      if (pressTime && Date.now() - pressTime > 600) {
-        $(this).removeData("ms-nav-press-time");
-        return;
-      }
-      $(this).removeData("ms-nav-press-time");
-      if (nav === "starred") navigateTo({ name: "starred" });
-      else if (nav === "recent") navigateTo({ name: "recent" });
-      else if (nav === "characters") navigateTo({ name: "characters" });
-      else if (nav === "group")
-        navigateTo({ name: "group", groupId: $(this).data("gid") });
+      deleteGroupWithPrompts(gid);
+      renderView();
     });
-    $body.on("click.ms", ".ms-swipe-del", function (e) {
-      e.stopPropagation();
-      var gid = $(this).data("swipe-del-gid");
-      var g = getGroup(gid);
-      if (!g) return;
-      var cnt = getPromptsInGroup(gid).length;
-      var isGuide = gid === "_builtin_guide_group";
-      var msg;
-      if (isGuide) {
-        msg =
-          "确定删除「" +
-          g.name +
-          "」分组吗？\n\n这是内置使用指南，里面的说明文档会一起删除。\n删除后可在「设置 → 重新生成使用说明」里恢复。";
-      } else if (cnt > 0) {
-        msg =
-          "确定删除「" +
-          g.name +
-          "」分组吗？\n\n分组下的 " +
-          cnt +
-          " 条剧场会一起被删除，此操作不可撤销！";
-      } else {
-        msg = "确定删除「" + g.name + "」分组吗？";
-      }
-      msConfirm(msg, {
-        title: "删除分组",
-        dangerous: true,
-        okText: "删除",
-      }).then(function (ok) {
-        if (!ok) {
-          closeAllSwipes();
-          return;
-        }
-        deleteGroupWithPrompts(gid);
-        renderView();
-      });
-    });
-    $body.on("contextmenu.ms", ".ms-card", function (e) {
-      e.preventDefault();
-    });
-    $body.on("pointerdown.ms", ".ms-card", function (e) {
-      if ($(e.target).closest(".ms-card-star,.ms-card-qbtn").length) return;
-      if (selectMode && rangeSelectMode) {
-        const lpPid = $(this).data("pid");
-        var $lpEl = $(this);
-        var lpSx = e.clientX || 0,
-          lpSy = e.clientY || 0;
-        var lpTimer = setTimeout(function () {
-          lpTimer = null;
-          $lpEl.data("ms-rng-lp-fired", true);
-          if (navigator.vibrate) navigator.vibrate(30);
-          var vis = getVisiblePromptIds();
-          var newAnchorIdx = vis.indexOf(lpPid);
-          var farEndIdx = -1;
-          if (
-            newAnchorIdx >= 0 &&
-            rangeSelectAnchorPids.length > 0 &&
-            selectedIds.size > 0
-          ) {
-            var anchorIndices = rangeSelectAnchorPids
-              .map(function (p) {
-                return vis.indexOf(p);
-              })
-              .filter(function (x) {
-                return x >= 0;
-              });
-            if (anchorIndices.length > 0) {
-              var anchorMin = Math.min.apply(null, anchorIndices);
-              var anchorMax = Math.max.apply(null, anchorIndices);
-              var selIndices = [];
-              selectedIds.forEach(function (pid) {
-                var i = vis.indexOf(pid);
-                if (i >= 0) selIndices.push(i);
-              });
-              if (selIndices.length > 0) {
-                var selMin = Math.min.apply(null, selIndices);
-                var selMax = Math.max.apply(null, selIndices);
-                if (selMin < anchorMin) farEndIdx = selMin;
-                else if (selMax > anchorMax) farEndIdx = selMax;
-              }
-            }
-          }
-          rangeSelectAnchor = lpPid;
-          rangeSelectAnchorPids = [lpPid];
-          selectedIds.clear();
-          if (farEndIdx >= 0 && newAnchorIdx >= 0) {
-            var lo = Math.min(newAnchorIdx, farEndIdx);
-            var hi = Math.max(newAnchorIdx, farEndIdx);
-            for (var i = lo; i <= hi; i++) selectedIds.add(vis[i]);
-          } else {
-            selectedIds.add(lpPid);
-          }
-          rerenderAfterSelectChange();
-          toast("info", "已设为新锚点");
-        }, 600);
-        var lpOnMove = function (ev) {
-          if (!lpTimer) return;
-          var dx = (ev.clientX || 0) - lpSx,
-            dy = (ev.clientY || 0) - lpSy;
-          if (dx * dx + dy * dy > 100) {
-            clearTimeout(lpTimer);
-            lpTimer = null;
-          }
-        };
-        var lpOnUp = function () {
-          if (lpTimer) {
-            clearTimeout(lpTimer);
-            lpTimer = null;
-          }
-          $p.off(
-            "pointermove.ms-rnglp pointerup.ms-rnglp pointercancel.ms-rnglp",
-          );
-        };
-        $p.off("pointermove.ms-rnglp pointerup.ms-rnglp pointercancel.ms-rnglp")
-          .on("pointermove.ms-rnglp", lpOnMove)
-          .on("pointerup.ms-rnglp pointercancel.ms-rnglp", lpOnUp);
-        return;
-      }
-      if (selectMode) return;
-      const pid = $(this).data("pid");
-      if (longPressTimer) {
-        clearTimeout(longPressTimer);
-        longPressTimer = null;
-      }
-      longPressTriggered = false;
-      $p.data("ms-card-press-time", Date.now());
-      const sx = e.clientX || 0,
-        sy = e.clientY || 0;
-      if (longPressTimer) {
-        clearTimeout(longPressTimer);
-        longPressTimer = null;
-      }
-      longPressTimer = setTimeout(() => {
-        longPressTriggered = true;
-        longPressTimer = null;
-        selectMode = true;
-        selectedIds.add(pid);
-        if (navigator.vibrate) navigator.vibrate(30);
-        rerenderAfterSelectChange();
-        $p.find("#ms-btn-select").addClass("active");
-      }, 600);
-      const onMove = (ev) => {
-        if (!longPressTimer) return;
-        const dx = (ev.clientX || 0) - sx,
-          dy = (ev.clientY || 0) - sy;
-        if (dx * dx + dy * dy > 100) {
-          clearTimeout(longPressTimer);
-          longPressTimer = null;
-        }
-      };
-      const onUp = () => {
-        if (longPressTimer) {
-          clearTimeout(longPressTimer);
-          longPressTimer = null;
-        }
-        if (longPressTriggered) {
-          setTimeout(function () {
-            longPressTriggered = false;
-          }, 350);
-        }
-        $p.off("pointermove.mslp pointerup.mslp pointercancel.mslp");
-      };
-      $p.off("pointermove.mslp pointerup.mslp pointercancel.mslp")
-        .on("pointermove.mslp", onMove)
-        .on("pointerup.mslp pointercancel.mslp", onUp);
-    });
-    $body.on("click.ms", ".ms-card", function (e) {
-      if ($(e.target).closest(".ms-card-star,.ms-card-qbtn").length) return;
-      if (longPressTriggered) {
-        longPressTriggered = false;
-        return;
-      }
-      if ($(this).data("ms-rng-lp-fired")) {
-        $(this).removeData("ms-rng-lp-fired");
-        return;
-      }
-      const pid = $(this).data("pid");
-      if (selectMode) {
-        if (rangeSelectMode) {
-          var vis = getVisiblePromptIds();
-          var anchorValid = rangeSelectAnchorPids.some(function (p) {
-            return vis.indexOf(p) >= 0;
-          });
-          if (!rangeSelectAnchor || !anchorValid) {
-            rangeSelectAnchor = pid;
-            rangeSelectAnchorPids = [pid];
-            selectedIds.clear();
-            selectedIds.add(pid);
-          } else if (rangeSelectAnchor === pid) {
-            rangeSelectAnchor = null;
-            rangeSelectAnchorPids = [];
-            selectedIds.clear();
-          } else {
-            var anchorIdx = rangeSelectAnchorPids
-              .map(function (p) {
-                return vis.indexOf(p);
-              })
-              .filter(function (x) {
-                return x >= 0;
-              });
-            var yi = vis.indexOf(pid);
-            if (anchorIdx.length === 0 || yi < 0) {
-              rerenderAfterSelectChange();
-              return;
-            }
-            var anchorStart = Math.min.apply(null, anchorIdx);
-            var anchorEnd = Math.max.apply(null, anchorIdx);
-            var lo = Math.min(yi, anchorStart);
-            var hi = Math.max(yi, anchorEnd);
-            selectedIds.clear();
-            for (var i = lo; i <= hi; i++) selectedIds.add(vis[i]);
-          }
-        } else {
-          if (selectedIds.has(pid)) selectedIds.delete(pid);
-          else selectedIds.add(pid);
-        }
-        rerenderAfterSelectChange();
-        return;
-      }
-      var pressTime = $p.data("ms-card-press-time") || 0;
-      if (pressTime && Date.now() - pressTime > 600) {
-        return;
-      }
-      navigateTo({ name: "preview", promptId: pid });
-    });
-    $body.on("click.ms", ".ms-series-header", function (e) {
-      if ($(e.target).closest(".ms-series-check").length) return;
-      var sid = $(this).data("series-id");
-      if (!sid) return;
-      $(this).find(".ms-series-arrow").toggleClass("open");
-      $p.find("#" + sid).toggleClass("open");
-    });
-    $body.on("pointerdown.ms", ".ms-series-check", function (e) {
-      if (!selectMode || !rangeSelectMode) return;
-      e.stopPropagation();
-      var $el = $(this);
-      var ids;
-      try {
-        ids = JSON.parse($el.attr("data-series-ids"));
-      } catch (ex) {
-        return;
-      }
-      var seriesKey = $el.attr("data-series-key");
-      if (!seriesKey) return;
-      var sx = e.clientX || 0,
-        sy = e.clientY || 0;
+  });
+  $body.on("contextmenu.ms", ".ms-card", function (e) {
+    e.preventDefault();
+  });
+  $body.on("pointerdown.ms", ".ms-card", function (e) {
+    if ($(e.target).closest(".ms-card-star,.ms-card-qbtn").length) return;
+    if (selectMode && rangeSelectMode) {
+      const lpPid = $(this).data("pid");
+      var $lpEl = $(this);
+      var lpSx = e.clientX || 0,
+        lpSy = e.clientY || 0;
       var lpTimer = setTimeout(function () {
         lpTimer = null;
-        $el.data("ms-srng-lp-fired", true);
+        $lpEl.data("ms-rng-lp-fired", true);
         if (navigator.vibrate) navigator.vibrate(30);
         var vis = getVisiblePromptIds();
-        var seriesIndices = ids
-          .map(function (p) {
-            return vis.indexOf(p);
-          })
-          .filter(function (x) {
-            return x >= 0;
-          });
-        if (seriesIndices.length === 0) return;
-        var newAnchorMin = Math.min.apply(null, seriesIndices);
-        var newAnchorMax = Math.max.apply(null, seriesIndices);
+        var newAnchorIdx = vis.indexOf(lpPid);
         var farEndIdx = -1;
-        if (rangeSelectAnchorPids.length > 0 && selectedIds.size > 0) {
+        if (
+          newAnchorIdx >= 0 &&
+          rangeSelectAnchorPids.length > 0 &&
+          selectedIds.size > 0
+        ) {
           var anchorIndices = rangeSelectAnchorPids
             .map(function (p) {
               return vis.indexOf(p);
@@ -8283,76 +8153,113 @@ function closeAllSwipes(except) {
             }
           }
         }
-        rangeSelectAnchor = "series:" + seriesKey;
-        rangeSelectAnchorPids = ids.slice();
+        rangeSelectAnchor = lpPid;
+        rangeSelectAnchorPids = [lpPid];
         selectedIds.clear();
-        if (farEndIdx >= 0) {
-          var lo = Math.min(newAnchorMin, farEndIdx);
-          var hi = Math.max(newAnchorMax, farEndIdx);
+        if (farEndIdx >= 0 && newAnchorIdx >= 0) {
+          var lo = Math.min(newAnchorIdx, farEndIdx);
+          var hi = Math.max(newAnchorIdx, farEndIdx);
           for (var i = lo; i <= hi; i++) selectedIds.add(vis[i]);
         } else {
-          ids.forEach(function (id) {
-            selectedIds.add(id);
-          });
+          selectedIds.add(lpPid);
         }
         rerenderAfterSelectChange();
         toast("info", "已设为新锚点");
       }, 600);
-      var onMove = function (ev) {
+      var lpOnMove = function (ev) {
         if (!lpTimer) return;
-        var dx = (ev.clientX || 0) - sx,
-          dy = (ev.clientY || 0) - sy;
+        var dx = (ev.clientX || 0) - lpSx,
+          dy = (ev.clientY || 0) - lpSy;
         if (dx * dx + dy * dy > 100) {
           clearTimeout(lpTimer);
           lpTimer = null;
         }
       };
-      var $pp = $("#" + PANEL_ID);
-      var onUp = function () {
+      var lpOnUp = function () {
         if (lpTimer) {
           clearTimeout(lpTimer);
           lpTimer = null;
         }
-        $pp.off(
-          "pointermove.ms-srnglp pointerup.ms-srnglp pointercancel.ms-srnglp",
+        $p.off(
+          "pointermove.ms-rnglp pointerup.ms-rnglp pointercancel.ms-rnglp",
         );
       };
-      $pp
-        .off(
-          "pointermove.ms-srnglp pointerup.ms-srnglp pointercancel.ms-srnglp",
-        )
-        .on("pointermove.ms-srnglp", onMove)
-        .on("pointerup.ms-srnglp pointercancel.ms-srnglp", onUp);
-    });
-
-    $body.on("click.ms", ".ms-series-check", function (e) {
-      e.stopPropagation();
-      if (!selectMode) return;
-      if ($(this).data("ms-srng-lp-fired")) {
-        $(this).removeData("ms-srng-lp-fired");
-        return;
+      $p.off("pointermove.ms-rnglp pointerup.ms-rnglp pointercancel.ms-rnglp")
+        .on("pointermove.ms-rnglp", lpOnMove)
+        .on("pointerup.ms-rnglp pointercancel.ms-rnglp", lpOnUp);
+      return;
+    }
+    if (selectMode) return;
+    const pid = $(this).data("pid");
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+    longPressTriggered = false;
+    $p.data("ms-card-press-time", Date.now());
+    const sx = e.clientX || 0,
+      sy = e.clientY || 0;
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+    longPressTimer = setTimeout(() => {
+      longPressTriggered = true;
+      longPressTimer = null;
+      selectMode = true;
+      selectedIds.add(pid);
+      if (navigator.vibrate) navigator.vibrate(30);
+      rerenderAfterSelectChange();
+      $p.find("#ms-btn-select").addClass("active");
+    }, 600);
+    const onMove = (ev) => {
+      if (!longPressTimer) return;
+      const dx = (ev.clientX || 0) - sx,
+        dy = (ev.clientY || 0) - sy;
+      if (dx * dx + dy * dy > 100) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
       }
-      var ids;
-      try {
-        ids = JSON.parse($(this).attr("data-series-ids"));
-      } catch (ex) {
-        return;
+    };
+    const onUp = () => {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
       }
-      var seriesKey = $(this).attr("data-series-key");
-      if (rangeSelectMode && seriesKey) {
+      if (longPressTriggered) {
+        setTimeout(function () {
+          longPressTriggered = false;
+        }, 350);
+      }
+      $p.off("pointermove.mslp pointerup.mslp pointercancel.mslp");
+    };
+    $p.off("pointermove.mslp pointerup.mslp pointercancel.mslp")
+      .on("pointermove.mslp", onMove)
+      .on("pointerup.mslp pointercancel.mslp", onUp);
+  });
+  $body.on("click.ms", ".ms-card", function (e) {
+    if ($(e.target).closest(".ms-card-star,.ms-card-qbtn").length) return;
+    if (longPressTriggered) {
+      longPressTriggered = false;
+      return;
+    }
+    if ($(this).data("ms-rng-lp-fired")) {
+      $(this).removeData("ms-rng-lp-fired");
+      return;
+    }
+    const pid = $(this).data("pid");
+    if (selectMode) {
+      if (rangeSelectMode) {
         var vis = getVisiblePromptIds();
         var anchorValid = rangeSelectAnchorPids.some(function (p) {
           return vis.indexOf(p) >= 0;
         });
-        var anchorKeyForSeries = "series:" + seriesKey;
         if (!rangeSelectAnchor || !anchorValid) {
-          rangeSelectAnchor = anchorKeyForSeries;
-          rangeSelectAnchorPids = ids.slice();
+          rangeSelectAnchor = pid;
+          rangeSelectAnchorPids = [pid];
           selectedIds.clear();
-          ids.forEach(function (id) {
-            selectedIds.add(id);
-          });
-        } else if (rangeSelectAnchor === anchorKeyForSeries) {
+          selectedIds.add(pid);
+        } else if (rangeSelectAnchor === pid) {
           rangeSelectAnchor = null;
           rangeSelectAnchorPids = [];
           selectedIds.clear();
@@ -8364,263 +8271,424 @@ function closeAllSwipes(except) {
             .filter(function (x) {
               return x >= 0;
             });
-          var seriesIdx = ids
-            .map(function (p) {
-              return vis.indexOf(p);
-            })
-            .filter(function (x) {
-              return x >= 0;
-            });
-          if (anchorIdx.length === 0 || seriesIdx.length === 0) {
+          var yi = vis.indexOf(pid);
+          if (anchorIdx.length === 0 || yi < 0) {
             rerenderAfterSelectChange();
             return;
           }
-          var allIdx = anchorIdx.concat(seriesIdx);
-          var lo = Math.min.apply(null, allIdx);
-          var hi = Math.max.apply(null, allIdx);
+          var anchorStart = Math.min.apply(null, anchorIdx);
+          var anchorEnd = Math.max.apply(null, anchorIdx);
+          var lo = Math.min(yi, anchorStart);
+          var hi = Math.max(yi, anchorEnd);
           selectedIds.clear();
           for (var i = lo; i <= hi; i++) selectedIds.add(vis[i]);
         }
-        rerenderAfterSelectChange();
-        return;
+      } else {
+        if (selectedIds.has(pid)) selectedIds.delete(pid);
+        else selectedIds.add(pid);
       }
-      var allSel = ids.every(function (id) {
-        return selectedIds.has(id);
-      });
-      ids.forEach(function (id) {
-        if (allSel) selectedIds.delete(id);
-        else selectedIds.add(id);
-      });
       rerenderAfterSelectChange();
-    });
-    $body.on("click.ms", ".ms-card-star", function (e) {
-      e.stopPropagation();
-      toggleStar($(this).data("pid"));
-      refreshKeepingState();
-    });
-    $body.on("click.ms", ".ms-card-qbtn", function (e) {
-      e.stopPropagation();
-      const action = $(this).data("qaction"),
-        pid = $(this).data("pid");
-      if (action === "send") sendToInput(pid);
-      else if (action === "send-gen") sendAndGenerate(pid);
-    });
-    $footer.on("click.ms", "[data-action='manage-groups']", () =>
-      navigateTo({ name: "groups" }),
-    );
-    $footer.on("click.ms", "[data-action='manage-tags']", () =>
-      navigateTo({ name: "tag-manage" }),
-    );
-    $footer.on("click.ms", "[data-action='import']", () =>
-      $p.find("#ms-file-input").trigger("click"),
-    );
-    $footer.on("click.ms", "[data-action='export']", () =>
-      navigateTo({ name: "export" }),
-    );
-    $footer.on("click.ms", "[data-action='settings']", () =>
-      navigateTo({ name: "settings" }),
-    );
-    $footer.on("click.ms", "[data-action='history-list']", () =>
-      navigateTo({ name: "history-list" }),
-    );
-    $footer.on("click.ms", "[data-action='subscriptions']", () =>
-      navigateTo({ name: "subscriptions" }),
-    );
-    $footer.on("click.ms", "[data-batch='selectall']", () => {
-      const vis = getVisiblePromptIds();
-      if (vis.length > 0 && vis.every((id) => selectedIds.has(id)))
-        vis.forEach((id) => selectedIds.delete(id));
-      else vis.forEach((id) => selectedIds.add(id));
-      refreshKeepingState();
-    });
-    function ensureBatchSelection() {
-      if (selectedIds.size > 0) return true;
-      toast("warning", "请先勾选要操作的剧场（批量操作请在底栏全选）");
-      return false;
+      return;
     }
-    $footer.on("click.ms", "[data-batch='delete']", () => {
-      if (!ensureBatchSelection()) return;
-      msConfirm(
-        "确定删除选中的 " + selectedIds.size + " 项吗？\n\n该操作不可撤销",
-        {
-          title: "批量删除",
-          dangerous: true,
-          okText: "删除",
-        },
-      ).then(function (ok) {
-        if (!ok) return;
-        deletePrompts([...selectedIds]);
-        exitSelectMode();
-        renderView();
-      });
-    });
-    $footer.on("click.ms", "[data-batch='move']", () => {
-      if (!ensureBatchSelection()) return;
-      showMoveDropdown($p);
-    });
-    $footer.on("click.ms", "[data-batch='tag']", () => {
-      if (!ensureBatchSelection()) return;
-      showBatchTagDropdown($p);
-    });
-    $footer.on("click.ms", "[data-batch='author']", () => {
-      if (!ensureBatchSelection()) return;
-      showBatchAuthorDialog();
-    });
-    $footer.on("click.ms", "[data-batch='series']", () => {
-      if (!ensureBatchSelection()) return;
-      showBatchSeriesDropdown($p);
-    });
-    $footer.on("click.ms", "[data-batch='character']", () => {
-      if (!ensureBatchSelection()) return;
-      showBatchCharacterDropdown($p);
-    });
-    $footer.on("click.ms", "[data-batch='export']", () => {
-      if (selectedIds.size === 0) {
-        toast("warning", "请先选择");
-        return;
-      }
-      navigateTo({ name: "export-batch-options" });
-    });
-    $p.off("change.ms-file").on(
-      "change.ms-file",
-      "#ms-file-input",
-      function () {
-        if (this.files[0]) doImport(this.files[0]);
-        this.value = "";
-      },
-    );
-    $p.off("click.ms-collapse").on(
-      "click.ms-collapse",
-      "#ms-btn-collapse",
-      toggleCollapse,
-    );
-    $p.off("click.ms-close").on("click.ms-close", "#ms-btn-close", hidePanel);
-    $p.off("click.ms-back").on("click.ms-back", "#ms-go-back", navigateBack);
-    var _scrollRaf = null;
-    $body.off("scroll.ms-scroll-top").on("scroll.ms-scroll-top", function () {
-      var el = this;
-      if (_scrollRaf) return;
-      _scrollRaf = requestAnimationFrame(function () {
-        _scrollRaf = null;
-        var $btnTop = $p.find("#ms-scroll-top");
-        var $btnBottom = $p.find("#ms-scroll-bottom");
-        if (el.scrollTop > 150) $btnTop.addClass("visible");
-        else $btnTop.removeClass("visible");
-        var distToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-        if (distToBottom > 150) $btnBottom.addClass("visible");
-        else $btnBottom.removeClass("visible");
-        _loadMorePagedBlocks($body);
-      });
-    });
-    $p.off("click.ms-scroll-top").on(
-      "click.ms-scroll-top",
-      "#ms-scroll-top",
-      function () {
-        $body.animate({ scrollTop: 0 }, 200);
-      },
-    );
-    $p.off("click.ms-scroll-bottom").on(
-      "click.ms-scroll-bottom",
-      "#ms-scroll-bottom",
-      function () {
-        var $msBody = $p.find("#ms-body");
-        $msBody.animate({ scrollTop: $msBody[0].scrollHeight }, 200);
-      },
-    );
-  }
-
-  function bindFilterEvents($p) {
-    $p.find("#ms-filter-panel")
-      .off(".msf")
-      .on("click.msf", "[data-filter-tag]", function () {
-        const tid = $(this).data("filter-tag");
-        const mode = filterState.tagSelectMode || "include";
-        if (mode === "exclude") {
-          var ii = filterState.includeTags.indexOf(tid);
-          if (ii >= 0) filterState.includeTags.splice(ii, 1);
-          var ei = filterState.excludeTags.indexOf(tid);
-          if (ei >= 0) filterState.excludeTags.splice(ei, 1);
-          else filterState.excludeTags.push(tid);
-        } else {
-          var ei2 = filterState.excludeTags.indexOf(tid);
-          if (ei2 >= 0) filterState.excludeTags.splice(ei2, 1);
-          var ii2 = filterState.includeTags.indexOf(tid);
-          if (ii2 >= 0) filterState.includeTags.splice(ii2, 1);
-          else filterState.includeTags.push(tid);
+    var pressTime = $p.data("ms-card-press-time") || 0;
+    if (pressTime && Date.now() - pressTime > 600) {
+      return;
+    }
+    navigateTo({ name: "preview", promptId: pid });
+  });
+  $body.on("click.ms", ".ms-series-header", function (e) {
+    if ($(e.target).closest(".ms-series-check").length) return;
+    var sid = $(this).data("series-id");
+    if (!sid) return;
+    $(this).find(".ms-series-arrow").toggleClass("open");
+    $p.find("#" + sid).toggleClass("open");
+  });
+  $body.on("pointerdown.ms", ".ms-series-check", function (e) {
+    if (!selectMode || !rangeSelectMode) return;
+    e.stopPropagation();
+    var $el = $(this);
+    var ids;
+    try {
+      ids = JSON.parse($el.attr("data-series-ids"));
+    } catch (ex) {
+      return;
+    }
+    var seriesKey = $el.attr("data-series-key");
+    if (!seriesKey) return;
+    var sx = e.clientX || 0,
+      sy = e.clientY || 0;
+    var lpTimer = setTimeout(function () {
+      lpTimer = null;
+      $el.data("ms-srng-lp-fired", true);
+      if (navigator.vibrate) navigator.vibrate(30);
+      var vis = getVisiblePromptIds();
+      var seriesIndices = ids
+        .map(function (p) {
+          return vis.indexOf(p);
+        })
+        .filter(function (x) {
+          return x >= 0;
+        });
+      if (seriesIndices.length === 0) return;
+      var newAnchorMin = Math.min.apply(null, seriesIndices);
+      var newAnchorMax = Math.max.apply(null, seriesIndices);
+      var farEndIdx = -1;
+      if (rangeSelectAnchorPids.length > 0 && selectedIds.size > 0) {
+        var anchorIndices = rangeSelectAnchorPids
+          .map(function (p) {
+            return vis.indexOf(p);
+          })
+          .filter(function (x) {
+            return x >= 0;
+          });
+        if (anchorIndices.length > 0) {
+          var anchorMin = Math.min.apply(null, anchorIndices);
+          var anchorMax = Math.max.apply(null, anchorIndices);
+          var selIndices = [];
+          selectedIds.forEach(function (pid) {
+            var i = vis.indexOf(pid);
+            if (i >= 0) selIndices.push(i);
+          });
+          if (selIndices.length > 0) {
+            var selMin = Math.min.apply(null, selIndices);
+            var selMax = Math.max.apply(null, selIndices);
+            if (selMin < anchorMin) farEndIdx = selMin;
+            else if (selMax > anchorMax) farEndIdx = selMax;
+          }
         }
-        $p.find("#ms-filter-panel").html(buildFilterPanel());
-        bindFilterEvents($p);
-        renderBodyOnly();
-      })
-      .on("click.msf", "#ms-tag-mode-toggle", function () {
-        data.settings.filterTagMode =
-          data.settings.filterTagMode === "and" ? "or" : "and";
-        saveData();
-        $p.find("#ms-filter-panel").html(buildFilterPanel());
-        bindFilterEvents($p);
-        renderBodyOnly();
-      })
-      .on("click.msf", "#ms-tag-exclude-toggle", function () {
-        filterState.tagSelectMode =
-          filterState.tagSelectMode === "exclude" ? "include" : "exclude";
-        $p.find("#ms-filter-panel").html(buildFilterPanel());
-        bindFilterEvents($p);
-      })
-      .on("click.msf", "#ms-clear-filter", function () {
-        filterState.includeTags = [];
-        filterState.excludeTags = [];
-        filterState.groupId = null;
-        $p.find("#ms-filter-panel").html(buildFilterPanel());
-        bindFilterEvents($p);
-        renderBodyOnly();
-      })
-      .on("click.msf", "[data-filter-group]", function () {
-        var gid = $(this).data("filter-group") || null;
-        filterState.groupId = filterState.groupId === gid ? null : gid;
-        $p.find("#ms-filter-panel").html(buildFilterPanel());
-        bindFilterEvents($p);
-        renderBodyOnly();
-      })
-      .on("click.msf", "#ms-filter-only-current-char", function () {
-        filterState.onlyCurrentChar = !filterState.onlyCurrentChar;
-        $p.find("#ms-filter-panel").html(buildFilterPanel());
-        bindFilterEvents($p);
-        renderBodyOnly();
+      }
+      rangeSelectAnchor = "series:" + seriesKey;
+      rangeSelectAnchorPids = ids.slice();
+      selectedIds.clear();
+      if (farEndIdx >= 0) {
+        var lo = Math.min(newAnchorMin, farEndIdx);
+        var hi = Math.max(newAnchorMax, farEndIdx);
+        for (var i = lo; i <= hi; i++) selectedIds.add(vis[i]);
+      } else {
+        ids.forEach(function (id) {
+          selectedIds.add(id);
+        });
+      }
+      rerenderAfterSelectChange();
+      toast("info", "已设为新锚点");
+    }, 600);
+    var onMove = function (ev) {
+      if (!lpTimer) return;
+      var dx = (ev.clientX || 0) - sx,
+        dy = (ev.clientY || 0) - sy;
+      if (dx * dx + dy * dy > 100) {
+        clearTimeout(lpTimer);
+        lpTimer = null;
+      }
+    };
+    var $pp = $("#" + PANEL_ID);
+    var onUp = function () {
+      if (lpTimer) {
+        clearTimeout(lpTimer);
+        lpTimer = null;
+      }
+      $pp.off(
+        "pointermove.ms-srnglp pointerup.ms-srnglp pointercancel.ms-srnglp",
+      );
+    };
+    $pp
+      .off("pointermove.ms-srnglp pointerup.ms-srnglp pointercancel.ms-srnglp")
+      .on("pointermove.ms-srnglp", onMove)
+      .on("pointerup.ms-srnglp pointercancel.ms-srnglp", onUp);
+  });
+
+  $body.on("click.ms", ".ms-series-check", function (e) {
+    e.stopPropagation();
+    if (!selectMode) return;
+    if ($(this).data("ms-srng-lp-fired")) {
+      $(this).removeData("ms-srng-lp-fired");
+      return;
+    }
+    var ids;
+    try {
+      ids = JSON.parse($(this).attr("data-series-ids"));
+    } catch (ex) {
+      return;
+    }
+    var seriesKey = $(this).attr("data-series-key");
+    if (rangeSelectMode && seriesKey) {
+      var vis = getVisiblePromptIds();
+      var anchorValid = rangeSelectAnchorPids.some(function (p) {
+        return vis.indexOf(p) >= 0;
       });
-  }
-  function buildColorPickerHTML(currentColor, dataAttrName, dataIdValue) {
-    var isCustom = !GROUP_COLORS.includes(currentColor);
-    var html = '<div class="ms-color-inline">';
-    GROUP_COLORS.forEach(function (c) {
-      html +=
-        '<span class="ms-color-opt ' +
-        (currentColor === c ? "selected" : "") +
-        '" data-color="' +
-        c +
-        '" ' +
-        dataAttrName +
-        '="' +
-        dataIdValue +
-        '" style="background:' +
-        c +
-        '"></span>';
+      var anchorKeyForSeries = "series:" + seriesKey;
+      if (!rangeSelectAnchor || !anchorValid) {
+        rangeSelectAnchor = anchorKeyForSeries;
+        rangeSelectAnchorPids = ids.slice();
+        selectedIds.clear();
+        ids.forEach(function (id) {
+          selectedIds.add(id);
+        });
+      } else if (rangeSelectAnchor === anchorKeyForSeries) {
+        rangeSelectAnchor = null;
+        rangeSelectAnchorPids = [];
+        selectedIds.clear();
+      } else {
+        var anchorIdx = rangeSelectAnchorPids
+          .map(function (p) {
+            return vis.indexOf(p);
+          })
+          .filter(function (x) {
+            return x >= 0;
+          });
+        var seriesIdx = ids
+          .map(function (p) {
+            return vis.indexOf(p);
+          })
+          .filter(function (x) {
+            return x >= 0;
+          });
+        if (anchorIdx.length === 0 || seriesIdx.length === 0) {
+          rerenderAfterSelectChange();
+          return;
+        }
+        var allIdx = anchorIdx.concat(seriesIdx);
+        var lo = Math.min.apply(null, allIdx);
+        var hi = Math.max.apply(null, allIdx);
+        selectedIds.clear();
+        for (var i = lo; i <= hi; i++) selectedIds.add(vis[i]);
+      }
+      rerenderAfterSelectChange();
+      return;
+    }
+    var allSel = ids.every(function (id) {
+      return selectedIds.has(id);
     });
+    ids.forEach(function (id) {
+      if (allSel) selectedIds.delete(id);
+      else selectedIds.add(id);
+    });
+    rerenderAfterSelectChange();
+  });
+  $body.on("click.ms", ".ms-card-star", function (e) {
+    e.stopPropagation();
+    toggleStar($(this).data("pid"));
+    refreshKeepingState();
+  });
+  $body.on("click.ms", ".ms-card-qbtn", function (e) {
+    e.stopPropagation();
+    const action = $(this).data("qaction"),
+      pid = $(this).data("pid");
+    if (action === "send") sendToInput(pid);
+    else if (action === "send-gen") sendAndGenerate(pid);
+  });
+  $footer.on("click.ms", "[data-action='manage-groups']", () =>
+    navigateTo({ name: "groups" }),
+  );
+  $footer.on("click.ms", "[data-action='manage-tags']", () =>
+    navigateTo({ name: "tag-manage" }),
+  );
+  $footer.on("click.ms", "[data-action='import']", () =>
+    $p.find("#ms-file-input").trigger("click"),
+  );
+  $footer.on("click.ms", "[data-action='export']", () =>
+    navigateTo({ name: "export" }),
+  );
+  $footer.on("click.ms", "[data-action='settings']", () =>
+    navigateTo({ name: "settings" }),
+  );
+  $footer.on("click.ms", "[data-action='history-list']", () =>
+    navigateTo({ name: "history-list" }),
+  );
+  $footer.on("click.ms", "[data-action='subscriptions']", () =>
+    navigateTo({ name: "subscriptions" }),
+  );
+  $footer.on("click.ms", "[data-batch='selectall']", () => {
+    const vis = getVisiblePromptIds();
+    if (vis.length > 0 && vis.every((id) => selectedIds.has(id)))
+      vis.forEach((id) => selectedIds.delete(id));
+    else vis.forEach((id) => selectedIds.add(id));
+    refreshKeepingState();
+  });
+  function ensureBatchSelection() {
+    if (selectedIds.size > 0) return true;
+    toast("warning", "请先勾选要操作的剧场（批量操作请在底栏全选）");
+    return false;
+  }
+  $footer.on("click.ms", "[data-batch='delete']", () => {
+    if (!ensureBatchSelection()) return;
+    msConfirm(
+      "确定删除选中的 " + selectedIds.size + " 项吗？\n\n该操作不可撤销",
+      {
+        title: "批量删除",
+        dangerous: true,
+        okText: "删除",
+      },
+    ).then(function (ok) {
+      if (!ok) return;
+      deletePrompts([...selectedIds]);
+      exitSelectMode();
+      renderView();
+    });
+  });
+  $footer.on("click.ms", "[data-batch='move']", () => {
+    if (!ensureBatchSelection()) return;
+    showMoveDropdown($p);
+  });
+  $footer.on("click.ms", "[data-batch='tag']", () => {
+    if (!ensureBatchSelection()) return;
+    showBatchTagDropdown($p);
+  });
+  $footer.on("click.ms", "[data-batch='author']", () => {
+    if (!ensureBatchSelection()) return;
+    showBatchAuthorDialog();
+  });
+  $footer.on("click.ms", "[data-batch='series']", () => {
+    if (!ensureBatchSelection()) return;
+    showBatchSeriesDropdown($p);
+  });
+  $footer.on("click.ms", "[data-batch='character']", () => {
+    if (!ensureBatchSelection()) return;
+    showBatchCharacterDropdown($p);
+  });
+  $footer.on("click.ms", "[data-batch='export']", () => {
+    if (selectedIds.size === 0) {
+      toast("warning", "请先选择");
+      return;
+    }
+    navigateTo({ name: "export-batch-options" });
+  });
+  $p.off("change.ms-file").on("change.ms-file", "#ms-file-input", function () {
+    if (this.files[0]) doImport(this.files[0]);
+    this.value = "";
+  });
+  $p.off("click.ms-collapse").on(
+    "click.ms-collapse",
+    "#ms-btn-collapse",
+    toggleCollapse,
+  );
+  $p.off("click.ms-close").on("click.ms-close", "#ms-btn-close", hidePanel);
+  $p.off("click.ms-back").on("click.ms-back", "#ms-go-back", navigateBack);
+  var _scrollRaf = null;
+  $body.off("scroll.ms-scroll-top").on("scroll.ms-scroll-top", function () {
+    var el = this;
+    if (_scrollRaf) return;
+    _scrollRaf = requestAnimationFrame(function () {
+      _scrollRaf = null;
+      var $btnTop = $p.find("#ms-scroll-top");
+      var $btnBottom = $p.find("#ms-scroll-bottom");
+      if (el.scrollTop > 150) $btnTop.addClass("visible");
+      else $btnTop.removeClass("visible");
+      var distToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distToBottom > 150) $btnBottom.addClass("visible");
+      else $btnBottom.removeClass("visible");
+      _loadMorePagedBlocks($body);
+    });
+  });
+  $p.off("click.ms-scroll-top").on(
+    "click.ms-scroll-top",
+    "#ms-scroll-top",
+    function () {
+      $body.animate({ scrollTop: 0 }, 200);
+    },
+  );
+  $p.off("click.ms-scroll-bottom").on(
+    "click.ms-scroll-bottom",
+    "#ms-scroll-bottom",
+    function () {
+      var $msBody = $p.find("#ms-body");
+      $msBody.animate({ scrollTop: $msBody[0].scrollHeight }, 200);
+    },
+  );
+}
+
+function bindFilterEvents($p) {
+  $p.find("#ms-filter-panel")
+    .off(".msf")
+    .on("click.msf", "[data-filter-tag]", function () {
+      const tid = $(this).data("filter-tag");
+      const mode = filterState.tagSelectMode || "include";
+      if (mode === "exclude") {
+        var ii = filterState.includeTags.indexOf(tid);
+        if (ii >= 0) filterState.includeTags.splice(ii, 1);
+        var ei = filterState.excludeTags.indexOf(tid);
+        if (ei >= 0) filterState.excludeTags.splice(ei, 1);
+        else filterState.excludeTags.push(tid);
+      } else {
+        var ei2 = filterState.excludeTags.indexOf(tid);
+        if (ei2 >= 0) filterState.excludeTags.splice(ei2, 1);
+        var ii2 = filterState.includeTags.indexOf(tid);
+        if (ii2 >= 0) filterState.includeTags.splice(ii2, 1);
+        else filterState.includeTags.push(tid);
+      }
+      $p.find("#ms-filter-panel").html(buildFilterPanel());
+      bindFilterEvents($p);
+      renderBodyOnly();
+    })
+    .on("click.msf", "#ms-tag-mode-toggle", function () {
+      data.settings.filterTagMode =
+        data.settings.filterTagMode === "and" ? "or" : "and";
+      saveData();
+      $p.find("#ms-filter-panel").html(buildFilterPanel());
+      bindFilterEvents($p);
+      renderBodyOnly();
+    })
+    .on("click.msf", "#ms-tag-exclude-toggle", function () {
+      filterState.tagSelectMode =
+        filterState.tagSelectMode === "exclude" ? "include" : "exclude";
+      $p.find("#ms-filter-panel").html(buildFilterPanel());
+      bindFilterEvents($p);
+    })
+    .on("click.msf", "#ms-clear-filter", function () {
+      filterState.includeTags = [];
+      filterState.excludeTags = [];
+      filterState.groupId = null;
+      $p.find("#ms-filter-panel").html(buildFilterPanel());
+      bindFilterEvents($p);
+      renderBodyOnly();
+    })
+    .on("click.msf", "[data-filter-group]", function () {
+      var gid = $(this).data("filter-group") || null;
+      filterState.groupId = filterState.groupId === gid ? null : gid;
+      $p.find("#ms-filter-panel").html(buildFilterPanel());
+      bindFilterEvents($p);
+      renderBodyOnly();
+    })
+    .on("click.msf", "#ms-filter-only-current-char", function () {
+      filterState.onlyCurrentChar = !filterState.onlyCurrentChar;
+      $p.find("#ms-filter-panel").html(buildFilterPanel());
+      bindFilterEvents($p);
+      renderBodyOnly();
+    });
+}
+function buildColorPickerHTML(currentColor, dataAttrName, dataIdValue) {
+  var isCustom = !GROUP_COLORS.includes(currentColor);
+  var html = '<div class="ms-color-inline">';
+  GROUP_COLORS.forEach(function (c) {
     html +=
-      '<span class="ms-color-opt ms-color-custom ' +
-      (isCustom ? "selected" : "") +
+      '<span class="ms-color-opt ' +
+      (currentColor === c ? "selected" : "") +
+      '" data-color="' +
+      c +
       '" ' +
       dataAttrName +
       '="' +
       dataIdValue +
-      '" title="+自定义"><input type="color" class="ms-custom-color-input" ' +
-      dataAttrName +
-      '="' +
-      dataIdValue +
-      '" value="' +
-      currentColor +
-      '"></span></div>';
-    return html;
-  }
+      '" style="background:' +
+      c +
+      '"></span>';
+  });
+  html +=
+    '<span class="ms-color-opt ms-color-custom ' +
+    (isCustom ? "selected" : "") +
+    '" ' +
+    dataAttrName +
+    '="' +
+    dataIdValue +
+    '" title="+自定义"><input type="color" class="ms-custom-color-input" ' +
+    dataAttrName +
+    '="' +
+    dataIdValue +
+    '" value="' +
+    currentColor +
+    '"></span></div>';
+  return html;
+}
 
 function renderList() {
   const $p = $("#" + PANEL_ID);
@@ -8653,6 +8721,58 @@ function renderGroup(v) {
   const filtered = sortPrompts(filterPrompts(searchPrompts(list, searchQuery)));
   const isIP = g && isIPGroup(g);
   $p.find("#ms-title").text(title);
+  if (g && g.note) {
+    var $infoBtn = $p.find("#ms-title-info");
+    var $noteInline = $p.find("#ms-title-note-inline");
+    var $notePanel = $p.find("#ms-title-note-panel");
+    var rawNote = String(g.note || "").trim();
+    var noteText = rawNote.replace(
+      /(^|[\s(（])((?:https?:\/\/|www\.)[^\s<>"'）)]+)/g,
+      function (m, prefix, url) {
+        var href = url.indexOf("www.") === 0 ? "https://" + url : url;
+        return prefix + "[" + url + "](" + href + ")";
+      },
+    );
+    $notePanel.html(
+      '<div class="ms-preview-content">' + renderMd(noteText) + "</div>",
+    );
+    var noteHasRichContent =
+      /[\r\n]/.test(rawNote) ||
+      /\[[^\]]+\]\([^)]+\)/.test(rawNote) ||
+      /(?:https?:\/\/|www\.)/.test(rawNote);
+    $noteInline.text(rawNote).data("fits-inline", false);
+    requestAnimationFrame(function () {
+      if (!$noteInline.length) return;
+      $noteInline.addClass("open");
+      var fitsInline =
+        !noteHasRichContent &&
+        $noteInline[0] &&
+        $noteInline[0].scrollWidth <= $noteInline[0].clientWidth + 1;
+      $noteInline.removeClass("open").data("fits-inline", fitsInline);
+    });
+    $infoBtn
+      .css("display", "flex")
+      .off("click.ms-note")
+      .on("click.ms-note", function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        $infoBtn.toggleClass("open");
+        var showInline = $noteInline.data("fits-inline") === true;
+        if (!noteHasRichContent && $noteInline[0]) {
+          $noteInline.addClass("open");
+          showInline =
+            $noteInline[0].scrollWidth <= $noteInline[0].clientWidth + 1;
+          $noteInline.removeClass("open").data("fits-inline", showInline);
+        }
+        if ($infoBtn.hasClass("open")) {
+          if (showInline) $noteInline.addClass("open");
+          else $notePanel.addClass("open");
+        } else {
+          $noteInline.removeClass("open");
+          $notePanel.removeClass("open");
+        }
+      });
+  }
   $p.find("#ms-toolbar").html(
     buildToolbar({
       back: true,
@@ -11233,236 +11353,240 @@ function renderHistoryDiff(v) {
     });
   }
 
-  function renderGroups() {
-    const $p = $("#" + PANEL_ID);
-    $p.find("#ms-title").text("分组管理");
-    $p.find("#ms-toolbar").html(
-      `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">分组管理</span><div class="ms-toolbar-actions"><button class="ms-tbtn ${groupSelectMode ? "active" : ""}" id="ms-group-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-group-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-group-add"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
-    );
-    let expandedColorId = null;
-    function buildGroupsBody() {
-      let html = "";
-      if (data.groups.length === 0)
-        html = `<div class="ms-empty"><i class="fa-solid fa-folder-open"></i>还没有分组</div>`;
-      else
-        data.groups.forEach((g) => {
-          const cnt = getPromptsInGroup(g.id).length;
-          const isSel = selectedGroupIds.has(g.id);
-          var isIP = isIPGroup(g);
-          var ipBadge = isIP
-            ? '<span style="display:inline-block;margin-left:4px;padding:1px 5px;background:rgba(var(--ms-accent-rgb),0.15);color:var(--ms-accent);border-radius:3px;font-size:9px;vertical-align:middle;"><i class="fa-solid fa-layer-group" style="font-size:8px;margin-right:2px;"></i>IP·' +
-              g.charKeys.length +
-              "</span>"
-            : "";
-          var iconH = isIP
-            ? buildGroupAvatarHTML(g, 22)
-            : '<span class="ms-gitem-color" style="background:' +
-              g.color +
-              ";cursor:" +
-              (groupSelectMode ? "default" : "pointer") +
-              ';"' +
-              (groupSelectMode ? "" : ' data-gid="' + g.id + '"') +
-              "></span>";
-          if (groupSelectMode) {
-            html += `<div class="ms-gitem ${isSel ? "ms-gitem-selected" : ""}" data-gid="${g.id}"><div class="ms-gitem-check"><i class="fa-solid fa-check"></i></div>${iconH}<span class="ms-gitem-name">${esc(g.name)}${ipBadge}${g.note ? "<br><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#555);font-style:italic;'>" + esc(truncate(g.note, 30)) + "</span>" : ""}</span><span class="ms-gitem-cnt">${cnt}</span></div>`;
-          } else {
-            html += `<div class="ms-gitem">${iconH}<span class="ms-gitem-name">${esc(g.name)}${ipBadge}${g.note ? "<br><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#555);font-style:italic;'>" + esc(truncate(g.note, 30)) + "</span>" : ""}</span><span class="ms-gitem-cnt">${cnt}</span><button class="ms-gitem-btn" data-action="rename" data-gid="${g.id}"><i class="fa-solid fa-pen"></i></button><button class="ms-gitem-btn danger" data-action="delete-group" data-gid="${g.id}"><i class="fa-solid fa-trash"></i></button></div>`;
-            if (expandedColorId === g.id) {
-              html += buildColorPickerHTML(g.color, "data-gid", g.id);
-            }
+function renderGroups() {
+  const $p = $("#" + PANEL_ID);
+  $p.find("#ms-title").text("分组管理");
+  $p.find("#ms-toolbar").html(
+    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">分组管理</span><div class="ms-toolbar-actions"><button class="ms-tbtn ${groupSelectMode ? "active" : ""}" id="ms-group-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-group-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-group-add"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
+  );
+  let expandedColorId = null;
+  function buildGroupsBody() {
+    let html = "";
+    if (data.groups.length === 0)
+      html = `<div class="ms-empty"><i class="fa-solid fa-folder-open"></i>还没有分组</div>`;
+    else
+      data.groups.forEach((g) => {
+        const cnt = getPromptsInGroup(g.id).length;
+        const isSel = selectedGroupIds.has(g.id);
+        var isIP = isIPGroup(g);
+        var ipBadge = isIP
+          ? '<span style="display:inline-block;margin-left:4px;padding:1px 5px;background:rgba(var(--ms-accent-rgb),0.15);color:var(--ms-accent);border-radius:3px;font-size:9px;vertical-align:middle;"><i class="fa-solid fa-layer-group" style="font-size:8px;margin-right:2px;"></i>IP·' +
+            g.charKeys.length +
+            "</span>"
+          : "";
+        var iconH = isIP
+          ? buildGroupAvatarHTML(g, 22)
+          : '<span class="ms-gitem-color" style="background:' +
+            g.color +
+            ";cursor:" +
+            (groupSelectMode ? "default" : "pointer") +
+            ';"' +
+            (groupSelectMode ? "" : ' data-gid="' + g.id + '"') +
+            "></span>";
+        if (groupSelectMode) {
+          html += `<div class="ms-gitem ${isSel ? "ms-gitem-selected" : ""}" data-gid="${g.id}"><div class="ms-gitem-check"><i class="fa-solid fa-check"></i></div>${iconH}<span class="ms-gitem-name">${esc(g.name)}${ipBadge}${g.note ? "<br><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#555);font-style:italic;'>" + esc(truncate(g.note, 30)) + "</span>" : ""}</span><span class="ms-gitem-cnt">${cnt}</span></div>`;
+        } else {
+          html += `<div class="ms-gitem">${iconH}<span class="ms-gitem-name">${esc(g.name)}${ipBadge}${g.note ? "<br><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#555);font-style:italic;'>" + esc(truncate(g.note, 30)) + "</span>" : ""}</span><span class="ms-gitem-cnt">${cnt}</span><button class="ms-gitem-btn" data-action="rename" data-gid="${g.id}"><i class="fa-solid fa-pen"></i></button><button class="ms-gitem-btn danger" data-action="delete-group" data-gid="${g.id}"><i class="fa-solid fa-trash"></i></button></div>`;
+          if (expandedColorId === g.id) {
+            html += buildColorPickerHTML(g.color, "data-gid", g.id);
           }
-        });
-      return html;
-    }
-    function buildGroupBatchFooter() {
+        }
+      });
+    return html;
+  }
+  function buildGroupBatchFooter() {
+    const allSel =
+      data.groups.length > 0 &&
+      data.groups.every((g) => selectedGroupIds.has(g.id));
+    const noneSel = selectedGroupIds.size === 0;
+    const selIcon = allSel
+      ? "fa-solid fa-square-check"
+      : noneSel
+        ? "fa-regular fa-square"
+        : "fa-solid fa-square-minus";
+    const selColor = noneSel
+      ? "var(--SmartThemeQuoteColor,#666)"
+      : "var(--ms-accent)";
+    const selLabel = allSel ? " 取消" : " 全选";
+    return `<div class="ms-batch-bar"><span class="ms-batch-count"><i class="fa-solid fa-list-check"></i> ${selectedGroupIds.size}</span><button class="ms-batch-btn" data-gbatch="selectall"><i class="${selIcon}" style="color:${selColor};"></i><span class="ms-btn-label">${selLabel}</span></button><button class="ms-batch-btn danger" data-gbatch="delete"><i class="fa-solid fa-trash"></i><span class="ms-btn-label"> 删除</span></button></div>`;
+  }
+  $p.find("#ms-body").html(buildGroupsBody());
+  if (groupSelectMode) {
+    $p.find("#ms-footer").html(buildGroupBatchFooter()).show();
+  } else {
+    $p.find("#ms-footer").hide();
+  }
+  bindAllEvents();
+  $p.find("#ms-toolbar").on("click.ms", "#ms-group-select", () => {
+    groupSelectMode = !groupSelectMode;
+    if (!groupSelectMode) selectedGroupIds.clear();
+    renderGroups();
+  });
+  $p.find("#ms-toolbar").on("click.ms", "#ms-group-add", () =>
+    navigateTo({ name: "group-edit", groupId: null }),
+  );
+  $p.find("#ms-toolbar").on("click.ms", "#ms-group-reorder", () => {
+    if (data.groups.length > 1) navigateTo({ name: "reorder-groups" });
+    else toast("info", "至少需要2个分组才能排序");
+  });
+  if (groupSelectMode) {
+    $p.find("#ms-body").on("click.ms", ".ms-gitem", function () {
+      const gid = $(this).data("gid");
+      if (!gid) return;
+      if (selectedGroupIds.has(gid)) selectedGroupIds.delete(gid);
+      else selectedGroupIds.add(gid);
+      $p.find("#ms-body").html(buildGroupsBody());
+      $p.find("#ms-footer").html(buildGroupBatchFooter());
+    });
+    $p.find("#ms-footer").on("click.ms", "[data-gbatch='selectall']", () => {
       const allSel =
         data.groups.length > 0 &&
         data.groups.every((g) => selectedGroupIds.has(g.id));
-      const noneSel = selectedGroupIds.size === 0;
-      const selIcon = allSel
-        ? "fa-solid fa-square-check"
-        : noneSel
-          ? "fa-regular fa-square"
-          : "fa-solid fa-square-minus";
-      const selColor = noneSel
-        ? "var(--SmartThemeQuoteColor,#666)"
-        : "var(--ms-accent)";
-      const selLabel = allSel ? " 取消" : " 全选";
-      return `<div class="ms-batch-bar"><span class="ms-batch-count"><i class="fa-solid fa-list-check"></i> ${selectedGroupIds.size}</span><button class="ms-batch-btn" data-gbatch="selectall"><i class="${selIcon}" style="color:${selColor};"></i><span class="ms-btn-label">${selLabel}</span></button><button class="ms-batch-btn danger" data-gbatch="delete"><i class="fa-solid fa-trash"></i><span class="ms-btn-label"> 删除</span></button></div>`;
-    }
-    $p.find("#ms-body").html(buildGroupsBody());
-    if (groupSelectMode) {
-      $p.find("#ms-footer").html(buildGroupBatchFooter()).show();
-    } else {
-      $p.find("#ms-footer").hide();
-    }
-    bindAllEvents();
-    $p.find("#ms-toolbar").on("click.ms", "#ms-group-select", () => {
-      groupSelectMode = !groupSelectMode;
-      if (!groupSelectMode) selectedGroupIds.clear();
-      renderGroups();
+      if (allSel) selectedGroupIds.clear();
+      else data.groups.forEach((g) => selectedGroupIds.add(g.id));
+      $p.find("#ms-body").html(buildGroupsBody());
+      $p.find("#ms-footer").html(buildGroupBatchFooter());
     });
-    $p.find("#ms-toolbar").on("click.ms", "#ms-group-add", () =>
-      navigateTo({ name: "group-edit", groupId: null }),
-    );
-    $p.find("#ms-toolbar").on("click.ms", "#ms-group-reorder", () => {
-      if (data.groups.length > 1) navigateTo({ name: "reorder-groups" });
-      else toast("info", "至少需要2个分组才能排序");
+    $p.find("#ms-footer").on("click.ms", "[data-gbatch='delete']", () => {
+      if (selectedGroupIds.size === 0) return;
+      let totalPrompts = 0;
+      selectedGroupIds.forEach((gid) => {
+        totalPrompts += getPromptsInGroup(gid).length;
+      });
+      const msg =
+        totalPrompts > 0
+          ? `确定删除选中的 ${selectedGroupIds.size} 个分组吗？\n其中共有 ${totalPrompts} 条剧场会变为未分组。`
+          : `确定删除选中的 ${selectedGroupIds.size} 个分组吗？`;
+      msConfirm(msg, {
+        title: "批量删除分组",
+        dangerous: true,
+        okText: "删除",
+      }).then(function (ok) {
+        if (!ok) return;
+        selectedGroupIds.forEach((gid) => deleteGroup(gid));
+        selectedGroupIds.clear();
+        groupSelectMode = false;
+        renderGroups();
+        toast("success", "已删除");
+      });
     });
-    if (groupSelectMode) {
-      $p.find("#ms-body").on("click.ms", ".ms-gitem", function () {
-        const gid = $(this).data("gid");
-        if (!gid) return;
-        if (selectedGroupIds.has(gid)) selectedGroupIds.delete(gid);
-        else selectedGroupIds.add(gid);
-        $p.find("#ms-body").html(buildGroupsBody());
-        $p.find("#ms-footer").html(buildGroupBatchFooter());
-      });
-      $p.find("#ms-footer").on("click.ms", "[data-gbatch='selectall']", () => {
-        const allSel =
-          data.groups.length > 0 &&
-          data.groups.every((g) => selectedGroupIds.has(g.id));
-        if (allSel) selectedGroupIds.clear();
-        else data.groups.forEach((g) => selectedGroupIds.add(g.id));
-        $p.find("#ms-body").html(buildGroupsBody());
-        $p.find("#ms-footer").html(buildGroupBatchFooter());
-      });
-      $p.find("#ms-footer").on("click.ms", "[data-gbatch='delete']", () => {
-        if (selectedGroupIds.size === 0) return;
-        let totalPrompts = 0;
-        selectedGroupIds.forEach((gid) => {
-          totalPrompts += getPromptsInGroup(gid).length;
-        });
-        const msg =
-          totalPrompts > 0
-            ? `确定删除选中的 ${selectedGroupIds.size} 个分组吗？\n其中共有 ${totalPrompts} 条剧场会变为未分组。`
-            : `确定删除选中的 ${selectedGroupIds.size} 个分组吗？`;
-        msConfirm(msg, {
-          title: "批量删除分组",
-          dangerous: true,
-          okText: "删除",
-        }).then(function (ok) {
+  } else {
+    $p.find("#ms-body").on("click.ms", ".ms-gitem-btn", function (e) {
+      e.stopPropagation();
+      const a = $(this).data("action"),
+        gid = $(this).data("gid");
+      if (a === "rename") navigateTo({ name: "group-edit", groupId: gid });
+      else if (a === "delete-group") {
+        const cnt = getPromptsInGroup(gid).length;
+        msConfirm(
+          cnt > 0
+            ? `分组下有 ${cnt} 条，删除后变为未分组。确定？`
+            : "确定删除该分组吗？",
+          { title: "删除分组", dangerous: true, okText: "删除" },
+        ).then(function (ok) {
           if (!ok) return;
-          selectedGroupIds.forEach((gid) => deleteGroup(gid));
-          selectedGroupIds.clear();
-          groupSelectMode = false;
+          deleteGroup(gid);
           renderGroups();
-          toast("success", "已删除");
         });
-      });
-    } else {
-      $p.find("#ms-body").on("click.ms", ".ms-gitem-btn", function (e) {
+      }
+    });
+    $p.find("#ms-body").on("click.ms", ".ms-gitem-color", function (e) {
+      e.stopPropagation();
+      const gid = $(this).data("gid");
+      expandedColorId = expandedColorId === gid ? null : gid;
+      var _gst = $p.find("#ms-body").scrollTop();
+      $p.find("#ms-body").html(buildGroupsBody());
+      $p.find("#ms-body").scrollTop(_gst);
+    });
+    $p.find("#ms-body").on(
+      "click.ms",
+      ".ms-color-inline .ms-color-opt:not(.ms-color-custom)",
+      function (e) {
         e.stopPropagation();
-        const a = $(this).data("action"),
-          gid = $(this).data("gid");
-        if (a === "rename") navigateTo({ name: "group-edit", groupId: gid });
-        else if (a === "delete-group") {
-          const cnt = getPromptsInGroup(gid).length;
-          msConfirm(
-            cnt > 0
-              ? `分组下有 ${cnt} 条，删除后变为未分组。确定？`
-              : "确定删除该分组吗？",
-            { title: "删除分组", dangerous: true, okText: "删除" },
-          ).then(function (ok) {
-            if (!ok) return;
-            deleteGroup(gid);
-            renderGroups();
-          });
-        }
-      });
-      $p.find("#ms-body").on("click.ms", ".ms-gitem-color", function (e) {
-        e.stopPropagation();
-        const gid = $(this).data("gid");
-        expandedColorId = expandedColorId === gid ? null : gid;
+        updateGroup($(this).data("gid"), { color: $(this).data("color") });
         var _gst = $p.find("#ms-body").scrollTop();
         $p.find("#ms-body").html(buildGroupsBody());
         $p.find("#ms-body").scrollTop(_gst);
-      });
-      $p.find("#ms-body").on(
-        "click.ms",
-        ".ms-color-inline .ms-color-opt:not(.ms-color-custom)",
-        function (e) {
-          e.stopPropagation();
-          updateGroup($(this).data("gid"), { color: $(this).data("color") });
+      },
+    );
+    $p.find("#ms-body").on(
+      "change.ms",
+      ".ms-custom-color-input[data-gid]",
+      function (e) {
+        e.stopPropagation();
+        const gid = $(this).data("gid");
+        const color = $(this).val();
+        if (gid && color) {
+          updateGroup(gid, { color: color });
           var _gst = $p.find("#ms-body").scrollTop();
           $p.find("#ms-body").html(buildGroupsBody());
           $p.find("#ms-body").scrollTop(_gst);
-        },
-      );
-      $p.find("#ms-body").on(
-        "change.ms",
-        ".ms-custom-color-input[data-gid]",
-        function (e) {
-          e.stopPropagation();
-          const gid = $(this).data("gid");
-          const color = $(this).val();
-          if (gid && color) {
-            updateGroup(gid, { color: color });
-            var _gst = $p.find("#ms-body").scrollTop();
-            $p.find("#ms-body").html(buildGroupsBody());
-            $p.find("#ms-body").scrollTop(_gst);
-          }
-        },
-      );
-    }
+        }
+      },
+    );
+  }
+}
+
+function renderGroupEdit(v) {
+  var g = v.groupId ? getGroup(v.groupId) : null,
+    isNew = !g;
+  if (v.groupId === "_builtin_guide_group") {
+    toast("info", "使用指南是内置分组，不可编辑哦");
+    navigateBack();
+    return;
+  }
+  if (!isNew && !Array.isArray(g.charKeys)) g.charKeys = [];
+  var editCharKeys = isNew ? [] : g.charKeys.slice();
+  var editColor = isNew
+    ? GROUP_COLORS[data.groups.length % GROUP_COLORS.length]
+    : g.color;
+  var editIconMode = isNew ? "group" : g.iconMode || "group";
+  var editIconFallbackMode =
+    editIconMode && editIconMode !== "custom" ? editIconMode : "group";
+  var editIconUrl = isNew ? "" : g.iconUrl || "";
+  var editIconCharKey = isNew ? "" : g.iconCharKey || "";
+  var showCharSection = !isNew && editCharKeys.length > 0;
+  var _searchKw = "";
+
+  var $p = setupPage(
+    isNew ? "新建分组" : "编辑分组",
+    (isNew ? "新建" : "编辑") + "分组",
+  );
+
+  function getBoundCharKeysFromPrompts() {
+    if (!v.groupId) return [];
+    var set = new Set();
+    data.prompts.forEach(function (p) {
+      if (
+        p.groupId === v.groupId &&
+        p.character &&
+        isLocalCharKey(p.character)
+      ) {
+        set.add(p.character);
+      }
+    });
+    return Array.from(set);
   }
 
-  function renderGroupEdit(v) {
-    var g = v.groupId ? getGroup(v.groupId) : null,
-      isNew = !g;
-    if (v.groupId === "_builtin_guide_group") {
-      toast("info", "使用指南是内置分组，不可编辑哦");
-      navigateBack();
-      return;
-    }
-    if (!isNew && !Array.isArray(g.charKeys)) g.charKeys = [];
-    var editCharKeys = isNew ? [] : g.charKeys.slice();
-    var editColor = isNew
-      ? GROUP_COLORS[data.groups.length % GROUP_COLORS.length]
-      : g.color;
-    var editIconMode = isNew ? "group" : g.iconMode || "group";
-    var editIconUrl = isNew ? "" : g.iconUrl || "";
-    var editIconCharKey = isNew ? "" : g.iconCharKey || "";
-    var showCharSection = !isNew && editCharKeys.length > 0;
-    var _searchKw = "";
+  function getMergedCharKeys() {
+    var merged = new Set(editCharKeys.filter(isLocalCharKey));
+    getBoundCharKeysFromPrompts().forEach(function (k) {
+      merged.add(k);
+    });
+    return Array.from(merged);
+  }
 
-    var $p = setupPage(
-      isNew ? "新建分组" : "编辑分组",
-      (isNew ? "新建" : "编辑") + "分组",
-    );
+  function isIPContext() {
+    return getMergedCharKeys().length > 0;
+  }
 
-    function getBoundCharKeysFromPrompts() {
-      if (!v.groupId) return [];
-      var set = new Set();
-      data.prompts.forEach(function (p) {
-        if (
-          p.groupId === v.groupId &&
-          p.character &&
-          isLocalCharKey(p.character)
-        ) {
-          set.add(p.character);
-        }
-      });
-      return Array.from(set);
-    }
+  function buildBody() {
+    var isCustomColor = !GROUP_COLORS.includes(editColor);
+    var ipMode = isIPContext();
 
-    function getMergedCharKeys() {
-      var merged = new Set(editCharKeys.filter(isLocalCharKey));
-      getBoundCharKeysFromPrompts().forEach(function (k) {
-        merged.add(k);
-      });
-      return Array.from(merged);
-    }
-
-    function isIPContext() {
-      return getMergedCharKeys().length > 0;
-    }
-
-    function buildBody() {
-      var isCustomColor = !GROUP_COLORS.includes(editColor);
-      var ipMode = isIPContext();
-
-      var colorH =
+    var colorH = "";
+    if (!ipMode && editIconMode !== "custom") {
+      colorH =
         '<div class="ms-field"><label>颜色</label><div class="ms-color-picker" style="padding:4px 0;">';
       GROUP_COLORS.forEach(function (c) {
         colorH +=
@@ -11481,1739 +11605,1749 @@ function renderHistoryDiff(v) {
         editColor +
         '"></span>';
       colorH += "</div></div>";
+    }
 
-      var iconSectionH = '<div class="ms-field"><label>图标样式</label>';
-      iconSectionH +=
-        '<div class="ms-tag-row" style="gap:6px;margin-bottom:4px;">';
-      if (ipMode) {
-        iconSectionH +=
-          '<span class="ms-tag-toggle' +
-          (editIconMode === "group" ? " active" : "") +
-          '" data-gedit-iconmode="group" style="' +
-          (editIconMode === "group"
-            ? "background:var(--ms-accent);color:#fff;"
-            : "") +
-          '"><i class="fa-solid fa-users" style="margin-right:3px;font-size:10px;"></i>群聊头像</span>';
-        iconSectionH +=
-          '<span class="ms-tag-toggle' +
-          (editIconMode === "char" ? " active" : "") +
-          '" data-gedit-iconmode="char" style="' +
-          (editIconMode === "char"
-            ? "background:var(--ms-accent);color:#fff;"
-            : "") +
-          '"><i class="fa-solid fa-user" style="margin-right:3px;font-size:10px;"></i>单个角色</span>';
-      }
+    var iconSectionH = '<div class="ms-field"><label>图标样式</label>';
+    iconSectionH +=
+      '<div class="ms-tag-row" style="gap:6px;margin-bottom:4px;">';
+    if (ipMode) {
       iconSectionH +=
         '<span class="ms-tag-toggle' +
-        (editIconMode === "custom" ? " active" : "") +
-        '" data-gedit-iconmode="custom" style="' +
-        (editIconMode === "custom"
+        (editIconMode === "group" ? " active" : "") +
+        '" data-gedit-iconmode="group" style="' +
+        (editIconMode === "group"
           ? "background:var(--ms-accent);color:#fff;"
           : "") +
-        '"><i class="fa-solid fa-image" style="margin-right:3px;font-size:10px;"></i>自定义图片URL</span>';
-      iconSectionH += "</div>";
-
-      if (editIconMode === "custom") {
-        iconSectionH +=
-          '<input type="text" id="ms-gedit-icon-url" placeholder="输入图片直链 URL（例如图床地址）..." value="' +
-          esc(editIconUrl) +
-          '">';
-        if (editIconUrl) {
-          iconSectionH +=
-            '<div style="margin-top:6px;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);"><span>预览：</span><img src="' +
-            esc(editIconUrl) +
-            '" style="width:40px;height:40px;border-radius:6px;object-fit:cover;background:rgba(255,255,255,0.05);" onerror="this.style.display=\'none\';var s=this.nextElementSibling;if(s)s.style.display=\'inline\';"><span style="display:none;color:var(--ms-danger);">图片加载失败</span></div>';
-        }
-      } else if (editIconMode === "char" && ipMode) {
-        var merged = getMergedCharKeys();
-        iconSectionH +=
-          '<div style="display:flex;flex-wrap:wrap;gap:6px;max-height:140px;overflow-y:auto;">';
-        merged.forEach(function (k) {
-          var dn = getCharDisplayName(k);
-          var ap = getCharAvatarPathSafe(k);
-          var isSel = editIconCharKey === k;
-          var avH = ap
-            ? '<img src="' +
-              esc(ap) +
-              '" loading="lazy" decoding="async" style="width:20px;height:20px;border-radius:4px;object-fit:cover;vertical-align:middle;margin-right:4px;">'
-            : '<i class="fa-solid fa-user" style="font-size:11px;margin-right:4px;"></i>';
-          iconSectionH +=
-            '<span class="ms-tag-toggle' +
-            (isSel ? " active" : "") +
-            '" data-gedit-iconchar="' +
-            esc(k) +
-            '" style="padding:3px 8px;' +
-            (isSel ? "background:var(--ms-accent);color:#fff;" : "") +
-            '">' +
-            avH +
-            esc(dn) +
-            "</span>";
-        });
-        iconSectionH += "</div>";
-        if (!editIconCharKey) {
-          iconSectionH +=
-            '<div style="margin-top:4px;font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;">选一个角色，会用 TA 的头像作为本分组图标</div>';
-        }
-      } else if (!ipMode && editIconMode !== "custom") {
-        iconSectionH +=
-          '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);padding:2px 0;font-style:italic;">普通分组会用颜色 + 文件夹图标显示，或可选自定义图片URL</div>';
-      }
-      iconSectionH += "</div>";
-
-      var charSectionH = "";
-      if (showCharSection) {
-        var allChars = [];
-        try {
-          if (typeof SillyTavern !== "undefined" && SillyTavern.characters) {
-            allChars = SillyTavern.characters
-              .map(function (c) {
-                return c.avatar;
-              })
-              .filter(Boolean);
-          }
-        } catch (e) {}
-        var charMap3 = getAllCharactersWithStages();
-        Object.keys(charMap3).forEach(function (k) {
-          if (allChars.indexOf(k) < 0) allChars.push(k);
-        });
-        var boundFromPrompts = getBoundCharKeysFromPrompts();
-        var lkw = _searchKw.toLowerCase();
-        var filteredChars = allChars.filter(function (k) {
-          if (!lkw) return true;
-          return getCharDisplayName(k).toLowerCase().indexOf(lkw) >= 0;
-        });
-        var mergedCount = getMergedCharKeys().length;
-
-        charSectionH += '<div class="ms-divider"></div>';
-        charSectionH +=
-          '<div class="ms-section-label" style="display:flex;align-items:center;gap:6px;"><span>包含角色 (' +
-          mergedCount +
-          ')</span><span style="font-size:9px;font-weight:normal;opacity:0.6;">勾选显式成员 · 剧场绑定的角色会自动标出</span></div>';
-        charSectionH +=
-          '<div style="padding:0 14px 6px;"><input type="text" id="ms-gedit-char-search" class="ms-search" placeholder="搜索角色..." value="' +
-          esc(_searchKw) +
-          '"></div>';
-        charSectionH +=
-          '<div id="ms-gedit-charlist-scroll" style="max-height:260px;overflow-y:auto;padding:0 14px;">';
-        if (filteredChars.length === 0) {
-          charSectionH +=
-            '<div class="ms-empty" style="padding:16px;"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的角色</div>';
-        } else {
-          filteredChars.forEach(function (k) {
-            var inThis = editCharKeys.indexOf(k) >= 0;
-            var isBoundByPrompt = boundFromPrompts.indexOf(k) >= 0;
-            var otherG = !inThis ? getCharGroupOfChar(k) : null;
-            var otherIsMe = otherG && v.groupId && otherG.id === v.groupId;
-            if (otherIsMe) otherG = null;
-            var disabled = otherG ? " disabled" : "";
-            var noteH = "";
-            if (otherG) {
-              noteH =
-                '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-left:4px;">已在「' +
-                esc(otherG.name) +
-                "」</span>";
-            } else if (isBoundByPrompt && !inThis) {
-              noteH =
-                '<span style="font-size:10px;color:var(--ms-accent);margin-left:4px;">剧场绑定</span>';
-            } else if (isBoundByPrompt && inThis) {
-              noteH =
-                '<span style="font-size:10px;color:var(--ms-accent);opacity:0.7;margin-left:4px;">显式 + 剧场</span>';
-            }
-            var dn = getCharDisplayName(k);
-            var avP = getCharAvatarPathSafe(k);
-            var avM = avP
-              ? '<img src="' +
-                esc(avP) +
-                '" loading="lazy" decoding="async" style="width:20px;height:20px;border-radius:4px;object-fit:cover;flex-shrink:0;" onerror="this.style.display=\'none\';this.onerror=null;">'
-              : '<i class="fa-solid fa-user" style="width:20px;color:#b48cc8;flex-shrink:0;"></i>';
-            charSectionH +=
-              '<label class="ms-check-item" style="padding:4px 0;display:flex;align-items:center;gap:8px;' +
-              (otherG ? "opacity:0.5;" : "") +
-              '"><input type="checkbox" class="ms-gedit-char-cb" data-key="' +
-              esc(k) +
-              '"' +
-              (inThis ? " checked" : "") +
-              disabled +
-              ">" +
-              avM +
-              "<span>" +
-              esc(dn) +
-              "</span>" +
-              noteH +
-              "</label>";
-          });
-        }
-        charSectionH += "</div>";
-      }
-      var multiPrefixSectionH = "";
-      if (!isNew && v.groupId) {
-        var groupPrompts = getPromptsInGroup(v.groupId);
-        var multiPrefixEnabled = g && g.multiPrefixEnabled;
-        var prefixTemplates =
-          g && Array.isArray(g.prefixTemplates) ? g.prefixTemplates : [];
-        var prefixAssignments = (g && g.prefixAssignments) || {};
-        multiPrefixSectionH +=
-          '<div class="ms-section-label" style="display:flex;align-items:center;gap:8px;padding:8px 14px 4px;">' +
-          '<label class="ms-switch" style="margin:0;"><input type="checkbox" id="ms-gedit-multi-prefix-toggle" ' +
-          (multiPrefixEnabled ? "checked" : "") +
-          '><span class="ms-switch-slider"></span></label>' +
-          '<span style="font-weight:600;text-transform:none;letter-spacing:0;font-size:11px;color:var(--SmartThemeQuoteColor,#888);">多前缀模式</span>' +
-          '<span style="font-size:9px;font-weight:normal;opacity:0.6;text-transform:none;letter-spacing:0;">(创建多套前缀模板，适用于分组内多条剧场不同前缀)</span>' +
-          "</div>";
-        if (multiPrefixEnabled) {
-          var tplToPrompts = {};
-          Object.keys(prefixAssignments).forEach(function (pid) {
-            var tid = prefixAssignments[pid];
-            if (!tplToPrompts[tid]) tplToPrompts[tid] = [];
-            tplToPrompts[tid].push(pid);
-          });
-          multiPrefixSectionH +=
-            '<div style="padding:4px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;line-height:1.6;">' +
-            '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>没被任何模板勾选的剧场，会自动用上方「注入前缀指令」作为分组默认' +
-            "</div>";
-          multiPrefixSectionH +=
-            '<div style="padding:4px 14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
-            '<button class="ms-tbtn" id="ms-gedit-add-template" style="font-size:11px;padding:4px 10px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:3px;"></i>添加前缀模板</button>' +
-            '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">' +
-            prefixTemplates.length +
-            " 个模板，" +
-            groupPrompts.length +
-            " 条剧场</span>" +
-            "</div>";
-          if (prefixTemplates.length === 0) {
-            multiPrefixSectionH +=
-              '<div class="ms-empty" style="padding:14px;font-size:11px;"><i class="fa-solid fa-file-lines"></i>还没有模板，点上面「添加前缀模板」开始创建</div>';
-          } else {
-            multiPrefixSectionH +=
-              '<div id="ms-gedit-template-list" style="padding:0 14px;display:flex;flex-direction:column;gap:10px;">';
-            prefixTemplates.forEach(function (tpl, tplIdx) {
-              var assignedIds = tplToPrompts[tpl.id] || [];
-              multiPrefixSectionH +=
-                '<div class="ms-prefix-tpl-item" data-tpl-id="' +
-                tpl.id +
-                '" style="padding:6px 0 10px;border-bottom:1px dashed rgba(255,255,255,0.06);">' +
-                '<div style="display:flex;align-items:center;gap:4px;margin-bottom:5px;">' +
-                '<span style="font-size:10px;color:var(--ms-accent);font-weight:600;flex-shrink:0;min-width:28px;">#' +
-                (tplIdx + 1) +
-                "</span>" +
-                '<input type="text" class="ms-prefix-tpl-name" data-tpl-id="' +
-                tpl.id +
-                '" value="' +
-                esc(tpl.name || "未命名模板") +
-                '" placeholder="模板名" style="flex:1;min-width:0;padding:3px 8px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:4px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:12px;outline:none;">' +
-                '<i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-tpl-content-' +
-                tpl.id +
-                '" data-fs-title="编辑模板「' +
-                esc(truncate(tpl.name || "未命名模板", 20)) +
-                '」" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
-                '<i class="fa-solid fa-trash ms-prefix-tpl-del" data-tpl-id="' +
-                tpl.id +
-                '" title="删除模板" style="cursor:pointer;color:var(--ms-danger);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
-                "</div>" +
-                '<textarea class="ms-prefix-tpl-content" id="ms-tpl-content-' +
-                tpl.id +
-                '" data-tpl-id="' +
-                tpl.id +
-                '" style="min-height:54px;width:100%;font-family:Consolas,monospace;font-size:11px;line-height:1.5;resize:vertical;box-sizing:border-box;margin-bottom:6px;" placeholder="模板内容，可用 {\u200B{stage}}、{\u200B{stage_title}} 等宏">' +
-                esc(tpl.content || "") +
-                "</textarea>";
-              if (groupPrompts.length === 0) {
-                multiPrefixSectionH +=
-                  '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;padding-left:32px;">本分组还没有剧场</div>';
-              } else {
-                multiPrefixSectionH +=
-                  '<button class="ms-tbtn ms-prefix-tpl-config" data-tpl-id="' +
-                  tpl.id +
-                  '" style="width:100%;text-align:center;font-size:11px;padding:5px 10px;display:flex;align-items:center;justify-content:center;gap:6px;">' +
-                  '<i class="fa-solid fa-list-check" style="color:var(--ms-accent);"></i>' +
-                  "<span>配置适用剧场</span>" +
-                  (assignedIds.length > 0
-                    ? '<span style="font-size:11px;color:var(--ms-accent);font-weight:600;">已选 ' +
-                      assignedIds.length +
-                      " 条</span>"
-                    : '<span style="font-size:10px;opacity:0.55;">未配置</span>') +
-                  "</button>";
-              }
-              multiPrefixSectionH += "</div>";
-            });
-            multiPrefixSectionH += "</div>";
-          }
-          if (groupPrompts.length === 0 && prefixTemplates.length > 0) {
-            multiPrefixSectionH +=
-              '<div class="ms-empty" style="padding:14px;font-size:11px;margin:6px 14px 0;"><i class="fa-solid fa-folder-open"></i>本分组还没有剧场，添加剧场后再来分配模板</div>';
-          }
-        }
-      }
-      var toggleCharSectionH =
-        '<button class="ms-tbtn" id="ms-gedit-toggle-charsection" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-' +
-        (showCharSection ? "chevron-up" : "layer-group") +
-        '"></i> ' +
-        (showCharSection ? "隐藏角色列表" : "设为 IP 分组（包含角色）") +
-        "</button>";
-
-      return (
-        '<div class="ms-form">' +
-        '<div class="ms-field"><label>名称</label><input type="text" id="ms-gedit-name" value="' +
-        esc(g ? g.name : "") +
-        '"></div>' +
-        colorH +
-        iconSectionH +
-        '<div class="ms-field"><label>备注</label><input type="text" id="ms-gedit-note" placeholder="可选的简短说明" value="' +
-        esc(g ? g.note : "") +
-        '"></div>' +
-        '<div class="ms-field"><label>默认作者</label><input type="text" id="ms-gedit-author" placeholder="该分组下新建时自动填入" value="' +
-        esc(g ? g.defaultAuthor || "" : "") +
-        '"></div>' +
-        '<div class="ms-field"><label>注入前缀指令 <span style="font-weight:350;opacity:0.5;">(可选，留空用全局默认，用 {\u200B{stage}} 标记剧场插入位置)</span> <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-gedit-prefix" data-fs-title="编辑分组前缀指令" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-gedit-prefix" style="min-height:50px;resize:vertical;" placeholder="该分组的剧场注入时使用此前缀">' +
-        esc(g ? g.stagePrefix || "" : "") +
-        "</textarea></div>" +
-        '<div class="ms-field"><label>多条外壳模板（本组）<span style="font-weight:350;opacity:0.5;">(选多条本组剧场时的整体结构，留空使用全局默认；用 {\u200B{stage_count}} 表示数量、{\u200B{stage_tasks}} 表示所有任务块)</span> <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-gedit-multi-shell" data-fs-title="编辑分组多条外壳模板" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-gedit-multi-shell" style="min-height:60px;resize:vertical;" placeholder="留空使用全局默认；多条剧场全在本组时才生效">' +
-        esc(g ? g.multiStagePrefix || "" : "") +
-        "</textarea></div>" +
-        multiPrefixSectionH +
-        toggleCharSectionH +
-        charSectionH +
-        (!isNew
-          ? '<button class="ms-tbtn" id="ms-group-set-all-author" style="width:100%;text-align:center;"><i class="fa-solid fa-user-pen"></i> 批量设置本组作者</button>'
+        '"><i class="fa-solid fa-users" style="margin-right:3px;font-size:10px;"></i>群聊头像</span>';
+      iconSectionH +=
+        '<span class="ms-tag-toggle' +
+        (editIconMode === "char" ? " active" : "") +
+        '" data-gedit-iconmode="char" style="' +
+        (editIconMode === "char"
+          ? "background:var(--ms-accent);color:#fff;"
           : "") +
-        (isNew
-          ? '<div class="ms-form-btns"><button class="ms-btn" id="ms-gedit-cancel">取消</button><button class="ms-btn primary" id="ms-gedit-save">保存</button></div>'
-          : "") +
-        "</div>"
-      );
-    }
-
-    $p.find("#ms-body").html(buildBody());
-    $p.find("#ms-footer").hide();
-    bindAllEvents();
-    groupEditDirty = false;
-    var _gdSaveTimer = null;
-    function _saveGroupEditNow() {
-      if (!v.groupId) return false;
-      var _curView = currentView();
-      if (
-        !_curView ||
-        _curView.name !== "group-edit" ||
-        _curView.groupId !== v.groupId
-      )
-        return false;
-      var _g = getGroup(v.groupId);
-      if (!_g) return false;
-      var $name = $p.find("#ms-gedit-name");
-      if (!$name.length) return false;
-      var name = ($name.val() || "").trim();
-      if (!name) return false;
-      _collectMultiPrefixFromUI();
-      var stagePrefix = $p.find("#ms-gedit-prefix").val() || "";
-      var multiStagePrefix = $p.find("#ms-gedit-multi-shell").val() || "";
-      var finalIconUrl = $p.find("#ms-gedit-icon-url").length
-        ? $p.find("#ms-gedit-icon-url").val().trim()
-        : editIconUrl;
-      var payload = {
-        name: name,
-        note: ($p.find("#ms-gedit-note").val() || "").trim(),
-        color: editColor,
-        defaultAuthor: ($p.find("#ms-gedit-author").val() || "").trim(),
-        stagePrefix: stagePrefix,
-        multiStagePrefix: multiStagePrefix,
-        iconMode: editIconMode,
-        iconUrl: editIconMode === "custom" ? finalIconUrl : "",
-        iconCharKey: editIconMode === "char" ? editIconCharKey : "",
-        charKeys: editCharKeys.slice(),
-        multiPrefixEnabled: editMultiPrefixEnabled,
-        prefixTemplates: editPrefixTemplates,
-        prefixAssignments: editPrefixAssignments,
-      };
-      data.groups.forEach(function (og) {
-        if (og.id === v.groupId) return;
-        if (!Array.isArray(og.charKeys)) return;
-        og.charKeys = og.charKeys.filter(function (k) {
-          return editCharKeys.indexOf(k) < 0;
-        });
-      });
-      updateGroup(v.groupId, payload);
-      _invalidateCharGroupCache();
-      return true;
-    }
-    function _saveGroupEditDebounced() {
-      if (_gdSaveTimer) clearTimeout(_gdSaveTimer);
-      _gdSaveTimer = setTimeout(function () {
-        _gdSaveTimer = null;
-        _saveGroupEditNow();
-      }, 350);
-    }
-    if (isNew) {
-      $p.find("#ms-body").on(
-        "input.ms-gd change.ms-gd",
-        "input, textarea, select",
-        function () {
-          groupEditDirty = true;
-        },
-      );
-      $p.find("#ms-body").on(
-        "click.ms-gd",
-        "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-toggle-charsection, #ms-gedit-add-template, .ms-prefix-tpl-del, .ms-gedit-char-cb",
-        function () {
-          groupEditDirty = true;
-        },
-      );
+        '"><i class="fa-solid fa-user" style="margin-right:3px;font-size:10px;"></i>单个角色</span>';
     } else {
-      $p.find("#ms-body").on("input.ms-gd", "input, textarea", function () {
-        _saveGroupEditDebounced();
+      iconSectionH +=
+        '<span class="ms-tag-toggle' +
+        (editIconMode !== "custom" ? " active" : "") +
+        '" data-gedit-iconmode="group" style="' +
+        (editIconMode !== "custom"
+          ? "background:var(--ms-accent);color:#fff;"
+          : "") +
+        '"><i class="fa-solid fa-folder" style="margin-right:3px;font-size:10px;"></i>文件夹颜色</span>';
+    }
+    iconSectionH +=
+      '<span class="ms-tag-toggle' +
+      (editIconMode === "custom" ? " active" : "") +
+      '" data-gedit-iconmode="custom" style="' +
+      (editIconMode === "custom"
+        ? "background:var(--ms-accent);color:#fff;"
+        : "") +
+      '"><i class="fa-solid fa-image" style="margin-right:3px;font-size:10px;"></i>自定义图片</span>';
+    iconSectionH += "</div>";
+
+    if (editIconMode === "custom") {
+      iconSectionH +=
+        '<div style="display:flex;align-items:center;gap:8px;">' +
+        '<span style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);flex-shrink:0;">URL</span>' +
+        '<input type="text" id="ms-gedit-icon-url" placeholder="粘贴图片直链（例如图床地址）..." value="' +
+        esc(editIconUrl) +
+        '" style="flex:1;">';
+      if (editIconUrl) {
+        iconSectionH +=
+          '<img src="' +
+          esc(editIconUrl) +
+          '" style="width:33px;height:33px;border-radius:6px;object-fit:cover;background:rgba(255,255,255,0.05);flex-shrink:0;" onerror="this.style.display=\'none\';" title="预览图标">';
+      }
+      iconSectionH += "</div>";
+    } else if (editIconMode === "char" && ipMode) {
+      var merged = getMergedCharKeys();
+      iconSectionH +=
+        '<div style="display:flex;flex-wrap:wrap;gap:6px;max-height:140px;overflow-y:auto;">';
+      merged.forEach(function (k) {
+        var dn = getCharDisplayName(k);
+        var ap = getCharAvatarPathSafe(k);
+        var isSel = editIconCharKey === k;
+        var avH = ap
+          ? '<img src="' +
+            esc(ap) +
+            '" loading="lazy" decoding="async" style="width:20px;height:20px;border-radius:4px;object-fit:cover;vertical-align:middle;margin-right:4px;">'
+          : '<i class="fa-solid fa-user" style="font-size:11px;margin-right:4px;"></i>';
+        iconSectionH +=
+          '<span class="ms-tag-toggle' +
+          (isSel ? " active" : "") +
+          '" data-gedit-iconchar="' +
+          esc(k) +
+          '" style="padding:3px 8px;' +
+          (isSel ? "background:var(--ms-accent);color:#fff;" : "") +
+          '">' +
+          avH +
+          esc(dn) +
+          "</span>";
       });
-      $p.find("#ms-body").on(
-        "change.ms-gd",
-        "input, textarea, select",
-        function () {
-          if (_gdSaveTimer) {
-            clearTimeout(_gdSaveTimer);
-            _gdSaveTimer = null;
+      iconSectionH += "</div>";
+      if (!editIconCharKey) {
+        iconSectionH +=
+          '<div style="margin-top:4px;font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;">选一个角色，会用 TA 的头像作为本分组图标</div>';
+      }
+    }
+    iconSectionH += "</div>";
+
+    var charSectionH = "";
+    if (showCharSection) {
+      var allChars = [];
+      try {
+        if (typeof SillyTavern !== "undefined" && SillyTavern.characters) {
+          allChars = SillyTavern.characters
+            .map(function (c) {
+              return c.avatar;
+            })
+            .filter(Boolean);
+        }
+      } catch (e) {}
+      var charMap3 = getAllCharactersWithStages();
+      Object.keys(charMap3).forEach(function (k) {
+        if (allChars.indexOf(k) < 0) allChars.push(k);
+      });
+      var boundFromPrompts = getBoundCharKeysFromPrompts();
+      var lkw = _searchKw.toLowerCase();
+      var filteredChars = allChars.filter(function (k) {
+        if (!lkw) return true;
+        return getCharDisplayName(k).toLowerCase().indexOf(lkw) >= 0;
+      });
+      var mergedCount = getMergedCharKeys().length;
+
+      charSectionH += '<div class="ms-divider"></div>';
+      charSectionH +=
+        '<div class="ms-section-label" style="display:flex;align-items:center;gap:6px;"><span>包含角色 (' +
+        mergedCount +
+        ')</span><span style="font-size:9px;font-weight:normal;opacity:0.6;">勾选显式成员 · 剧场绑定的角色会自动标出</span></div>';
+      charSectionH +=
+        '<div style="padding:0 14px 6px;"><input type="text" id="ms-gedit-char-search" class="ms-search" placeholder="搜索角色..." value="' +
+        esc(_searchKw) +
+        '"></div>';
+      charSectionH +=
+        '<div id="ms-gedit-charlist-scroll" style="max-height:260px;overflow-y:auto;padding:0 14px;">';
+      if (filteredChars.length === 0) {
+        charSectionH +=
+          '<div class="ms-empty" style="padding:16px;"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的角色</div>';
+      } else {
+        filteredChars.forEach(function (k) {
+          var inThis = editCharKeys.indexOf(k) >= 0;
+          var isBoundByPrompt = boundFromPrompts.indexOf(k) >= 0;
+          var otherG = !inThis ? getCharGroupOfChar(k) : null;
+          var otherIsMe = otherG && v.groupId && otherG.id === v.groupId;
+          if (otherIsMe) otherG = null;
+          var disabled = otherG ? " disabled" : "";
+          var noteH = "";
+          if (otherG) {
+            noteH =
+              '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-left:4px;">已在「' +
+              esc(otherG.name) +
+              "」</span>";
+          } else if (isBoundByPrompt && !inThis) {
+            noteH =
+              '<span style="font-size:10px;color:var(--ms-accent);margin-left:4px;">剧场绑定</span>';
+          } else if (isBoundByPrompt && inThis) {
+            noteH =
+              '<span style="font-size:10px;color:var(--ms-accent);opacity:0.7;margin-left:4px;">显式 + 剧场</span>';
           }
-          _saveGroupEditNow();
-        },
-      );
-      $p.find("#ms-body").on("focusout.ms-gd", "input, textarea", function () {
+          var dn = getCharDisplayName(k);
+          var avP = getCharAvatarPathSafe(k);
+          var avM = avP
+            ? '<img src="' +
+              esc(avP) +
+              '" loading="lazy" decoding="async" style="width:20px;height:20px;border-radius:4px;object-fit:cover;flex-shrink:0;" onerror="this.style.display=\'none\';this.onerror=null;">'
+            : '<i class="fa-solid fa-user" style="width:20px;color:#b48cc8;flex-shrink:0;"></i>';
+          charSectionH +=
+            '<label class="ms-check-item" style="padding:4px 0;display:flex;align-items:center;gap:8px;' +
+            (otherG ? "opacity:0.5;" : "") +
+            '"><input type="checkbox" class="ms-gedit-char-cb" data-key="' +
+            esc(k) +
+            '"' +
+            (inThis ? " checked" : "") +
+            disabled +
+            ">" +
+            avM +
+            "<span>" +
+            esc(dn) +
+            "</span>" +
+            noteH +
+            "</label>";
+        });
+      }
+      charSectionH += "</div>";
+    }
+    var multiPrefixSectionH = "";
+    if (!isNew && v.groupId) {
+      var groupPrompts = getPromptsInGroup(v.groupId);
+      var multiPrefixEnabled = g && g.multiPrefixEnabled;
+      var prefixTemplates =
+        g && Array.isArray(g.prefixTemplates) ? g.prefixTemplates : [];
+      var prefixAssignments = (g && g.prefixAssignments) || {};
+      multiPrefixSectionH +=
+        '<div class="ms-section-label" style="display:flex;align-items:center;gap:8px;padding:8px 14px 4px;">' +
+        '<label class="ms-switch" style="margin:0;"><input type="checkbox" id="ms-gedit-multi-prefix-toggle" ' +
+        (multiPrefixEnabled ? "checked" : "") +
+        '><span class="ms-switch-slider"></span></label>' +
+        '<span style="font-weight:600;text-transform:none;letter-spacing:0;font-size:11px;color:var(--SmartThemeQuoteColor,#888);">多前缀模式</span>' +
+        '<span style="font-size:9px;font-weight:normal;opacity:0.6;text-transform:none;letter-spacing:0;">(创建多套前缀模板，适用于分组内多条剧场不同前缀)</span>' +
+        "</div>";
+      if (multiPrefixEnabled) {
+        var tplToPrompts = {};
+        Object.keys(prefixAssignments).forEach(function (pid) {
+          var tid = prefixAssignments[pid];
+          if (!tplToPrompts[tid]) tplToPrompts[tid] = [];
+          tplToPrompts[tid].push(pid);
+        });
+        multiPrefixSectionH +=
+          '<div style="padding:4px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;line-height:1.6;">' +
+          '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>没被任何模板勾选的剧场，会自动用上方「注入前缀指令」作为分组默认' +
+          "</div>";
+        multiPrefixSectionH +=
+          '<div style="padding:4px 14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+          '<button class="ms-tbtn" id="ms-gedit-add-template" style="font-size:11px;padding:4px 10px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:3px;"></i>添加前缀模板</button>' +
+          '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">' +
+          prefixTemplates.length +
+          " 个模板，" +
+          groupPrompts.length +
+          " 条剧场</span>" +
+          "</div>";
+        if (prefixTemplates.length === 0) {
+          multiPrefixSectionH +=
+            '<div class="ms-empty" style="padding:14px;font-size:11px;"><i class="fa-solid fa-file-lines"></i>还没有模板，点上面「添加前缀模板」开始创建</div>';
+        } else {
+          multiPrefixSectionH +=
+            '<div id="ms-gedit-template-list" style="padding:0 14px;display:flex;flex-direction:column;gap:10px;">';
+          prefixTemplates.forEach(function (tpl, tplIdx) {
+            var assignedIds = tplToPrompts[tpl.id] || [];
+            multiPrefixSectionH +=
+              '<div class="ms-prefix-tpl-item" data-tpl-id="' +
+              tpl.id +
+              '" style="padding:6px 0 10px;border-bottom:1px dashed rgba(255,255,255,0.06);">' +
+              '<div style="display:flex;align-items:center;gap:4px;margin-bottom:5px;">' +
+              '<span style="font-size:10px;color:var(--ms-accent);font-weight:600;flex-shrink:0;min-width:28px;">#' +
+              (tplIdx + 1) +
+              "</span>" +
+              '<input type="text" class="ms-prefix-tpl-name" data-tpl-id="' +
+              tpl.id +
+              '" value="' +
+              esc(tpl.name || "未命名模板") +
+              '" placeholder="模板名" style="flex:1;min-width:0;padding:3px 8px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:4px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:12px;outline:none;">' +
+              '<i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-tpl-content-' +
+              tpl.id +
+              '" data-fs-title="编辑模板「' +
+              esc(truncate(tpl.name || "未命名模板", 20)) +
+              '」" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
+              '<i class="fa-solid fa-trash ms-prefix-tpl-del" data-tpl-id="' +
+              tpl.id +
+              '" title="删除模板" style="cursor:pointer;color:var(--ms-danger);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
+              "</div>" +
+              '<textarea class="ms-prefix-tpl-content" id="ms-tpl-content-' +
+              tpl.id +
+              '" data-tpl-id="' +
+              tpl.id +
+              '" style="min-height:54px;width:100%;font-family:Consolas,monospace;font-size:11px;line-height:1.5;resize:vertical;box-sizing:border-box;margin-bottom:6px;" placeholder="模板内容，可用 {\u200B{stage}}、{\u200B{stage_title}} 等宏">' +
+              esc(tpl.content || "") +
+              "</textarea>";
+            if (groupPrompts.length === 0) {
+              multiPrefixSectionH +=
+                '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;padding-left:32px;">本分组还没有剧场</div>';
+            } else {
+              multiPrefixSectionH +=
+                '<button class="ms-tbtn ms-prefix-tpl-config" data-tpl-id="' +
+                tpl.id +
+                '" style="width:100%;text-align:center;font-size:11px;padding:5px 10px;display:flex;align-items:center;justify-content:center;gap:6px;">' +
+                '<i class="fa-solid fa-list-check" style="color:var(--ms-accent);"></i>' +
+                "<span>配置适用剧场</span>" +
+                (assignedIds.length > 0
+                  ? '<span style="font-size:11px;color:var(--ms-accent);font-weight:600;">已选 ' +
+                    assignedIds.length +
+                    " 条</span>"
+                  : '<span style="font-size:10px;opacity:0.55;">未配置</span>') +
+                "</button>";
+            }
+            multiPrefixSectionH += "</div>";
+          });
+          multiPrefixSectionH += "</div>";
+        }
+        if (groupPrompts.length === 0 && prefixTemplates.length > 0) {
+          multiPrefixSectionH +=
+            '<div class="ms-empty" style="padding:14px;font-size:11px;margin:6px 14px 0;"><i class="fa-solid fa-folder-open"></i>本分组还没有剧场，添加剧场后再来分配模板</div>';
+        }
+      }
+    }
+    var toggleCharSectionH =
+      '<button class="ms-tbtn" id="ms-gedit-toggle-charsection" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-' +
+      (showCharSection ? "chevron-up" : "layer-group") +
+      '"></i> ' +
+      (showCharSection ? "隐藏角色列表" : "设为 IP 分组（包含角色）") +
+      "</button>";
+
+    return (
+      '<div class="ms-form">' +
+      '<div class="ms-field"><label>名称</label><input type="text" id="ms-gedit-name" value="' +
+      esc(g ? g.name : "") +
+      '"></div>' +
+      iconSectionH +
+      colorH +
+      '<div class="ms-field"><label>备注</label><input type="text" id="ms-gedit-note" placeholder="可选的简短说明" value="' +
+      esc(g ? g.note : "") +
+      '"></div>' +
+      '<div class="ms-field"><label>默认作者</label><input type="text" id="ms-gedit-author" placeholder="该分组下新建时自动填入" value="' +
+      esc(g ? g.defaultAuthor || "" : "") +
+      '"></div>' +
+      '<div class="ms-field"><label>注入前缀指令 <span style="font-weight:350;opacity:0.5;">(可选，留空用全局默认，用 {\u200B{stage}} 标记剧场插入位置)</span> <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-gedit-prefix" data-fs-title="编辑分组前缀指令" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-gedit-prefix" style="min-height:50px;resize:vertical;" placeholder="该分组的剧场注入时使用此前缀">' +
+      esc(g ? g.stagePrefix || "" : "") +
+      "</textarea></div>" +
+      '<div class="ms-field"><label>多条外壳模板（本组）<span style="font-weight:350;opacity:0.5;">(选多条本组剧场时的整体结构，留空使用全局默认；用 {\u200B{stage_count}} 表示数量、{\u200B{stage_tasks}} 表示所有任务块)</span> <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-gedit-multi-shell" data-fs-title="编辑分组多条外壳模板" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-gedit-multi-shell" style="min-height:60px;resize:vertical;" placeholder="留空使用全局默认；多条剧场全在本组时才生效">' +
+      esc(g ? g.multiStagePrefix || "" : "") +
+      "</textarea></div>" +
+      multiPrefixSectionH +
+      toggleCharSectionH +
+      charSectionH +
+      (!isNew
+        ? '<button class="ms-tbtn" id="ms-group-set-all-author" style="width:100%;text-align:center;"><i class="fa-solid fa-user-pen"></i> 批量设置本组作者</button>'
+        : "") +
+      (isNew
+        ? '<div class="ms-form-btns"><button class="ms-btn" id="ms-gedit-cancel">取消</button><button class="ms-btn primary" id="ms-gedit-save">保存</button></div>'
+        : "") +
+      "</div>"
+    );
+  }
+
+  $p.find("#ms-body").html(buildBody());
+  $p.find("#ms-footer").hide();
+  bindAllEvents();
+  groupEditDirty = false;
+  var _gdSaveTimer = null;
+  function _saveGroupEditNow() {
+    if (!v.groupId) return false;
+    var _curView = currentView();
+    if (
+      !_curView ||
+      _curView.name !== "group-edit" ||
+      _curView.groupId !== v.groupId
+    )
+      return false;
+    var _g = getGroup(v.groupId);
+    if (!_g) return false;
+    var $name = $p.find("#ms-gedit-name");
+    if (!$name.length) return false;
+    var name = ($name.val() || "").trim();
+    if (!name) return false;
+    _collectMultiPrefixFromUI();
+    var stagePrefix = $p.find("#ms-gedit-prefix").val() || "";
+    var multiStagePrefix = $p.find("#ms-gedit-multi-shell").val() || "";
+    var finalIconUrl = $p.find("#ms-gedit-icon-url").length
+      ? $p.find("#ms-gedit-icon-url").val().trim()
+      : editIconUrl;
+    var payload = {
+      name: name,
+      note: ($p.find("#ms-gedit-note").val() || "").trim(),
+      color: editColor,
+      defaultAuthor: ($p.find("#ms-gedit-author").val() || "").trim(),
+      stagePrefix: stagePrefix,
+      multiStagePrefix: multiStagePrefix,
+      iconMode: editIconMode,
+      iconUrl: editIconMode === "custom" ? finalIconUrl : "",
+      iconCharKey: editIconMode === "char" ? editIconCharKey : "",
+      charKeys: editCharKeys.slice(),
+      multiPrefixEnabled: editMultiPrefixEnabled,
+      prefixTemplates: editPrefixTemplates,
+      prefixAssignments: editPrefixAssignments,
+    };
+    data.groups.forEach(function (og) {
+      if (og.id === v.groupId) return;
+      if (!Array.isArray(og.charKeys)) return;
+      og.charKeys = og.charKeys.filter(function (k) {
+        return editCharKeys.indexOf(k) < 0;
+      });
+    });
+    updateGroup(v.groupId, payload);
+    _invalidateCharGroupCache();
+    return true;
+  }
+  function _saveGroupEditDebounced() {
+    if (_gdSaveTimer) clearTimeout(_gdSaveTimer);
+    _gdSaveTimer = setTimeout(function () {
+      _gdSaveTimer = null;
+      _saveGroupEditNow();
+    }, 350);
+  }
+  flushGroupEdit = function () {
+    if (_gdSaveTimer) {
+      clearTimeout(_gdSaveTimer);
+      _gdSaveTimer = null;
+    }
+    var ok = _saveGroupEditNow();
+    if (ok && v.groupId) groupEditDirty = false;
+    return ok;
+  };
+  if (isNew) {
+    $p.find("#ms-body").on(
+      "input.ms-gd change.ms-gd",
+      "input, textarea, select",
+      function () {
+        groupEditDirty = true;
+      },
+    );
+    $p.find("#ms-body").on(
+      "click.ms-gd",
+      "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-custom-icon-toggle, #ms-gedit-toggle-charsection, #ms-gedit-add-template, .ms-prefix-tpl-del, .ms-gedit-char-cb",
+      function () {
+        groupEditDirty = true;
+      },
+    );
+  } else {
+    $p.find("#ms-body").on("input.ms-gd", "input, textarea", function () {
+      _saveGroupEditDebounced();
+    });
+    $p.find("#ms-body").on(
+      "change.ms-gd",
+      "input, textarea, select",
+      function () {
         if (_gdSaveTimer) {
           clearTimeout(_gdSaveTimer);
           _gdSaveTimer = null;
         }
         _saveGroupEditNow();
-      });
-      $p.find("#ms-body").on(
-        "click.ms-gd",
-        "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-add-template, .ms-prefix-tpl-del, .ms-gedit-char-cb",
-        function () {
-          setTimeout(_saveGroupEditNow, 0);
-        },
-      );
-    }
-
-    function refreshBody() {
-      var $body = $p.find("#ms-body");
-      var sc = $body.scrollTop();
-      var $charList = $p.find("#ms-gedit-charlist-scroll");
-      var charListSc = $charList.length ? $charList.scrollTop() : 0;
-      var nameVal = $p.find("#ms-gedit-name").val();
-      var noteVal = $p.find("#ms-gedit-note").val();
-      var authorVal = $p.find("#ms-gedit-author").val();
-      var prefixVal = $p.find("#ms-gedit-prefix").val();
-      var iconUrlVal = $p.find("#ms-gedit-icon-url").length
-        ? $p.find("#ms-gedit-icon-url").val()
-        : undefined;
-      var searchFocused = $p.find("#ms-gedit-char-search").is(":focus");
-      var searchSelStart = 0;
-      if (searchFocused) {
-        try {
-          searchSelStart =
-            $p.find("#ms-gedit-char-search")[0].selectionStart || 0;
-        } catch (e) {}
-      }
-      $body.html(buildBody());
-      if (nameVal !== undefined) $p.find("#ms-gedit-name").val(nameVal);
-      if (noteVal !== undefined) $p.find("#ms-gedit-note").val(noteVal);
-      if (authorVal !== undefined) $p.find("#ms-gedit-author").val(authorVal);
-      if (prefixVal !== undefined) $p.find("#ms-gedit-prefix").val(prefixVal);
-      if (iconUrlVal !== undefined && $p.find("#ms-gedit-icon-url").length) {
-        $p.find("#ms-gedit-icon-url").val(iconUrlVal);
-      }
-      $body.scrollTop(sc);
-      var $newCharList = $p.find("#ms-gedit-charlist-scroll");
-      if ($newCharList.length) $newCharList.scrollTop(charListSc);
-      requestAnimationFrame(function () {
-        $body.scrollTop(sc);
-        var $cl = $p.find("#ms-gedit-charlist-scroll");
-        if ($cl.length) $cl.scrollTop(charListSc);
-        if (searchFocused) {
-          var el = $p.find("#ms-gedit-char-search")[0];
-          if (el) {
-            el.focus();
-            try {
-              el.setSelectionRange(searchSelStart, searchSelStart);
-            } catch (e) {}
-          }
-        }
-      });
-    }
-    var editMultiPrefixEnabled = !isNew && g && g.multiPrefixEnabled;
-    var editPrefixTemplates =
-      !isNew && g && Array.isArray(g.prefixTemplates)
-        ? JSON.parse(JSON.stringify(g.prefixTemplates))
-        : [];
-    var editPrefixAssignments =
-      !isNew && g && g.prefixAssignments
-        ? Object.assign({}, g.prefixAssignments)
-        : {};
-    function _collectMultiPrefixFromUI() {
-      $p.find(".ms-prefix-tpl-name").each(function () {
-        var tid = $(this).data("tpl-id");
-        var tpl = editPrefixTemplates.find(function (t) {
-          return t.id === tid;
-        });
-        if (tpl) tpl.name = $(this).val();
-      });
-      $p.find(".ms-prefix-tpl-content").each(function () {
-        var tid = $(this).data("tpl-id");
-        var tpl = editPrefixTemplates.find(function (t) {
-          return t.id === tid;
-        });
-        if (tpl) tpl.content = $(this).val();
-      });
-    }
-    function _syncMultiPrefixToGroup() {
-      if (!g) return;
-      g.multiPrefixEnabled = editMultiPrefixEnabled;
-      g.prefixTemplates = editPrefixTemplates;
-      g.prefixAssignments = editPrefixAssignments;
-    }
-    function _refreshMultiPrefixUI() {
-      _collectMultiPrefixFromUI();
-      var $body = $p.find("#ms-body");
-      var sc = $body.scrollTop();
-      _syncMultiPrefixToGroup();
-      $body.html(buildBody());
-      $body.scrollTop(sc);
-    }
-    $p.find("#ms-body").on(
-      "change.ms",
-      "#ms-gedit-multi-prefix-toggle",
-      function () {
-        editMultiPrefixEnabled = $(this).is(":checked");
-        _refreshMultiPrefixUI();
       },
     );
-    $p.find("#ms-body").on("click.ms", "#ms-gedit-add-template", function () {
-      _collectMultiPrefixFromUI();
-      var newTpl = {
-        id: uid(),
-        name: "模板 " + (editPrefixTemplates.length + 1),
-        content: "",
-      };
-      editPrefixTemplates.push(newTpl);
-      _refreshMultiPrefixUI();
+    $p.find("#ms-body").on("focusout.ms-gd", "input, textarea", function () {
+      if (_gdSaveTimer) {
+        clearTimeout(_gdSaveTimer);
+        _gdSaveTimer = null;
+      }
+      _saveGroupEditNow();
     });
-    $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-name", function () {
+    $p.find("#ms-body").on(
+      "click.ms-gd",
+      "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-custom-icon-toggle, #ms-gedit-add-template, .ms-prefix-tpl-del, .ms-gedit-char-cb",
+      function () {
+        setTimeout(_saveGroupEditNow, 0);
+      },
+    );
+  }
+
+  function refreshBody() {
+    var $body = $p.find("#ms-body");
+    var sc = $body.scrollTop();
+    var $charList = $p.find("#ms-gedit-charlist-scroll");
+    var charListSc = $charList.length ? $charList.scrollTop() : 0;
+    var nameVal = $p.find("#ms-gedit-name").val();
+    var noteVal = $p.find("#ms-gedit-note").val();
+    var authorVal = $p.find("#ms-gedit-author").val();
+    var prefixVal = $p.find("#ms-gedit-prefix").val();
+    var iconUrlVal = $p.find("#ms-gedit-icon-url").length
+      ? $p.find("#ms-gedit-icon-url").val()
+      : undefined;
+    var searchFocused = $p.find("#ms-gedit-char-search").is(":focus");
+    var searchSelStart = 0;
+    if (searchFocused) {
+      try {
+        searchSelStart =
+          $p.find("#ms-gedit-char-search")[0].selectionStart || 0;
+      } catch (e) {}
+    }
+    $body.html(buildBody());
+    if (nameVal !== undefined) $p.find("#ms-gedit-name").val(nameVal);
+    if (noteVal !== undefined) $p.find("#ms-gedit-note").val(noteVal);
+    if (authorVal !== undefined) $p.find("#ms-gedit-author").val(authorVal);
+    if (prefixVal !== undefined) $p.find("#ms-gedit-prefix").val(prefixVal);
+    if (iconUrlVal !== undefined && $p.find("#ms-gedit-icon-url").length) {
+      $p.find("#ms-gedit-icon-url").val(iconUrlVal);
+    }
+    $body.scrollTop(sc);
+    var $newCharList = $p.find("#ms-gedit-charlist-scroll");
+    if ($newCharList.length) $newCharList.scrollTop(charListSc);
+    requestAnimationFrame(function () {
+      $body.scrollTop(sc);
+      var $cl = $p.find("#ms-gedit-charlist-scroll");
+      if ($cl.length) $cl.scrollTop(charListSc);
+      if (searchFocused) {
+        var el = $p.find("#ms-gedit-char-search")[0];
+        if (el) {
+          el.focus();
+          try {
+            el.setSelectionRange(searchSelStart, searchSelStart);
+          } catch (e) {}
+        }
+      }
+    });
+  }
+  var editMultiPrefixEnabled = !isNew && g && g.multiPrefixEnabled;
+  var editPrefixTemplates =
+    !isNew && g && Array.isArray(g.prefixTemplates)
+      ? JSON.parse(JSON.stringify(g.prefixTemplates))
+      : [];
+  var editPrefixAssignments =
+    !isNew && g && g.prefixAssignments
+      ? Object.assign({}, g.prefixAssignments)
+      : {};
+  function _collectMultiPrefixFromUI() {
+    $p.find(".ms-prefix-tpl-name").each(function () {
       var tid = $(this).data("tpl-id");
       var tpl = editPrefixTemplates.find(function (t) {
         return t.id === tid;
       });
       if (tpl) tpl.name = $(this).val();
     });
-    $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-content", function () {
+    $p.find(".ms-prefix-tpl-content").each(function () {
       var tid = $(this).data("tpl-id");
       var tpl = editPrefixTemplates.find(function (t) {
         return t.id === tid;
       });
       if (tpl) tpl.content = $(this).val();
     });
-    $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-del", function () {
-      var tid = $(this).data("tpl-id");
-      var tpl = editPrefixTemplates.find(function (t) {
-        return t.id === tid;
+  }
+  function _syncMultiPrefixToGroup() {
+    if (!g) return;
+    g.multiPrefixEnabled = editMultiPrefixEnabled;
+    g.prefixTemplates = editPrefixTemplates;
+    g.prefixAssignments = editPrefixAssignments;
+  }
+  function _refreshMultiPrefixUI() {
+    _collectMultiPrefixFromUI();
+    var $body = $p.find("#ms-body");
+    var sc = $body.scrollTop();
+    _syncMultiPrefixToGroup();
+    $body.html(buildBody());
+    $body.scrollTop(sc);
+  }
+  $p.find("#ms-body").on(
+    "change.ms",
+    "#ms-gedit-multi-prefix-toggle",
+    function () {
+      editMultiPrefixEnabled = $(this).is(":checked");
+      _refreshMultiPrefixUI();
+    },
+  );
+  $p.find("#ms-body").on("click.ms", "#ms-gedit-add-template", function () {
+    _collectMultiPrefixFromUI();
+    var newTpl = {
+      id: uid(),
+      name: "模板 " + (editPrefixTemplates.length + 1),
+      content: "",
+    };
+    editPrefixTemplates.push(newTpl);
+    _refreshMultiPrefixUI();
+  });
+  $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-name", function () {
+    var tid = $(this).data("tpl-id");
+    var tpl = editPrefixTemplates.find(function (t) {
+      return t.id === tid;
+    });
+    if (tpl) tpl.name = $(this).val();
+  });
+  $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-content", function () {
+    var tid = $(this).data("tpl-id");
+    var tpl = editPrefixTemplates.find(function (t) {
+      return t.id === tid;
+    });
+    if (tpl) tpl.content = $(this).val();
+  });
+  $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-del", function () {
+    var tid = $(this).data("tpl-id");
+    var tpl = editPrefixTemplates.find(function (t) {
+      return t.id === tid;
+    });
+    if (!tpl) return;
+    var usedCount = 0;
+    Object.keys(editPrefixAssignments).forEach(function (pid) {
+      if (editPrefixAssignments[pid] === tid) usedCount++;
+    });
+    var msg =
+      usedCount > 0
+        ? "确定删除模板「" +
+          (tpl.name || "未命名") +
+          "」吗？\n\n有 " +
+          usedCount +
+          " 条剧场分配了这个模板，删除后会自动改用分组默认前缀。"
+        : "确定删除模板「" + (tpl.name || "未命名") + "」吗？";
+    msConfirm(msg, {
+      title: "删除模板",
+      dangerous: true,
+      okText: "删除",
+    }).then(function (ok) {
+      if (!ok) return;
+      editPrefixTemplates = editPrefixTemplates.filter(function (t) {
+        return t.id !== tid;
       });
-      if (!tpl) return;
-      var usedCount = 0;
       Object.keys(editPrefixAssignments).forEach(function (pid) {
-        if (editPrefixAssignments[pid] === tid) usedCount++;
+        if (editPrefixAssignments[pid] === tid)
+          delete editPrefixAssignments[pid];
       });
-      var msg =
-        usedCount > 0
-          ? "确定删除模板「" +
-            (tpl.name || "未命名") +
-            "」吗？\n\n有 " +
-            usedCount +
-            " 条剧场分配了这个模板，删除后会自动改用分组默认前缀。"
-          : "确定删除模板「" + (tpl.name || "未命名") + "」吗？";
+      _refreshMultiPrefixUI();
+    });
+  });
+  $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-config", function () {
+    var tid = $(this).data("tpl-id");
+    if (!tid) return;
+    var tpl = editPrefixTemplates.find(function (t) {
+      return t.id === tid;
+    });
+    if (!tpl) return;
+    _collectMultiPrefixFromUI();
+    var groupPromptsForCfg = getPromptsInGroup(v.groupId);
+    var workingAssignments = Object.assign({}, editPrefixAssignments);
+    var cfgSearchKw = "";
+
+    function buildTplCfgModalBody() {
+      var lkw = cfgSearchKw.toLowerCase();
+      var filtered = groupPromptsForCfg.filter(function (p) {
+        if (!lkw) return true;
+        return (
+          (p.title || "").toLowerCase().indexOf(lkw) >= 0 ||
+          (p.content || "").toLowerCase().indexOf(lkw) >= 0
+        );
+      });
+      var assignedToThisCount = 0;
+      var occupiedByOthersCount = 0;
+      groupPromptsForCfg.forEach(function (p) {
+        if (workingAssignments[p.id] === tid) assignedToThisCount++;
+        else if (workingAssignments[p.id]) occupiedByOthersCount++;
+      });
+      var html = "";
+      html +=
+        '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;line-height:1.6;">';
+      html +=
+        '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>';
+      html +=
+        "勾选要使用「<strong>" +
+        esc(tpl.name || "未命名") +
+        "</strong>」前缀的剧场。被其他模板占用的会显示灰色，可点击以更改至当前模板。";
+      html += "</div>";
+      html +=
+        '<input type="text" class="ms-modal-search" id="ms-tpl-cfg-search" placeholder="搜索剧场..." value="' +
+        esc(cfgSearchKw) +
+        '">';
+      html +=
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px;flex-wrap:wrap;">';
+      html +=
+        '<span style="color:var(--SmartThemeQuoteColor,#888);flex:1;min-width:0;">共 ' +
+        groupPromptsForCfg.length +
+        ' 条 · 当前模板已选 <strong style="color:var(--ms-accent);">' +
+        assignedToThisCount +
+        "</strong> 条" +
+        (occupiedByOthersCount > 0
+          ? ' · <span style="color:var(--ms-accent);opacity:0.85;">' +
+            occupiedByOthersCount +
+            " 条被其他模板占用</span>"
+          : "") +
+        "</span>";
+      html +=
+        '<button class="ms-tbtn" data-tpl-cfg-action="select-free" style="font-size:10px;padding:3px 8px;flex-shrink:0;" title="只勾选未被任何模板占用的剧场">勾选空闲</button>';
+      html +=
+        '<button class="ms-tbtn" data-tpl-cfg-action="clear" style="font-size:10px;padding:3px 8px;color:var(--ms-danger);border-color:var(--ms-danger);flex-shrink:0;" title="把当前模板下的剧场全部释放">清空</button>';
+      html += "</div>";
+      if (filtered.length === 0) {
+        html +=
+          '<div class="ms-empty" style="padding:20px;font-size:11px;"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的剧场</div>';
+      } else {
+        html +=
+          '<div id="ms-tpl-cfg-list" style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:3px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;padding:6px;">';
+        filtered.forEach(function (p) {
+          var assignedTo = workingAssignments[p.id];
+          var isAssignedToThis = assignedTo === tid;
+          var isAssignedToOther = assignedTo && assignedTo !== tid;
+          var otherTpl = isAssignedToOther
+            ? editPrefixTemplates.find(function (t) {
+                return t.id === assignedTo;
+              })
+            : null;
+          var rowBg = isAssignedToThis
+            ? "background:rgba(var(--ms-accent-rgb),0.12);"
+            : isAssignedToOther
+              ? "background:rgba(255,255,255,0.02);opacity:0.6;"
+              : "";
+          var checkBg = isAssignedToThis
+            ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
+            : "";
+          var noteH = "";
+          if (isAssignedToOther && otherTpl) {
+            noteH =
+              '<span style="font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.12);padding:1px 6px;border-radius:3px;flex-shrink:0;" title="点击会更改到当前模板">已属于「' +
+              esc(truncate(otherTpl.name || "未命名", 12)) +
+              "」</span>";
+          }
+          var seriesH = "";
+          if (p.series && String(p.series).trim()) {
+            seriesH =
+              '<div style="font-size:9px;color:var(--ms-accent);opacity:0.75;display:flex;align-items:center;gap:3px;line-height:1.3;margin-bottom:2px;"><i class="fa-solid fa-layer-group" style="font-size:8px;"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+              esc(String(p.series).trim()) +
+              "</span></div>";
+          }
+          html +=
+            '<div class="ms-tpl-cfg-row" data-pid="' +
+            p.id +
+            '" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;transition:background 0.12s;' +
+            rowBg +
+            '">';
+          html +=
+            '<div class="ms-gitem-check" style="' +
+            checkBg +
+            '"><i class="fa-solid fa-check"></i></div>';
+          html += '<div style="flex:1;min-width:0;overflow:hidden;">';
+          html += seriesH;
+          html +=
+            '<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--SmartThemeBodyColor,#ddd);">' +
+            esc(p.title || "未命名") +
+            "</div>";
+          html += "</div>";
+          html += noteH;
+          html +=
+            '<button class="ms-card-qbtn ms-tpl-cfg-preview" data-pid="' +
+            p.id +
+            '" title="预览剧场内容" style="flex-shrink:0;width:24px;height:24px;font-size:10px;"><i class="fa-solid fa-eye"></i></button>';
+          html += "</div>";
+        });
+        html += "</div>";
+      }
+      return html;
+    }
+
+    function refreshTplCfgBody($overlay, keepFocus) {
+      var $oldInput = $overlay.find("#ms-tpl-cfg-search");
+      var caretPos = -1;
+      if (keepFocus && $oldInput.is(":focus") && $oldInput[0]) {
+        caretPos = $oldInput[0].selectionStart || 0;
+      }
+      var $oldList = $overlay.find("#ms-tpl-cfg-list");
+      var savedScroll = $oldList.length ? $oldList[0].scrollTop : 0;
+      $overlay.find(".ms-modal-body").html(buildTplCfgModalBody());
+      var $newList = $overlay.find("#ms-tpl-cfg-list");
+      if ($newList.length && savedScroll > 0) {
+        $newList[0].scrollTop = savedScroll;
+      }
+      if (caretPos >= 0) {
+        var $newInput = $overlay.find("#ms-tpl-cfg-search");
+        if ($newInput.length) {
+          $newInput.focus();
+          try {
+            $newInput[0].setSelectionRange(caretPos, caretPos);
+          } catch (e) {}
+        }
+      }
+    }
+
+    showModal({
+      title: "配置「" + truncate(tpl.name || "未命名", 18) + "」的适用剧场",
+      iconType: "info",
+      icon: "fa-list-check",
+      modalStyle: "min-width:380px;max-width:94vw;width:520px;",
+      body: buildTplCfgModalBody(),
+      buttons: [
+        { text: "取消", value: null },
+        {
+          text: "保存",
+          cls: "primary",
+          primary: true,
+          action: function () {
+            editPrefixAssignments = workingAssignments;
+            _refreshMultiPrefixUI();
+            groupEditDirty = true;
+            return true;
+          },
+        },
+      ],
+      cancelValue: null,
+      onShow: function ($overlay) {
+        $overlay.on("input", "#ms-tpl-cfg-search", function () {
+          cfgSearchKw = $(this).val();
+          refreshTplCfgBody($overlay, true);
+        });
+        $overlay.on("click", ".ms-tpl-cfg-preview", function (e) {
+          e.stopPropagation();
+          var pid = $(this).data("pid");
+          if (!pid) return;
+          var pp = getPrompt(pid);
+          if (!pp) return;
+          showModal({
+            title: "预览：" + truncate(pp.title || "未命名", 24),
+            iconType: "info",
+            icon: "fa-eye",
+            modalStyle:
+              "min-width:340px;max-width:92vw;width:480px;max-height:80vh;",
+            body:
+              '<div class="ms-preview-content" style="padding:0;font-size:13px;">' +
+              renderMd(pp.content || "") +
+              "</div>",
+            buttons: [
+              { text: "关闭", cls: "primary", primary: true, value: true },
+            ],
+          });
+        });
+        $overlay.on("click", ".ms-tpl-cfg-row", function () {
+          var pid = $(this).data("pid");
+          if (!pid) return;
+          if (workingAssignments[pid] === tid) {
+            delete workingAssignments[pid];
+          } else {
+            workingAssignments[pid] = tid;
+          }
+          refreshTplCfgBody($overlay, false);
+        });
+        $overlay.on(
+          "click",
+          '[data-tpl-cfg-action="select-free"]',
+          function () {
+            groupPromptsForCfg.forEach(function (p) {
+              if (!workingAssignments[p.id]) {
+                workingAssignments[p.id] = tid;
+              }
+            });
+            refreshTplCfgBody($overlay, false);
+          },
+        );
+        $overlay.on("click", '[data-tpl-cfg-action="clear"]', function () {
+          groupPromptsForCfg.forEach(function (p) {
+            if (workingAssignments[p.id] === tid) {
+              delete workingAssignments[p.id];
+            }
+          });
+          refreshTplCfgBody($overlay, false);
+        });
+      },
+    });
+  });
+  $p.find("#ms-body").on("change.ms", ".ms-prefix-assign-sel", function () {
+    var pid = $(this).data("pid");
+    var val = $(this).val();
+    if (val) editPrefixAssignments[pid] = val;
+    else delete editPrefixAssignments[pid];
+    var tid = val;
+    var $row = $(this).closest(".ms-prefix-assign-item");
+    $row.css(
+      "background",
+      val ? "rgba(var(--ms-accent-rgb),0.06)" : "rgba(255,255,255,0.02)",
+    );
+    var $tplList = $p.find("#ms-gedit-template-list");
+    if ($tplList.length) {
+      editPrefixTemplates.forEach(function (tpl) {
+        var usedCount = 0;
+        Object.keys(editPrefixAssignments).forEach(function (ppid) {
+          if (editPrefixAssignments[ppid] === tpl.id) usedCount++;
+        });
+        var $badge = $tplList
+          .find('.ms-prefix-tpl-item[data-tpl-id="' + tpl.id + '"] span')
+          .first();
+        if ($badge.length) {
+          $badge.text(usedCount > 0 ? "已用 " + usedCount : "未使用");
+          $badge.css(
+            "color",
+            usedCount > 0
+              ? "var(--ms-accent)"
+              : "var(--SmartThemeQuoteColor,#666)",
+          );
+          $badge.css(
+            "background",
+            "rgba(var(--ms-accent-rgb)," +
+              (usedCount > 0 ? "0.12" : "0.04") +
+              ")",
+          );
+        }
+      });
+    }
+  });
+  $p.find("#ms-body").on("click.ms", "[data-bulk-assign]", function () {
+    var target = $(this).data("bulk-assign");
+    var groupPrompts = getPromptsInGroup(v.groupId);
+    if (target === "default") {
+      groupPrompts.forEach(function (p) {
+        delete editPrefixAssignments[p.id];
+      });
+    } else {
+      groupPrompts.forEach(function (p) {
+        editPrefixAssignments[p.id] = target;
+      });
+    }
+    _refreshMultiPrefixUI();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-gedit-cancel", navigateBack);
+
+  $p.find("#ms-body").on("click.ms", "[data-gedit-color]", function () {
+    editColor = $(this).data("gedit-color");
+    $p.find("[data-gedit-color]").removeClass("selected");
+    $(this).addClass("selected");
+    $p.find(".ms-color-custom").removeClass("selected");
+  });
+  $p.find("#ms-body").on("change.ms", "#ms-gedit-custom-color", function () {
+    var c = $(this).val();
+    if (c) {
+      editColor = c;
+      $p.find("[data-gedit-color]").removeClass("selected");
+      $p.find(".ms-color-custom").addClass("selected");
+    }
+  });
+
+  $p.find("#ms-body").on("click.ms", "[data-gedit-iconmode]", function () {
+    editIconMode = $(this).data("gedit-iconmode");
+    if (editIconMode !== "custom") editIconFallbackMode = editIconMode;
+    refreshBody();
+  });
+
+  $p.find("#ms-body").on("click.ms", "[data-gedit-iconchar]", function () {
+    editIconCharKey = $(this).data("gedit-iconchar");
+    refreshBody();
+  });
+
+  var _iconUrlTimer = null;
+  $p.find("#ms-body").on("input.ms", "#ms-gedit-icon-url", function () {
+    var val = $(this).val().trim();
+    editIconUrl = val;
+    if (_iconUrlTimer) clearTimeout(_iconUrlTimer);
+    _iconUrlTimer = setTimeout(function () {
+      refreshBody();
+    }, 700);
+  });
+
+  $p.find("#ms-body").on(
+    "click.ms",
+    "#ms-gedit-toggle-charsection",
+    function () {
+      showCharSection = !showCharSection;
+      refreshBody();
+    },
+  );
+
+  $p.find("#ms-body").on("change.ms", ".ms-gedit-char-cb", function () {
+    var k = $(this).data("key");
+    var checked = $(this).is(":checked");
+    if (checked) {
+      if (editCharKeys.indexOf(k) < 0) editCharKeys.push(k);
+    } else {
+      var idx = editCharKeys.indexOf(k);
+      if (idx >= 0) editCharKeys.splice(idx, 1);
+    }
+    refreshBody();
+  });
+
+  var _charSearchTimer = null;
+  $p.find("#ms-body").on("input.ms", "#ms-gedit-char-search", function () {
+    var val = $(this).val();
+    if (_charSearchTimer) clearTimeout(_charSearchTimer);
+    _charSearchTimer = setTimeout(function () {
+      _searchKw = val;
+      refreshBody();
+    }, 200);
+  });
+
+  $p.find("#ms-body").on("click.ms", "#ms-group-set-all-author", () => {
+    msPrompt("", {
+      title: "批量设置本组作者",
+      placeholder: "留空则清除作者",
+      icon: "fa-user-pen",
+    }).then(function (authorVal) {
+      if (authorVal === null) return;
+      const prompts = getPromptsInGroup(v.groupId);
+      prompts.forEach((p) => {
+        p.author = authorVal.trim();
+      });
+      saveData();
+      toast("success", `已为${prompts.length} 条设置作者`);
+    });
+  });
+
+  $p.find("#ms-body").on("click.ms", "#ms-gedit-save", () => {
+    const n = $p.find("#ms-gedit-name").val().trim(),
+      note = $p.find("#ms-gedit-note").val().trim(),
+      defAuthor = $p.find("#ms-gedit-author").val().trim();
+    if (!n) {
+      toast("warning", "名称不能为空");
+      return;
+    }
+    var stagePrefix = $p.find("#ms-gedit-prefix").val() || "";
+    var multiStagePrefix = $p.find("#ms-gedit-multi-shell").val() || "";
+    var finalIconUrl = $p.find("#ms-gedit-icon-url").length
+      ? $p.find("#ms-gedit-icon-url").val().trim()
+      : editIconUrl;
+    _collectMultiPrefixFromUI();
+    var payload = {
+      name: n,
+      note: note,
+      color: editColor,
+      defaultAuthor: defAuthor,
+      stagePrefix: stagePrefix,
+      multiStagePrefix: multiStagePrefix,
+      iconMode: editIconMode,
+      iconUrl: editIconMode === "custom" ? finalIconUrl : "",
+      iconCharKey: editIconMode === "char" ? editIconCharKey : "",
+      charKeys: editCharKeys.slice(),
+      multiPrefixEnabled: editMultiPrefixEnabled,
+      prefixTemplates: editPrefixTemplates,
+      prefixAssignments: editPrefixAssignments,
+    };
+    data.groups.forEach(function (og) {
+      if (v.groupId && og.id === v.groupId) return;
+      if (!Array.isArray(og.charKeys)) return;
+      og.charKeys = og.charKeys.filter(function (k) {
+        return editCharKeys.indexOf(k) < 0;
+      });
+    });
+    if (v.groupId) {
+      updateGroup(v.groupId, payload);
+    } else {
+      const ng = createGroup(n);
+      updateGroup(ng.id, payload);
+    }
+    _invalidateCharGroupCache();
+    groupEditDirty = false;
+    flushGroupEdit = null;
+    navigateBack();
+  });
+}
+
+function renderTagManage() {
+  const $p = $("#" + PANEL_ID);
+  $p.find("#ms-title").text("标签管理");
+  $p.find("#ms-toolbar").html(
+    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">标签管理</span><div class="ms-toolbar-actions"><button class="ms-tbtn ${tagSelectMode ? "active" : ""}" id="ms-tag-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-tag-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-tag-add-btn"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
+  );
+  let expandedColorId = null;
+  function buildTagsBody() {
+    let html = "";
+    if (data.settings.definedTags.length === 0)
+      html = `<div class="ms-empty"><i class="fa-solid fa-tags"></i>还没有标签</div>`;
+    else
+      data.settings.definedTags.forEach((t) => {
+        const cnt = data.prompts.filter(
+          (p) => p.tags && p.tags.includes(t.id),
+        ).length;
+        const isSel = selectedTagIds.has(t.id);
+        if (tagSelectMode) {
+          html += `<div class="ms-gitem ${isSel ? "ms-gitem-selected" : ""}" data-tid="${t.id}"><div class="ms-gitem-check"><i class="fa-solid fa-check"></i></div><span class="ms-gitem-color" style="background:${t.color};cursor:default;"></span><span class="ms-gitem-name">${esc(t.name)}</span><span class="ms-gitem-cnt">${cnt}</span></div>`;
+        } else {
+          html += `<div class="ms-gitem"><span class="ms-gitem-color" style="background:${t.color}" data-tid="${t.id}"></span><span class="ms-gitem-name">${esc(t.name)}</span><span class="ms-gitem-cnt">${cnt}</span><button class="ms-gitem-btn" data-action="rename-tag" data-tid="${t.id}"><i class="fa-solid fa-pen"></i></button><button class="ms-gitem-btn danger" data-action="delete-tag" data-tid="${t.id}"><i class="fa-solid fa-trash"></i></button></div>`;
+          if (expandedColorId === t.id) {
+            html += buildColorPickerHTML(t.color, "data-tid", t.id);
+          }
+        }
+      });
+    return html;
+  }
+  function buildTagBatchFooter() {
+    const allSel =
+      data.settings.definedTags.length > 0 &&
+      data.settings.definedTags.every((t) => selectedTagIds.has(t.id));
+    const noneSel = selectedTagIds.size === 0;
+    const selIcon = allSel
+      ? "fa-solid fa-square-check"
+      : noneSel
+        ? "fa-regular fa-square"
+        : "fa-solid fa-square-minus";
+    const selColor = noneSel
+      ? "var(--SmartThemeQuoteColor,#666)"
+      : "var(--ms-accent)";
+    const selLabel = allSel ? " 取消" : " 全选";
+    return `<div class="ms-batch-bar"><span class="ms-batch-count"><i class="fa-solid fa-list-check"></i> ${selectedTagIds.size}</span><button class="ms-batch-btn" data-tbatch="selectall"><i class="${selIcon}" style="color:${selColor};"></i><span class="ms-btn-label">${selLabel}</span></button><button class="ms-batch-btn danger" data-tbatch="delete"><i class="fa-solid fa-trash"></i><span class="ms-btn-label"> 删除</span></button></div>`;
+  }
+  $p.find("#ms-body").html(buildTagsBody());
+  if (tagSelectMode) {
+    $p.find("#ms-footer").html(buildTagBatchFooter()).show();
+  } else {
+    $p.find("#ms-footer").hide();
+  }
+  bindAllEvents();
+  $p.find("#ms-toolbar").on("click.ms", "#ms-tag-select", () => {
+    tagSelectMode = !tagSelectMode;
+    if (!tagSelectMode) selectedTagIds.clear();
+    renderTagManage();
+  });
+  $p.find("#ms-toolbar").on("click.ms", "#ms-tag-reorder", () => {
+    if (data.settings.definedTags.length > 1)
+      navigateTo({ name: "reorder-tags" });
+    else toast("info", "至少需要2个标签才能排序");
+  });
+  $p.find("#ms-toolbar").on("click.ms", "#ms-tag-add-btn", () => {
+    msPrompt("", {
+      title: "新建标签",
+      placeholder: "请输入新标签名称",
+      validate: function (v) {
+        if (!v || !v.trim()) return "名称不能为空";
+        return null;
+      },
+    }).then(function (n) {
+      if (!n || !n.trim()) return;
+      createTag(n.trim());
+      renderTagManage();
+    });
+  });
+  if (tagSelectMode) {
+    $p.find("#ms-body").on("click.ms", ".ms-gitem", function () {
+      const tid = $(this).data("tid");
+      if (!tid) return;
+      if (selectedTagIds.has(tid)) selectedTagIds.delete(tid);
+      else selectedTagIds.add(tid);
+      $p.find("#ms-body").html(buildTagsBody());
+      $p.find("#ms-footer").html(buildTagBatchFooter());
+    });
+    $p.find("#ms-footer").on("click.ms", "[data-tbatch='selectall']", () => {
+      const allSel =
+        data.settings.definedTags.length > 0 &&
+        data.settings.definedTags.every((t) => selectedTagIds.has(t.id));
+      if (allSel) selectedTagIds.clear();
+      else data.settings.definedTags.forEach((t) => selectedTagIds.add(t.id));
+      $p.find("#ms-body").html(buildTagsBody());
+      $p.find("#ms-footer").html(buildTagBatchFooter());
+    });
+    $p.find("#ms-footer").on("click.ms", "[data-tbatch='delete']", () => {
+      if (selectedTagIds.size === 0) return;
+      let totalUsed = 0;
+      selectedTagIds.forEach((tid) => {
+        totalUsed += data.prompts.filter(
+          (p) => p.tags && p.tags.includes(tid),
+        ).length;
+      });
+      const msg =
+        totalUsed > 0
+          ? `确定删除选中的 ${selectedTagIds.size} 个标签吗？\n共有 ${totalUsed} 条剧场使用了这些标签，标签将从它们身上移除。`
+          : `确定删除选中的 ${selectedTagIds.size} 个标签吗？`;
       msConfirm(msg, {
-        title: "删除模板",
+        title: "批量删除标签",
         dangerous: true,
         okText: "删除",
       }).then(function (ok) {
         if (!ok) return;
-        editPrefixTemplates = editPrefixTemplates.filter(function (t) {
-          return t.id !== tid;
-        });
-        Object.keys(editPrefixAssignments).forEach(function (pid) {
-          if (editPrefixAssignments[pid] === tid)
-            delete editPrefixAssignments[pid];
-        });
-        _refreshMultiPrefixUI();
+        selectedTagIds.forEach((tid) => deleteTag(tid));
+        selectedTagIds.clear();
+        tagSelectMode = false;
+        renderTagManage();
+        toast("success", "已删除");
       });
     });
-    $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-config", function () {
-      var tid = $(this).data("tpl-id");
-      if (!tid) return;
-      var tpl = editPrefixTemplates.find(function (t) {
-        return t.id === tid;
-      });
-      if (!tpl) return;
-      _collectMultiPrefixFromUI();
-      var groupPromptsForCfg = getPromptsInGroup(v.groupId);
-      var workingAssignments = Object.assign({}, editPrefixAssignments);
-      var cfgSearchKw = "";
-
-      function buildTplCfgModalBody() {
-        var lkw = cfgSearchKw.toLowerCase();
-        var filtered = groupPromptsForCfg.filter(function (p) {
-          if (!lkw) return true;
-          return (
-            (p.title || "").toLowerCase().indexOf(lkw) >= 0 ||
-            (p.content || "").toLowerCase().indexOf(lkw) >= 0
-          );
-        });
-        var assignedToThisCount = 0;
-        var occupiedByOthersCount = 0;
-        groupPromptsForCfg.forEach(function (p) {
-          if (workingAssignments[p.id] === tid) assignedToThisCount++;
-          else if (workingAssignments[p.id]) occupiedByOthersCount++;
-        });
-        var html = "";
-        html +=
-          '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;line-height:1.6;">';
-        html +=
-          '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>';
-        html +=
-          "勾选要使用「<strong>" +
-          esc(tpl.name || "未命名") +
-          "</strong>」前缀的剧场。被其他模板占用的会显示灰色，可点击以更改至当前模板。";
-        html += "</div>";
-        html +=
-          '<input type="text" class="ms-modal-search" id="ms-tpl-cfg-search" placeholder="搜索剧场..." value="' +
-          esc(cfgSearchKw) +
-          '">';
-        html +=
-          '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px;flex-wrap:wrap;">';
-        html +=
-          '<span style="color:var(--SmartThemeQuoteColor,#888);flex:1;min-width:0;">共 ' +
-          groupPromptsForCfg.length +
-          ' 条 · 当前模板已选 <strong style="color:var(--ms-accent);">' +
-          assignedToThisCount +
-          "</strong> 条" +
-          (occupiedByOthersCount > 0
-            ? ' · <span style="color:var(--ms-accent);opacity:0.85;">' +
-              occupiedByOthersCount +
-              " 条被其他模板占用</span>"
-            : "") +
-          "</span>";
-        html +=
-          '<button class="ms-tbtn" data-tpl-cfg-action="select-free" style="font-size:10px;padding:3px 8px;flex-shrink:0;" title="只勾选未被任何模板占用的剧场">勾选空闲</button>';
-        html +=
-          '<button class="ms-tbtn" data-tpl-cfg-action="clear" style="font-size:10px;padding:3px 8px;color:var(--ms-danger);border-color:var(--ms-danger);flex-shrink:0;" title="把当前模板下的剧场全部释放">清空</button>';
-        html += "</div>";
-        if (filtered.length === 0) {
-          html +=
-            '<div class="ms-empty" style="padding:20px;font-size:11px;"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的剧场</div>';
-        } else {
-          html +=
-            '<div id="ms-tpl-cfg-list" style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:3px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;padding:6px;">';
-          filtered.forEach(function (p) {
-            var assignedTo = workingAssignments[p.id];
-            var isAssignedToThis = assignedTo === tid;
-            var isAssignedToOther = assignedTo && assignedTo !== tid;
-            var otherTpl = isAssignedToOther
-              ? editPrefixTemplates.find(function (t) {
-                  return t.id === assignedTo;
-                })
-              : null;
-            var rowBg = isAssignedToThis
-              ? "background:rgba(var(--ms-accent-rgb),0.12);"
-              : isAssignedToOther
-                ? "background:rgba(255,255,255,0.02);opacity:0.6;"
-                : "";
-            var checkBg = isAssignedToThis
-              ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
-              : "";
-            var noteH = "";
-            if (isAssignedToOther && otherTpl) {
-              noteH =
-                '<span style="font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.12);padding:1px 6px;border-radius:3px;flex-shrink:0;" title="点击会更改到当前模板">已属于「' +
-                esc(truncate(otherTpl.name || "未命名", 12)) +
-                "」</span>";
-            }
-            var seriesH = "";
-            if (p.series && String(p.series).trim()) {
-              seriesH =
-                '<div style="font-size:9px;color:var(--ms-accent);opacity:0.75;display:flex;align-items:center;gap:3px;line-height:1.3;margin-bottom:2px;"><i class="fa-solid fa-layer-group" style="font-size:8px;"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
-                esc(String(p.series).trim()) +
-                "</span></div>";
-            }
-            html +=
-              '<div class="ms-tpl-cfg-row" data-pid="' +
-              p.id +
-              '" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;transition:background 0.12s;' +
-              rowBg +
-              '">';
-            html +=
-              '<div class="ms-gitem-check" style="' +
-              checkBg +
-              '"><i class="fa-solid fa-check"></i></div>';
-            html += '<div style="flex:1;min-width:0;overflow:hidden;">';
-            html += seriesH;
-            html +=
-              '<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--SmartThemeBodyColor,#ddd);">' +
-              esc(p.title || "未命名") +
-              "</div>";
-            html += "</div>";
-            html += noteH;
-            html +=
-              '<button class="ms-card-qbtn ms-tpl-cfg-preview" data-pid="' +
-              p.id +
-              '" title="预览剧场内容" style="flex-shrink:0;width:24px;height:24px;font-size:10px;"><i class="fa-solid fa-eye"></i></button>';
-            html += "</div>";
-          });
-          html += "</div>";
-        }
-        return html;
-      }
-
-      function refreshTplCfgBody($overlay, keepFocus) {
-        var $oldInput = $overlay.find("#ms-tpl-cfg-search");
-        var caretPos = -1;
-        if (keepFocus && $oldInput.is(":focus") && $oldInput[0]) {
-          caretPos = $oldInput[0].selectionStart || 0;
-        }
-        var $oldList = $overlay.find("#ms-tpl-cfg-list");
-        var savedScroll = $oldList.length ? $oldList[0].scrollTop : 0;
-        $overlay.find(".ms-modal-body").html(buildTplCfgModalBody());
-        var $newList = $overlay.find("#ms-tpl-cfg-list");
-        if ($newList.length && savedScroll > 0) {
-          $newList[0].scrollTop = savedScroll;
-        }
-        if (caretPos >= 0) {
-          var $newInput = $overlay.find("#ms-tpl-cfg-search");
-          if ($newInput.length) {
-            $newInput.focus();
-            try {
-              $newInput[0].setSelectionRange(caretPos, caretPos);
-            } catch (e) {}
-          }
-        }
-      }
-
-      showModal({
-        title: "配置「" + truncate(tpl.name || "未命名", 18) + "」的适用剧场",
-        iconType: "info",
-        icon: "fa-list-check",
-        modalStyle: "min-width:380px;max-width:94vw;width:520px;",
-        body: buildTplCfgModalBody(),
-        buttons: [
-          { text: "取消", value: null },
-          {
-            text: "保存",
-            cls: "primary",
-            primary: true,
-            action: function () {
-              editPrefixAssignments = workingAssignments;
-              _refreshMultiPrefixUI();
-              groupEditDirty = true;
-              return true;
-            },
-          },
-        ],
-        cancelValue: null,
-        onShow: function ($overlay) {
-          $overlay.on("input", "#ms-tpl-cfg-search", function () {
-            cfgSearchKw = $(this).val();
-            refreshTplCfgBody($overlay, true);
-          });
-          $overlay.on("click", ".ms-tpl-cfg-preview", function (e) {
-            e.stopPropagation();
-            var pid = $(this).data("pid");
-            if (!pid) return;
-            var pp = getPrompt(pid);
-            if (!pp) return;
-            showModal({
-              title: "预览：" + truncate(pp.title || "未命名", 24),
-              iconType: "info",
-              icon: "fa-eye",
-              modalStyle:
-                "min-width:340px;max-width:92vw;width:480px;max-height:80vh;",
-              body:
-                '<div class="ms-preview-content" style="padding:0;font-size:13px;">' +
-                renderMd(pp.content || "") +
-                "</div>",
-              buttons: [
-                { text: "关闭", cls: "primary", primary: true, value: true },
-              ],
-            });
-          });
-          $overlay.on("click", ".ms-tpl-cfg-row", function () {
-            var pid = $(this).data("pid");
-            if (!pid) return;
-            if (workingAssignments[pid] === tid) {
-              delete workingAssignments[pid];
-            } else {
-              workingAssignments[pid] = tid;
-            }
-            refreshTplCfgBody($overlay, false);
-          });
-          $overlay.on(
-            "click",
-            '[data-tpl-cfg-action="select-free"]',
-            function () {
-              groupPromptsForCfg.forEach(function (p) {
-                if (!workingAssignments[p.id]) {
-                  workingAssignments[p.id] = tid;
-                }
-              });
-              refreshTplCfgBody($overlay, false);
-            },
-          );
-          $overlay.on("click", '[data-tpl-cfg-action="clear"]', function () {
-            groupPromptsForCfg.forEach(function (p) {
-              if (workingAssignments[p.id] === tid) {
-                delete workingAssignments[p.id];
-              }
-            });
-            refreshTplCfgBody($overlay, false);
-          });
-        },
-      });
-    });
-    $p.find("#ms-body").on("change.ms", ".ms-prefix-assign-sel", function () {
-      var pid = $(this).data("pid");
-      var val = $(this).val();
-      if (val) editPrefixAssignments[pid] = val;
-      else delete editPrefixAssignments[pid];
-      var tid = val;
-      var $row = $(this).closest(".ms-prefix-assign-item");
-      $row.css(
-        "background",
-        val ? "rgba(var(--ms-accent-rgb),0.06)" : "rgba(255,255,255,0.02)",
-      );
-      var $tplList = $p.find("#ms-gedit-template-list");
-      if ($tplList.length) {
-        editPrefixTemplates.forEach(function (tpl) {
-          var usedCount = 0;
-          Object.keys(editPrefixAssignments).forEach(function (ppid) {
-            if (editPrefixAssignments[ppid] === tpl.id) usedCount++;
-          });
-          var $badge = $tplList
-            .find('.ms-prefix-tpl-item[data-tpl-id="' + tpl.id + '"] span')
-            .first();
-          if ($badge.length) {
-            $badge.text(usedCount > 0 ? "已用 " + usedCount : "未使用");
-            $badge.css(
-              "color",
-              usedCount > 0
-                ? "var(--ms-accent)"
-                : "var(--SmartThemeQuoteColor,#666)",
-            );
-            $badge.css(
-              "background",
-              "rgba(var(--ms-accent-rgb)," +
-                (usedCount > 0 ? "0.12" : "0.04") +
-                ")",
-            );
-          }
-        });
-      }
-    });
-    $p.find("#ms-body").on("click.ms", "[data-bulk-assign]", function () {
-      var target = $(this).data("bulk-assign");
-      var groupPrompts = getPromptsInGroup(v.groupId);
-      if (target === "default") {
-        groupPrompts.forEach(function (p) {
-          delete editPrefixAssignments[p.id];
-        });
-      } else {
-        groupPrompts.forEach(function (p) {
-          editPrefixAssignments[p.id] = target;
-        });
-      }
-      _refreshMultiPrefixUI();
-    });
-    $p.find("#ms-body").on("click.ms", "#ms-gedit-cancel", navigateBack);
-
-    $p.find("#ms-body").on("click.ms", "[data-gedit-color]", function () {
-      editColor = $(this).data("gedit-color");
-      $p.find("[data-gedit-color]").removeClass("selected");
-      $(this).addClass("selected");
-      $p.find(".ms-color-custom").removeClass("selected");
-    });
-    $p.find("#ms-body").on("change.ms", "#ms-gedit-custom-color", function () {
-      var c = $(this).val();
-      if (c) {
-        editColor = c;
-        $p.find("[data-gedit-color]").removeClass("selected");
-        $p.find(".ms-color-custom").addClass("selected");
-      }
-    });
-
-    $p.find("#ms-body").on("click.ms", "[data-gedit-iconmode]", function () {
-      editIconMode = $(this).data("gedit-iconmode");
-      refreshBody();
-    });
-
-    $p.find("#ms-body").on("click.ms", "[data-gedit-iconchar]", function () {
-      editIconCharKey = $(this).data("gedit-iconchar");
-      refreshBody();
-    });
-
-    var _iconUrlTimer = null;
-    $p.find("#ms-body").on("input.ms", "#ms-gedit-icon-url", function () {
-      var val = $(this).val().trim();
-      editIconUrl = val;
-      if (_iconUrlTimer) clearTimeout(_iconUrlTimer);
-      _iconUrlTimer = setTimeout(function () {
-        refreshBody();
-      }, 700);
-    });
-
+  } else {
     $p.find("#ms-body").on(
       "click.ms",
-      "#ms-gedit-toggle-charsection",
-      function () {
-        showCharSection = !showCharSection;
-        refreshBody();
+      "[data-action='rename-tag']",
+      function (e) {
+        e.stopPropagation();
+        const t = getTag($(this).data("tid"));
+        if (!t) return;
+        msPrompt("", {
+          title: "重命名标签",
+          defaultValue: t.name,
+          validate: function (v) {
+            if (!v || !v.trim()) return "名称不能为空";
+            return null;
+          },
+        }).then(function (n) {
+          if (!n || !n.trim()) return;
+          updateTag(t.id, { name: n.trim() });
+          renderTagManage();
+        });
       },
     );
-
-    $p.find("#ms-body").on("change.ms", ".ms-gedit-char-cb", function () {
-      var k = $(this).data("key");
-      var checked = $(this).is(":checked");
-      if (checked) {
-        if (editCharKeys.indexOf(k) < 0) editCharKeys.push(k);
-      } else {
-        var idx = editCharKeys.indexOf(k);
-        if (idx >= 0) editCharKeys.splice(idx, 1);
-      }
-      refreshBody();
-    });
-
-    var _charSearchTimer = null;
-    $p.find("#ms-body").on("input.ms", "#ms-gedit-char-search", function () {
-      var val = $(this).val();
-      if (_charSearchTimer) clearTimeout(_charSearchTimer);
-      _charSearchTimer = setTimeout(function () {
-        _searchKw = val;
-        refreshBody();
-      }, 200);
-    });
-
-    $p.find("#ms-body").on("click.ms", "#ms-group-set-all-author", () => {
-      msPrompt("", {
-        title: "批量设置本组作者",
-        placeholder: "留空则清除作者",
-        icon: "fa-user-pen",
-      }).then(function (authorVal) {
-        if (authorVal === null) return;
-        const prompts = getPromptsInGroup(v.groupId);
-        prompts.forEach((p) => {
-          p.author = authorVal.trim();
-        });
-        saveData();
-        toast("success", `已为${prompts.length} 条设置作者`);
-      });
-    });
-
-    $p.find("#ms-body").on("click.ms", "#ms-gedit-save", () => {
-      const n = $p.find("#ms-gedit-name").val().trim(),
-        note = $p.find("#ms-gedit-note").val().trim(),
-        defAuthor = $p.find("#ms-gedit-author").val().trim();
-      if (!n) {
-        toast("warning", "名称不能为空");
-        return;
-      }
-      var stagePrefix = $p.find("#ms-gedit-prefix").val() || "";
-      var multiStagePrefix = $p.find("#ms-gedit-multi-shell").val() || "";
-      var finalIconUrl = $p.find("#ms-gedit-icon-url").length
-        ? $p.find("#ms-gedit-icon-url").val().trim()
-        : editIconUrl;
-      _collectMultiPrefixFromUI();
-      var payload = {
-        name: n,
-        note: note,
-        color: editColor,
-        defaultAuthor: defAuthor,
-        stagePrefix: stagePrefix,
-        multiStagePrefix: multiStagePrefix,
-        iconMode: editIconMode,
-        iconUrl: editIconMode === "custom" ? finalIconUrl : "",
-        iconCharKey: editIconMode === "char" ? editIconCharKey : "",
-        charKeys: editCharKeys.slice(),
-        multiPrefixEnabled: editMultiPrefixEnabled,
-        prefixTemplates: editPrefixTemplates,
-        prefixAssignments: editPrefixAssignments,
-      };
-      data.groups.forEach(function (og) {
-        if (v.groupId && og.id === v.groupId) return;
-        if (!Array.isArray(og.charKeys)) return;
-        og.charKeys = og.charKeys.filter(function (k) {
-          return editCharKeys.indexOf(k) < 0;
-        });
-      });
-      if (v.groupId) {
-        updateGroup(v.groupId, payload);
-      } else {
-        const ng = createGroup(n);
-        updateGroup(ng.id, payload);
-      }
-      _invalidateCharGroupCache();
-      groupEditDirty = false;
-      navigateBack();
-    });
-  }
-
-  function renderTagManage() {
-    const $p = $("#" + PANEL_ID);
-    $p.find("#ms-title").text("标签管理");
-    $p.find("#ms-toolbar").html(
-      `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">标签管理</span><div class="ms-toolbar-actions"><button class="ms-tbtn ${tagSelectMode ? "active" : ""}" id="ms-tag-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-tag-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-tag-add-btn"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
-    );
-    let expandedColorId = null;
-    function buildTagsBody() {
-      let html = "";
-      if (data.settings.definedTags.length === 0)
-        html = `<div class="ms-empty"><i class="fa-solid fa-tags"></i>还没有标签</div>`;
-      else
-        data.settings.definedTags.forEach((t) => {
-          const cnt = data.prompts.filter(
-            (p) => p.tags && p.tags.includes(t.id),
-          ).length;
-          const isSel = selectedTagIds.has(t.id);
-          if (tagSelectMode) {
-            html += `<div class="ms-gitem ${isSel ? "ms-gitem-selected" : ""}" data-tid="${t.id}"><div class="ms-gitem-check"><i class="fa-solid fa-check"></i></div><span class="ms-gitem-color" style="background:${t.color};cursor:default;"></span><span class="ms-gitem-name">${esc(t.name)}</span><span class="ms-gitem-cnt">${cnt}</span></div>`;
-          } else {
-            html += `<div class="ms-gitem"><span class="ms-gitem-color" style="background:${t.color}" data-tid="${t.id}"></span><span class="ms-gitem-name">${esc(t.name)}</span><span class="ms-gitem-cnt">${cnt}</span><button class="ms-gitem-btn" data-action="rename-tag" data-tid="${t.id}"><i class="fa-solid fa-pen"></i></button><button class="ms-gitem-btn danger" data-action="delete-tag" data-tid="${t.id}"><i class="fa-solid fa-trash"></i></button></div>`;
-            if (expandedColorId === t.id) {
-              html += buildColorPickerHTML(t.color, "data-tid", t.id);
-            }
-          }
-        });
-      return html;
-    }
-    function buildTagBatchFooter() {
-      const allSel =
-        data.settings.definedTags.length > 0 &&
-        data.settings.definedTags.every((t) => selectedTagIds.has(t.id));
-      const noneSel = selectedTagIds.size === 0;
-      const selIcon = allSel
-        ? "fa-solid fa-square-check"
-        : noneSel
-          ? "fa-regular fa-square"
-          : "fa-solid fa-square-minus";
-      const selColor = noneSel
-        ? "var(--SmartThemeQuoteColor,#666)"
-        : "var(--ms-accent)";
-      const selLabel = allSel ? " 取消" : " 全选";
-      return `<div class="ms-batch-bar"><span class="ms-batch-count"><i class="fa-solid fa-list-check"></i> ${selectedTagIds.size}</span><button class="ms-batch-btn" data-tbatch="selectall"><i class="${selIcon}" style="color:${selColor};"></i><span class="ms-btn-label">${selLabel}</span></button><button class="ms-batch-btn danger" data-tbatch="delete"><i class="fa-solid fa-trash"></i><span class="ms-btn-label"> 删除</span></button></div>`;
-    }
-    $p.find("#ms-body").html(buildTagsBody());
-    if (tagSelectMode) {
-      $p.find("#ms-footer").html(buildTagBatchFooter()).show();
-    } else {
-      $p.find("#ms-footer").hide();
-    }
-    bindAllEvents();
-    $p.find("#ms-toolbar").on("click.ms", "#ms-tag-select", () => {
-      tagSelectMode = !tagSelectMode;
-      if (!tagSelectMode) selectedTagIds.clear();
-      renderTagManage();
-    });
-    $p.find("#ms-toolbar").on("click.ms", "#ms-tag-reorder", () => {
-      if (data.settings.definedTags.length > 1)
-        navigateTo({ name: "reorder-tags" });
-      else toast("info", "至少需要2个标签才能排序");
-    });
-    $p.find("#ms-toolbar").on("click.ms", "#ms-tag-add-btn", () => {
-      msPrompt("", {
-        title: "新建标签",
-        placeholder: "请输入新标签名称",
-        validate: function (v) {
-          if (!v || !v.trim()) return "名称不能为空";
-          return null;
-        },
-      }).then(function (n) {
-        if (!n || !n.trim()) return;
-        createTag(n.trim());
-        renderTagManage();
-      });
-    });
-    if (tagSelectMode) {
-      $p.find("#ms-body").on("click.ms", ".ms-gitem", function () {
-        const tid = $(this).data("tid");
-        if (!tid) return;
-        if (selectedTagIds.has(tid)) selectedTagIds.delete(tid);
-        else selectedTagIds.add(tid);
-        $p.find("#ms-body").html(buildTagsBody());
-        $p.find("#ms-footer").html(buildTagBatchFooter());
-      });
-      $p.find("#ms-footer").on("click.ms", "[data-tbatch='selectall']", () => {
-        const allSel =
-          data.settings.definedTags.length > 0 &&
-          data.settings.definedTags.every((t) => selectedTagIds.has(t.id));
-        if (allSel) selectedTagIds.clear();
-        else data.settings.definedTags.forEach((t) => selectedTagIds.add(t.id));
-        $p.find("#ms-body").html(buildTagsBody());
-        $p.find("#ms-footer").html(buildTagBatchFooter());
-      });
-      $p.find("#ms-footer").on("click.ms", "[data-tbatch='delete']", () => {
-        if (selectedTagIds.size === 0) return;
-        let totalUsed = 0;
-        selectedTagIds.forEach((tid) => {
-          totalUsed += data.prompts.filter(
-            (p) => p.tags && p.tags.includes(tid),
-          ).length;
-        });
-        const msg =
-          totalUsed > 0
-            ? `确定删除选中的 ${selectedTagIds.size} 个标签吗？\n共有 ${totalUsed} 条剧场使用了这些标签，标签将从它们身上移除。`
-            : `确定删除选中的 ${selectedTagIds.size} 个标签吗？`;
-        msConfirm(msg, {
-          title: "批量删除标签",
+    $p.find("#ms-body").on(
+      "click.ms",
+      "[data-action='delete-tag']",
+      function (e) {
+        e.stopPropagation();
+        var tid = $(this).data("tid");
+        var t = getTag(tid);
+        var usageCount = data.prompts.filter((p) =>
+          (p.tags || []).includes(tid),
+        ).length;
+        var confirmMsg = "确定删除标签「" + (t ? t.name : "") + "」吗？";
+        if (usageCount > 0) {
+          confirmMsg +=
+            "\n\n共有 " +
+            usageCount +
+            " 条剧场使用了此标签，删除后将一并移除。";
+        }
+        msConfirm(confirmMsg, {
+          title: "删除标签",
           dangerous: true,
           okText: "删除",
         }).then(function (ok) {
           if (!ok) return;
-          selectedTagIds.forEach((tid) => deleteTag(tid));
-          selectedTagIds.clear();
-          tagSelectMode = false;
+          deleteTag(tid);
           renderTagManage();
-          toast("success", "已删除");
         });
-      });
-    } else {
-      $p.find("#ms-body").on(
-        "click.ms",
-        "[data-action='rename-tag']",
-        function (e) {
-          e.stopPropagation();
-          const t = getTag($(this).data("tid"));
-          if (!t) return;
-          msPrompt("", {
-            title: "重命名标签",
-            defaultValue: t.name,
-            validate: function (v) {
-              if (!v || !v.trim()) return "名称不能为空";
-              return null;
-            },
-          }).then(function (n) {
-            if (!n || !n.trim()) return;
-            updateTag(t.id, { name: n.trim() });
-            renderTagManage();
-          });
-        },
-      );
-      $p.find("#ms-body").on(
-        "click.ms",
-        "[data-action='delete-tag']",
-        function (e) {
-          e.stopPropagation();
-          var tid = $(this).data("tid");
-          var t = getTag(tid);
-          var usageCount = data.prompts.filter((p) =>
-            (p.tags || []).includes(tid),
-          ).length;
-          var confirmMsg = "确定删除标签「" + (t ? t.name : "") + "」吗？";
-          if (usageCount > 0) {
-            confirmMsg +=
-              "\n\n共有 " +
-              usageCount +
-              " 条剧场使用了此标签，删除后将一并移除。";
-          }
-          msConfirm(confirmMsg, {
-            title: "删除标签",
-            dangerous: true,
-            okText: "删除",
-          }).then(function (ok) {
-            if (!ok) return;
-            deleteTag(tid);
-            renderTagManage();
-          });
-        },
-      );
-      $p.find("#ms-body").on(
-        "click.ms",
-        ".ms-gitem-color[data-tid]",
-        function (e) {
-          e.stopPropagation();
-          const tid = $(this).data("tid");
-          expandedColorId = expandedColorId === tid ? null : tid;
-          var _tst = $p.find("#ms-body").scrollTop();
-          $p.find("#ms-body").html(buildTagsBody());
-          $p.find("#ms-body").scrollTop(_tst);
-        },
-      );
-      $p.find("#ms-body").on(
-        "click.ms",
-        ".ms-color-inline .ms-color-opt:not(.ms-color-custom)",
-        function (e) {
-          e.stopPropagation();
-          updateTag($(this).data("tid"), { color: $(this).data("color") });
-          var _tst = $p.find("#ms-body").scrollTop();
-          $p.find("#ms-body").html(buildTagsBody());
-          $p.find("#ms-body").scrollTop(_tst);
-        },
-      );
-      $p.find("#ms-body").on(
-        "change.ms",
-        ".ms-custom-color-input[data-tid]",
-        function (e) {
-          e.stopPropagation();
-          const tid = $(this).data("tid");
-          const color = $(this).val();
-          if (tid && color) {
-            updateTag(tid, { color: color });
-            var _tst = $p.find("#ms-body").scrollTop();
-            $p.find("#ms-body").html(buildTagsBody());
-            $p.find("#ms-body").scrollTop(_tst);
-          }
-        },
-      );
-    }
-  }
-
-  function renderStats() {
-    const $p = setupPage("使用统计");
-
-    const totalPrompts = data.prompts.length;
-    const totalGroups = data.groups.length;
-    const totalTags = data.settings.definedTags.length;
-    const totalUsage = data.prompts.reduce(
-      (s, p) => s + (p.usageCount || 0),
-      0,
+      },
     );
-    const starredCount = data.prompts.filter((p) => p.starred).length;
-    const usedPrompts = data.prompts.filter((p) => p.usageCount > 0);
-    const avgUsage =
-      usedPrompts.length > 0
-        ? (totalUsage / usedPrompts.length).toFixed(1)
-        : "0";
+    $p.find("#ms-body").on(
+      "click.ms",
+      ".ms-gitem-color[data-tid]",
+      function (e) {
+        e.stopPropagation();
+        const tid = $(this).data("tid");
+        expandedColorId = expandedColorId === tid ? null : tid;
+        var _tst = $p.find("#ms-body").scrollTop();
+        $p.find("#ms-body").html(buildTagsBody());
+        $p.find("#ms-body").scrollTop(_tst);
+      },
+    );
+    $p.find("#ms-body").on(
+      "click.ms",
+      ".ms-color-inline .ms-color-opt:not(.ms-color-custom)",
+      function (e) {
+        e.stopPropagation();
+        updateTag($(this).data("tid"), { color: $(this).data("color") });
+        var _tst = $p.find("#ms-body").scrollTop();
+        $p.find("#ms-body").html(buildTagsBody());
+        $p.find("#ms-body").scrollTop(_tst);
+      },
+    );
+    $p.find("#ms-body").on(
+      "change.ms",
+      ".ms-custom-color-input[data-tid]",
+      function (e) {
+        e.stopPropagation();
+        const tid = $(this).data("tid");
+        const color = $(this).val();
+        if (tid && color) {
+          updateTag(tid, { color: color });
+          var _tst = $p.find("#ms-body").scrollTop();
+          $p.find("#ms-body").html(buildTagsBody());
+          $p.find("#ms-body").scrollTop(_tst);
+        }
+      },
+    );
+  }
+}
 
-    let html = `<div class="ms-stats-grid">
+function renderStats() {
+  const $p = setupPage("使用统计");
+
+  const totalPrompts = data.prompts.length;
+  const totalGroups = data.groups.length;
+  const totalTags = data.settings.definedTags.length;
+  const totalUsage = data.prompts.reduce((s, p) => s + (p.usageCount || 0), 0);
+  const starredCount = data.prompts.filter((p) => p.starred).length;
+  const usedPrompts = data.prompts.filter((p) => p.usageCount > 0);
+  const avgUsage =
+    usedPrompts.length > 0 ? (totalUsage / usedPrompts.length).toFixed(1) : "0";
+
+  let html = `<div class="ms-stats-grid">
       <div class="ms-stats-card"><span class="ms-stat-icon"><i class="fa-solid fa-masks-theater"></i></span><span class="ms-stat-value">${totalPrompts}</span><span class="ms-stat-label">总剧场数</span></div>
       <div class="ms-stats-card"><span class="ms-stat-icon"><i class="fa-solid fa-paper-plane"></i></span><span class="ms-stat-value">${totalUsage}</span><span class="ms-stat-label">总使用次数</span></div>
       <div class="ms-stats-card"><span class="ms-stat-icon"><i class="fa-solid fa-star"></i></span><span class="ms-stat-value">${starredCount}</span><span class="ms-stat-label">收藏数</span></div>
       <div class="ms-stats-card"><span class="ms-stat-icon"><i class="fa-solid fa-chart-line"></i></span><span class="ms-stat-value">${avgUsage}</span><span class="ms-stat-label">平均使用次数</span></div>
     </div>`;
 
-    var ck = data.settings.checkin || {};
-    if (ck.totalDays > 0) {
-      var today = new Date();
-      var todayStr =
-        today.getFullYear() +
-        "-" +
-        String(today.getMonth() + 1).padStart(2, "0") +
-        "-" +
-        String(today.getDate()).padStart(2, "0");
-      var streakActive = ck.lastDate === todayStr;
-      var yest = new Date(today.getTime() - 86400000);
-      var yestStr =
-        yest.getFullYear() +
-        "-" +
-        String(yest.getMonth() + 1).padStart(2, "0") +
-        "-" +
-        String(yest.getDate()).padStart(2, "0");
-      var streakHint = streakActive
-        ? "今天已打卡 ✓"
-        : ck.lastDate === yestStr
-          ? "再用一次就续上啦"
-          : "连续中断了哦 💔";
+  var ck = data.settings.checkin || {};
+  if (ck.totalDays > 0) {
+    var today = new Date();
+    var todayStr =
+      today.getFullYear() +
+      "-" +
+      String(today.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(today.getDate()).padStart(2, "0");
+    var streakActive = ck.lastDate === todayStr;
+    var yest = new Date(today.getTime() - 86400000);
+    var yestStr =
+      yest.getFullYear() +
+      "-" +
+      String(yest.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(yest.getDate()).padStart(2, "0");
+    var streakHint = streakActive
+      ? "今天已打卡 ✓"
+      : ck.lastDate === yestStr
+        ? "再用一次就续上啦"
+        : "连续中断了哦 💔";
+    html +=
+      '<div class="ms-stats-section">打卡</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:0 14px 4px;">' +
+      '<div class="ms-stats-card">' +
+      '<span class="ms-stat-icon"><i class="fa-solid fa-fire" style="color:' +
+      (streakActive ? "#ff8c69" : "#888") +
+      ';"></i></span>' +
+      '<span class="ms-stat-value">' +
+      (ck.currentStreak || 0) +
+      "</span>" +
+      '<span class="ms-stat-label">连续天数</span>' +
+      "</div>" +
+      '<div class="ms-stats-card">' +
+      '<span class="ms-stat-icon"><i class="fa-solid fa-calendar-check"></i></span>' +
+      '<span class="ms-stat-value">' +
+      (ck.totalDays || 0) +
+      "</span>" +
+      '<span class="ms-stat-label">累计打卡</span>' +
+      '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-top:4px;text-align:center;white-space:nowrap;">' +
+      streakHint +
+      "</span>" +
+      "</div>" +
+      '<div class="ms-stats-card">' +
+      '<span class="ms-stat-icon"><i class="fa-solid fa-trophy"></i></span>' +
+      '<span class="ms-stat-value">' +
+      (ck.maxStreak || 0) +
+      "</span>" +
+      '<span class="ms-stat-label">历史最长</span>' +
+      "</div>" +
+      "</div>";
+  }
+  var dailyUsage = data.settings.dailyUsage || {};
+  var heatDays = 90;
+  var heatToday = new Date();
+  var heatMax = 0;
+  var heatData = [];
+  for (var hi = heatDays - 1; hi >= 0; hi--) {
+    var d = new Date(heatToday.getTime() - hi * 86400000);
+    var ds =
+      d.getFullYear() +
+      "-" +
+      String(d.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(d.getDate()).padStart(2, "0");
+    var c = dailyUsage[ds] || 0;
+    if (c > heatMax) heatMax = c;
+    heatData.push({ d: d, str: ds, count: c });
+  }
+  if (heatMax > 0) {
+    html += '<div class="ms-stats-section">最近 90 天活跃热力图</div>';
+    html +=
+      '<div style="padding:6px 14px;display:flex;flex-wrap:wrap;gap:2px;align-items:flex-start;">';
+    heatData.forEach(function (h) {
+      var lvl =
+        h.count === 0
+          ? 0
+          : h.count <= heatMax * 0.25
+            ? 1
+            : h.count <= heatMax * 0.5
+              ? 2
+              : h.count <= heatMax * 0.75
+                ? 3
+                : 4;
+      var bgs = [
+        "rgba(255,255,255,0.04)",
+        "rgba(var(--ms-accent-rgb),0.20)",
+        "rgba(var(--ms-accent-rgb),0.40)",
+        "rgba(var(--ms-accent-rgb),0.65)",
+        "rgba(var(--ms-accent-rgb),0.95)",
+      ];
       html +=
-        '<div class="ms-stats-section">打卡</div>' +
-        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:0 14px 4px;">' +
-        '<div class="ms-stats-card">' +
-        '<span class="ms-stat-icon"><i class="fa-solid fa-fire" style="color:' +
-        (streakActive ? "#ff8c69" : "#888") +
-        ';"></i></span>' +
-        '<span class="ms-stat-value">' +
-        (ck.currentStreak || 0) +
-        "</span>" +
-        '<span class="ms-stat-label">连续天数</span>' +
-        "</div>" +
-        '<div class="ms-stats-card">' +
-        '<span class="ms-stat-icon"><i class="fa-solid fa-calendar-check"></i></span>' +
-        '<span class="ms-stat-value">' +
-        (ck.totalDays || 0) +
-        "</span>" +
-        '<span class="ms-stat-label">累计打卡</span>' +
-        '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-top:4px;text-align:center;white-space:nowrap;">' +
-        streakHint +
-        "</span>" +
-        "</div>" +
-        '<div class="ms-stats-card">' +
-        '<span class="ms-stat-icon"><i class="fa-solid fa-trophy"></i></span>' +
-        '<span class="ms-stat-value">' +
-        (ck.maxStreak || 0) +
-        "</span>" +
-        '<span class="ms-stat-label">历史最长</span>' +
-        "</div>" +
-        "</div>";
-    }
-    var dailyUsage = data.settings.dailyUsage || {};
-    var heatDays = 90;
-    var heatToday = new Date();
-    var heatMax = 0;
-    var heatData = [];
-    for (var hi = heatDays - 1; hi >= 0; hi--) {
-      var d = new Date(heatToday.getTime() - hi * 86400000);
-      var ds =
-        d.getFullYear() +
-        "-" +
-        String(d.getMonth() + 1).padStart(2, "0") +
-        "-" +
-        String(d.getDate()).padStart(2, "0");
-      var c = dailyUsage[ds] || 0;
-      if (c > heatMax) heatMax = c;
-      heatData.push({ d: d, str: ds, count: c });
-    }
-    if (heatMax > 0) {
-      html += '<div class="ms-stats-section">最近 90 天活跃热力图</div>';
-      html +=
-        '<div style="padding:6px 14px;display:flex;flex-wrap:wrap;gap:2px;align-items:flex-start;">';
-      heatData.forEach(function (h) {
-        var lvl =
-          h.count === 0
-            ? 0
-            : h.count <= heatMax * 0.25
-              ? 1
-              : h.count <= heatMax * 0.5
-                ? 2
-                : h.count <= heatMax * 0.75
-                  ? 3
-                  : 4;
-        var bgs = [
-          "rgba(255,255,255,0.04)",
-          "rgba(var(--ms-accent-rgb),0.20)",
-          "rgba(var(--ms-accent-rgb),0.40)",
-          "rgba(var(--ms-accent-rgb),0.65)",
-          "rgba(var(--ms-accent-rgb),0.95)",
-        ];
-        html +=
-          '<div style="width:11px;height:11px;border-radius:2px;background:' +
-          bgs[lvl] +
-          ';" title="' +
-          h.str +
-          ": " +
-          h.count +
-          ' 次"></div>';
-      });
-      html +=
-        '</div><div style="padding:0 14px 6px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);display:flex;align-items:center;gap:6px;justify-content:flex-end;">少 <div style="display:flex;gap:2px;"><div style="width:9px;height:9px;border-radius:2px;background:rgba(255,255,255,0.04);"></div><div style="width:9px;height:9px;border-radius:2px;background:rgba(var(--ms-accent-rgb),0.20);"></div><div style="width:9px;height:9px;border-radius:2px;background:rgba(var(--ms-accent-rgb),0.40);"></div><div style="width:9px;height:9px;border-radius:2px;background:rgba(var(--ms-accent-rgb),0.65);"></div><div style="width:9px;height:9px;border-radius:2px;background:rgba(var(--ms-accent-rgb),0.95);"></div></div> 多</div>';
-    }
-    var monthly = {};
-    data.prompts.forEach(function (p) {
-      if (!p.createdAt) return;
-      var d = new Date(p.createdAt);
-      var k = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
-      monthly[k] = (monthly[k] || 0) + 1;
+        '<div style="width:11px;height:11px;border-radius:2px;background:' +
+        bgs[lvl] +
+        ';" title="' +
+        h.str +
+        ": " +
+        h.count +
+        ' 次"></div>';
     });
-    var mKeys = Object.keys(monthly).sort();
-    if (mKeys.length >= 2) {
-      var recentMonths = mKeys.slice(-12);
-      var mMax = Math.max.apply(
-        null,
-        recentMonths.map(function (k) {
-          return monthly[k];
-        }),
-      );
+    html +=
+      '</div><div style="padding:0 14px 6px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);display:flex;align-items:center;gap:6px;justify-content:flex-end;">少 <div style="display:flex;gap:2px;"><div style="width:9px;height:9px;border-radius:2px;background:rgba(255,255,255,0.04);"></div><div style="width:9px;height:9px;border-radius:2px;background:rgba(var(--ms-accent-rgb),0.20);"></div><div style="width:9px;height:9px;border-radius:2px;background:rgba(var(--ms-accent-rgb),0.40);"></div><div style="width:9px;height:9px;border-radius:2px;background:rgba(var(--ms-accent-rgb),0.65);"></div><div style="width:9px;height:9px;border-radius:2px;background:rgba(var(--ms-accent-rgb),0.95);"></div></div> 多</div>';
+  }
+  var monthly = {};
+  data.prompts.forEach(function (p) {
+    if (!p.createdAt) return;
+    var d = new Date(p.createdAt);
+    var k = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0");
+    monthly[k] = (monthly[k] || 0) + 1;
+  });
+  var mKeys = Object.keys(monthly).sort();
+  if (mKeys.length >= 2) {
+    var recentMonths = mKeys.slice(-12);
+    var mMax = Math.max.apply(
+      null,
+      recentMonths.map(function (k) {
+        return monthly[k];
+      }),
+    );
+    html +=
+      '<div class="ms-stats-section" style="margin-bottom:6px;">创作时间轴 (近 12 个月)</div>';
+    html +=
+      '<div style="padding:6px 14px 8px;display:flex;align-items:flex-end;gap:6px;height:100px;justify-content:flex-start;">';
+    recentMonths.forEach(function (k) {
+      var v = monthly[k];
+      var hh = Math.max(4, Math.round((v / mMax) * 60));
+      var mm = k.split("-")[1];
       html +=
-        '<div class="ms-stats-section" style="margin-bottom:6px;">创作时间轴 (近 12 个月)</div>';
-      html +=
-        '<div style="padding:6px 14px 8px;display:flex;align-items:flex-end;gap:6px;height:100px;justify-content:flex-start;">';
-      recentMonths.forEach(function (k) {
-        var v = monthly[k];
-        var hh = Math.max(4, Math.round((v / mMax) * 60));
-        var mm = k.split("-")[1];
-        html +=
-          '<div style="flex:1 1 0;max-width:32px;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0;" title="' +
-          k +
-          ": 创建 " +
-          v +
-          ' 条"><div style="width:100%;max-width:24px;height:' +
-          hh +
-          'px;background:linear-gradient(180deg,var(--ms-accent),rgba(var(--ms-accent-rgb),0.4));border-radius:3px 3px 0 0;"></div><div style="font-size:9px;color:var(--SmartThemeQuoteColor,#888);white-space:nowrap;">' +
-          parseInt(mm) +
-          "月</div></div>";
-      });
-      html += "</div>";
-    }
-    var upcoming = getUpcomingBirthdayChars(7);
-    if (upcoming.length > 0) {
-      html +=
-        '<div class="ms-stats-section" style="margin-top:6px;">即将到来的生日</div><div style="padding:6px 14px;">';
-      upcoming
-        .sort(function (a, b) {
-          return a.daysLeft - b.daysLeft;
-        })
-        .forEach(function (u) {
-          html +=
-            '<div style="padding:4px 0;font-size:12px;color:var(--SmartThemeBodyColor,#ccc);"><i class="fa-solid fa-cake-candles" style="color:#e88aaa;margin-right:4px;"></i>' +
-            esc(u.name) +
-            " · " +
-            esc(u.mmdd) +
-            " · " +
-            (u.daysLeft === 1 ? "明天" : u.daysLeft + " 天后") +
-            "</div>";
-        });
-      html += "</div>";
-    }
-
-    const topUsed = [...data.prompts]
-      .filter((p) => p.usageCount > 0)
-      .sort((a, b) => (b.usageCount || 0) - (a.usageCount || 0))
-      .slice(0, 5);
-    const maxUsage = topUsed.length > 0 ? topUsed[0].usageCount : 1;
-
-    if (topUsed.length > 0) {
-      html += `<div class="ms-stats-section">最常使用 TOP ${topUsed.length}</div><div class="ms-stats-rank">`;
-      topUsed.forEach((p, i) => {
-        const posCls =
-          i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "normal";
-        const barW = Math.max((p.usageCount / maxUsage) * 100, 5);
-        const g = p.groupId ? getGroup(p.groupId) : null;
-        const gLabel = g ? esc(g.name) : "未分组";
-        html += `<div class="ms-stats-rank-item"><span class="ms-stats-rank-pos ${posCls}">${i + 1}</span><div class="ms-stats-rank-info"><div class="ms-stats-rank-name">${esc(p.title)}</div><div class="ms-stats-rank-meta">${gLabel}</div></div><div class="ms-stats-rank-bar-wrap"><div class="ms-stats-rank-bar" style="width:${barW}%;"></div></div><span class="ms-stats-rank-count">${p.usageCount}次</span></div>`;
-      });
-      html += `</div>`;
-    } else {
-      html += `<div class="ms-stats-section">最常使用</div><div class="ms-stats-empty">还没有使用记录，快去发送一条剧场吧～</div>`;
-    }
-
-    var allSeries = {};
-    data.prompts.forEach(function (p) {
-      if (p.series && p.series.trim()) {
-        var sn = p.series.trim();
-        allSeries[sn] = (allSeries[sn] || 0) + 1;
-      }
+        '<div style="flex:1 1 0;max-width:32px;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0;" title="' +
+        k +
+        ": 创建 " +
+        v +
+        ' 条"><div style="width:100%;max-width:24px;height:' +
+        hh +
+        'px;background:linear-gradient(180deg,var(--ms-accent),rgba(var(--ms-accent-rgb),0.4));border-radius:3px 3px 0 0;"></div><div style="font-size:9px;color:var(--SmartThemeQuoteColor,#888);white-space:nowrap;">' +
+        parseInt(mm) +
+        "月</div></div>";
     });
-    var seriesNames = Object.keys(allSeries);
-    if (seriesNames.length > 0) {
-      var topSeries = seriesNames
-        .map(function (n) {
-          return { name: n, count: allSeries[n] };
-        })
-        .sort(function (a, b) {
-          return b.count - a.count;
-        })
-        .slice(0, 5);
-      html +=
-        '<div class="ms-stats-section">热门系列 TOP ' +
-        topSeries.length +
-        '</div><div class="ms-stats-rank">';
-      topSeries.forEach(function (s, i) {
-        var posCls =
-          i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "normal";
+    html += "</div>";
+  }
+  var upcoming = getUpcomingBirthdayChars(7);
+  if (upcoming.length > 0) {
+    html +=
+      '<div class="ms-stats-section" style="margin-top:6px;">即将到来的生日</div><div style="padding:6px 14px;">';
+    upcoming
+      .sort(function (a, b) {
+        return a.daysLeft - b.daysLeft;
+      })
+      .forEach(function (u) {
         html +=
-          '<div class="ms-stats-rank-item"><span class="ms-stats-rank-pos ' +
-          posCls +
-          '">' +
-          (i + 1) +
-          '</span><div class="ms-stats-rank-info"><div class="ms-stats-rank-name"><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:11px;margin-right:4px;"></i>' +
-          esc(s.name) +
-          '</div></div><span class="ms-stats-rank-count">' +
-          s.count +
-          " 条</span></div>";
+          '<div style="padding:4px 0;font-size:12px;color:var(--SmartThemeBodyColor,#ccc);"><i class="fa-solid fa-cake-candles" style="color:#e88aaa;margin-right:4px;"></i>' +
+          esc(u.name) +
+          " · " +
+          esc(u.mmdd) +
+          " · " +
+          (u.daysLeft === 1 ? "明天" : u.daysLeft + " 天后") +
+          "</div>";
       });
-      html += "</div>";
-    }
+    html += "</div>";
+  }
 
-    var _ipGroupsForStats = getIPGroups();
-    if (_ipGroupsForStats.length > 0) {
-      var cgUsage = _ipGroupsForStats
-        .map(function (cg) {
-          var charsInCg = cg.charKeys || [];
-          var totalU = 0,
-            totalE = 0;
-          data.prompts.forEach(function (p) {
-            if (p.usageByCharacter) {
-              charsInCg.forEach(function (k) {
-                if (p.usageByCharacter[k]) totalU += p.usageByCharacter[k];
-              });
-            }
-            if (p.character && charsInCg.indexOf(p.character) >= 0) totalE++;
-          });
-          return { cg: cg, usage: totalU, exclusive: totalE };
-        })
-        .filter(function (it) {
-          return it.usage > 0 || it.exclusive > 0;
-        })
-        .sort(function (a, b) {
-          return b.usage + b.exclusive - (a.usage + a.exclusive);
-        });
-      if (cgUsage.length > 0) {
-        var cgMax = Math.max.apply(
-          null,
-          cgUsage.map(function (it) {
-            return it.usage + it.exclusive;
-          }),
-        );
-        html +=
-          '<div class="ms-stats-section" style="margin-top:6px;">IP 排行</div><div class="ms-stats-rank">';
-        cgUsage.slice(0, 5).forEach(function (it, i) {
-          var posCls =
-            i === 0
-              ? "gold"
-              : i === 1
-                ? "silver"
-                : i === 2
-                  ? "bronze"
-                  : "normal";
-          var barW = Math.max(((it.usage + it.exclusive) / cgMax) * 100, 5);
-          var cgAvatarH = buildGroupAvatarHTML(it.cg, 24);
-          html +=
-            '<div class="ms-stats-rank-item"><span class="ms-stats-rank-pos ' +
-            posCls +
-            '">' +
-            (i + 1) +
-            "</span>" +
-            cgAvatarH +
-            '<div class="ms-stats-rank-info"><div class="ms-stats-rank-name">' +
-            esc(it.cg.name) +
-            '</div><div class="ms-stats-rank-meta">' +
-            (it.cg.charKeys || []).length +
-            " 角色 · " +
-            it.exclusive +
-            ' 专属</div></div><div class="ms-stats-rank-bar-wrap"><div class="ms-stats-rank-bar" style="width:' +
-            barW +
-            "%;background:" +
-            it.cg.color +
-            ';"></div></div><span class="ms-stats-rank-count">' +
-            it.usage +
-            "次</span></div>";
-        });
-        html += "</div>";
-      }
-    }
+  const topUsed = [...data.prompts]
+    .filter((p) => p.usageCount > 0)
+    .sort((a, b) => (b.usageCount || 0) - (a.usageCount || 0))
+    .slice(0, 5);
+  const maxUsage = topUsed.length > 0 ? topUsed[0].usageCount : 1;
 
-    var charExclusive = {};
-    data.prompts.forEach(function (p) {
-      if (p.character && p.character.trim()) {
-        var n = p.character.trim();
-        charExclusive[n] = (charExclusive[n] || 0) + 1;
-      }
+  if (topUsed.length > 0) {
+    html += `<div class="ms-stats-section">最常使用 TOP ${topUsed.length}</div><div class="ms-stats-rank">`;
+    topUsed.forEach((p, i) => {
+      const posCls =
+        i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "normal";
+      const barW = Math.max((p.usageCount / maxUsage) * 100, 5);
+      const g = p.groupId ? getGroup(p.groupId) : null;
+      const gLabel = g ? esc(g.name) : "未分组";
+      html += `<div class="ms-stats-rank-item"><span class="ms-stats-rank-pos ${posCls}">${i + 1}</span><div class="ms-stats-rank-info"><div class="ms-stats-rank-name">${esc(p.title)}</div><div class="ms-stats-rank-meta">${gLabel}</div></div><div class="ms-stats-rank-bar-wrap"><div class="ms-stats-rank-bar" style="width:${barW}%;"></div></div><span class="ms-stats-rank-count">${p.usageCount}次</span></div>`;
     });
-    var topExclusive = Object.keys(charExclusive)
+    html += `</div>`;
+  } else {
+    html += `<div class="ms-stats-section">最常使用</div><div class="ms-stats-empty">还没有使用记录，快去发送一条剧场吧～</div>`;
+  }
+
+  var allSeries = {};
+  data.prompts.forEach(function (p) {
+    if (p.series && p.series.trim()) {
+      var sn = p.series.trim();
+      allSeries[sn] = (allSeries[sn] || 0) + 1;
+    }
+  });
+  var seriesNames = Object.keys(allSeries);
+  if (seriesNames.length > 0) {
+    var topSeries = seriesNames
       .map(function (n) {
-        return { name: n, count: charExclusive[n] };
+        return { name: n, count: allSeries[n] };
       })
       .sort(function (a, b) {
         return b.count - a.count;
       })
-      .slice(0, 4);
-    if (topExclusive.length > 0 && topExclusive[0].count > 0) {
-      var maxExc = topExclusive[0].count;
-      var charUsageForExc = {};
-      data.prompts.forEach(function (p) {
-        if (p.usageByCharacter) {
-          Object.keys(p.usageByCharacter).forEach(function (cn) {
-            charUsageForExc[cn] =
-              (charUsageForExc[cn] || 0) + p.usageByCharacter[cn];
-          });
-        }
-      });
+      .slice(0, 5);
+    html +=
+      '<div class="ms-stats-section">热门系列 TOP ' +
+      topSeries.length +
+      '</div><div class="ms-stats-rank">';
+    topSeries.forEach(function (s, i) {
+      var posCls =
+        i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "normal";
       html +=
-        '<div class="ms-stats-section" style="margin-top:6px;">专属剧场最多 TOP ' +
-        topExclusive.length +
-        '</div><div class="ms-stats-rank">';
-      topExclusive.forEach(function (c, i) {
+        '<div class="ms-stats-rank-item"><span class="ms-stats-rank-pos ' +
+        posCls +
+        '">' +
+        (i + 1) +
+        '</span><div class="ms-stats-rank-info"><div class="ms-stats-rank-name"><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:11px;margin-right:4px;"></i>' +
+        esc(s.name) +
+        '</div></div><span class="ms-stats-rank-count">' +
+        s.count +
+        " 条</span></div>";
+    });
+    html += "</div>";
+  }
+
+  var _ipGroupsForStats = getIPGroups();
+  if (_ipGroupsForStats.length > 0) {
+    var cgUsage = _ipGroupsForStats
+      .map(function (cg) {
+        var charsInCg = cg.charKeys || [];
+        var totalU = 0,
+          totalE = 0;
+        data.prompts.forEach(function (p) {
+          if (p.usageByCharacter) {
+            charsInCg.forEach(function (k) {
+              if (p.usageByCharacter[k]) totalU += p.usageByCharacter[k];
+            });
+          }
+          if (p.character && charsInCg.indexOf(p.character) >= 0) totalE++;
+        });
+        return { cg: cg, usage: totalU, exclusive: totalE };
+      })
+      .filter(function (it) {
+        return it.usage > 0 || it.exclusive > 0;
+      })
+      .sort(function (a, b) {
+        return b.usage + b.exclusive - (a.usage + a.exclusive);
+      });
+    if (cgUsage.length > 0) {
+      var cgMax = Math.max.apply(
+        null,
+        cgUsage.map(function (it) {
+          return it.usage + it.exclusive;
+        }),
+      );
+      html +=
+        '<div class="ms-stats-section" style="margin-top:6px;">IP 排行</div><div class="ms-stats-rank">';
+      cgUsage.slice(0, 5).forEach(function (it, i) {
         var posCls =
           i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "normal";
-        var barW = Math.max((c.count / maxExc) * 100, 5);
-        var usedTotal = charUsageForExc[c.name] || 0;
-        var avatarPath = getCharAvatarPathSafe(c.name);
-        var avatarH = avatarPath
-          ? '<div style="width:24px;height:24px;border-radius:4px;overflow:hidden;flex-shrink:0;background:rgba(180,140,200,0.15);"><img src="' +
-            esc(avatarPath) +
-            '" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display=\'none\';this.onerror=null;"></div>'
-          : '<div style="width:24px;height:24px;border-radius:4px;flex-shrink:0;background:rgba(180,140,200,0.15);display:flex;align-items:center;justify-content:center;color:#b48cc8;font-size:11px;"><i class="fa-solid fa-user-tag"></i></div>';
+        var barW = Math.max(((it.usage + it.exclusive) / cgMax) * 100, 5);
+        var cgAvatarH = buildGroupAvatarHTML(it.cg, 24);
         html +=
           '<div class="ms-stats-rank-item"><span class="ms-stats-rank-pos ' +
           posCls +
           '">' +
           (i + 1) +
           "</span>" +
-          avatarH +
+          cgAvatarH +
           '<div class="ms-stats-rank-info"><div class="ms-stats-rank-name">' +
-          esc(getCharDisplayName(c.name)) +
+          esc(it.cg.name) +
           '</div><div class="ms-stats-rank-meta">' +
-          (usedTotal > 0 ? "互动 " + usedTotal + " 次" : "尚未使用") +
-          '</div></div><div class="ms-stats-rank-bar-wrap"><div class="ms-stats-rank-bar" style="width:' +
+          (it.cg.charKeys || []).length +
+          " 角色 · " +
+          it.exclusive +
+          ' 专属</div></div><div class="ms-stats-rank-bar-wrap"><div class="ms-stats-rank-bar" style="width:' +
           barW +
-          '%;background:#b48cc8;"></div></div><span class="ms-stats-rank-count">' +
-          c.count +
-          "条</span></div>";
+          "%;background:" +
+          it.cg.color +
+          ';"></div></div><span class="ms-stats-rank-count">' +
+          it.usage +
+          "次</span></div>";
       });
       html += "</div>";
     }
+  }
 
-    if (totalGroups > 0 && totalPrompts > 0) {
-      const groupStats = data.groups.map((g) => ({
-        name: g.name,
-        color: g.color,
-        count: getPromptsInGroup(g.id).length,
-      }));
-      const ungroupedCount = getUngroupedPrompts().length;
-      if (ungroupedCount > 0)
-        groupStats.push({
-          name: "未分组",
-          color: "#888",
-          count: ungroupedCount,
-        });
-      html += `<div class="ms-stats-section">分组分布</div><div class="ms-stats-group-bar">`;
-      groupStats.forEach((gs) => {
-        const pct = Math.max((gs.count / totalPrompts) * 100, 1);
-        html += `<div class="ms-stats-group-seg" style="width:${pct}%;background:${gs.color};" title="${esc(gs.name)}: ${gs.count}"></div>`;
-      });
-      html += `</div><div class="ms-stats-group-legend">`;
-      groupStats.forEach((gs) => {
-        html += `<span class="ms-stats-group-legend-item"><span class="ms-stats-group-legend-dot" style="background:${gs.color};"></span>${esc(gs.name)} (${gs.count})</span>`;
-      });
-      html += `</div>`;
+  var charExclusive = {};
+  data.prompts.forEach(function (p) {
+    if (p.character && p.character.trim()) {
+      var n = p.character.trim();
+      charExclusive[n] = (charExclusive[n] || 0) + 1;
     }
-
-    if (totalTags > 0 && totalPrompts > 0) {
-      var tagStats = data.settings.definedTags
-        .map(function (t) {
-          return {
-            name: t.name,
-            color: t.color,
-            count: data.prompts.filter(function (p) {
-              return p.tags && p.tags.includes(t.id);
-            }).length,
-          };
-        })
-        .filter(function (ts) {
-          return ts.count > 0;
-        })
-        .sort(function (a, b) {
-          return b.count - a.count;
+  });
+  var topExclusive = Object.keys(charExclusive)
+    .map(function (n) {
+      return { name: n, count: charExclusive[n] };
+    })
+    .sort(function (a, b) {
+      return b.count - a.count;
+    })
+    .slice(0, 4);
+  if (topExclusive.length > 0 && topExclusive[0].count > 0) {
+    var maxExc = topExclusive[0].count;
+    var charUsageForExc = {};
+    data.prompts.forEach(function (p) {
+      if (p.usageByCharacter) {
+        Object.keys(p.usageByCharacter).forEach(function (cn) {
+          charUsageForExc[cn] =
+            (charUsageForExc[cn] || 0) + p.usageByCharacter[cn];
         });
-      if (tagStats.length > 0) {
-        html +=
-          '<div class="ms-stats-section">标签分布</div><div class="ms-stats-group-bar">';
-        var tagTotal = tagStats.reduce(function (s, ts) {
-          return s + ts.count;
-        }, 0);
-        tagStats.forEach(function (ts) {
-          var pct = Math.max((ts.count / tagTotal) * 100, 1);
-          html +=
-            '<div class="ms-stats-group-seg" style="width:' +
-            pct +
-            "%;background:" +
-            ts.color +
-            ';" title="' +
-            esc(ts.name) +
-            ": " +
-            ts.count +
-            '"></div>';
-        });
-        html += '</div><div class="ms-stats-group-legend">';
-        tagStats.forEach(function (ts) {
-          html +=
-            '<span class="ms-stats-group-legend-item"><span class="ms-stats-group-legend-dot" style="background:' +
-            ts.color +
-            ';"></span>' +
-            esc(ts.name) +
-            " (" +
-            ts.count +
-            ")</span>";
-        });
-        html += "</div>";
       }
-    }
-
-    var totalChars = data.prompts.reduce(function (s, p) {
-      return s + (p.content || "").length;
-    }, 0);
-    var unusedCount = data.prompts.filter(function (p) {
-      return !p.usageCount || p.usageCount === 0;
-    }).length;
-    var longestPrompt = data.prompts.reduce(
-      function (max, p) {
-        return (p.content || "").length > (max.content || "").length ? p : max;
-      },
-      { content: "" },
-    );
-    var funFacts = [];
-    funFacts.push(
-      '<i class="fa-solid fa-pen-nib" style="margin-right:4px;color:var(--ms-accent);"></i>累计创作了 <strong>' +
-        totalChars.toLocaleString() +
-        "</strong> 个字符",
-    );
-    if (totalChars > 10000)
-      funFacts.push("约 " + Math.round(totalChars / 500) + " 页 A4 纸");
-    funFacts.push(
-      '<i class="fa-solid fa-layer-group" style="margin-right:4px;color:var(--ms-accent);"></i>共有 <strong>' +
-        seriesNames.length +
-        "</strong> 个系列",
-    );
-    if (unusedCount > 0)
-      funFacts.push(
-        '<i class="fa-solid fa-ghost" style="margin-right:4px;opacity:0.5;"></i>还有 <strong>' +
-          unusedCount +
-          "</strong> 条从未被使用过",
-      );
-    if (longestPrompt.title)
-      funFacts.push(
-        '<i class="fa-solid fa-ruler" style="margin-right:4px;opacity:0.5;"></i>最长的剧场是「' +
-          esc(truncate(longestPrompt.title, 15)) +
-          "」共 " +
-          (longestPrompt.content || "").length +
-          " 字",
-      );
-
+    });
     html +=
-      '<div class="ms-stats-section" style="margin-top:6px;">趣味事实</div>';
-    html += '<div style="padding:6px 14px;">';
-    funFacts.forEach(function (f) {
+      '<div class="ms-stats-section" style="margin-top:6px;">专属剧场最多 TOP ' +
+      topExclusive.length +
+      '</div><div class="ms-stats-rank">';
+    topExclusive.forEach(function (c, i) {
+      var posCls =
+        i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "normal";
+      var barW = Math.max((c.count / maxExc) * 100, 5);
+      var usedTotal = charUsageForExc[c.name] || 0;
+      var avatarPath = getCharAvatarPathSafe(c.name);
+      var avatarH = avatarPath
+        ? '<div style="width:24px;height:24px;border-radius:4px;overflow:hidden;flex-shrink:0;background:rgba(180,140,200,0.15);"><img src="' +
+          esc(avatarPath) +
+          '" loading="lazy" decoding="async" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display=\'none\';this.onerror=null;"></div>'
+        : '<div style="width:24px;height:24px;border-radius:4px;flex-shrink:0;background:rgba(180,140,200,0.15);display:flex;align-items:center;justify-content:center;color:#b48cc8;font-size:11px;"><i class="fa-solid fa-user-tag"></i></div>';
       html +=
-        '<div style="padding:4px 0;font-size:12px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;">' +
-        f +
-        "</div>";
+        '<div class="ms-stats-rank-item"><span class="ms-stats-rank-pos ' +
+        posCls +
+        '">' +
+        (i + 1) +
+        "</span>" +
+        avatarH +
+        '<div class="ms-stats-rank-info"><div class="ms-stats-rank-name">' +
+        esc(getCharDisplayName(c.name)) +
+        '</div><div class="ms-stats-rank-meta">' +
+        (usedTotal > 0 ? "互动 " + usedTotal + " 次" : "尚未使用") +
+        '</div></div><div class="ms-stats-rank-bar-wrap"><div class="ms-stats-rank-bar" style="width:' +
+        barW +
+        '%;background:#b48cc8;"></div></div><span class="ms-stats-rank-count">' +
+        c.count +
+        "条</span></div>";
     });
     html += "</div>";
-    var sortedByDate = []
-      .concat(data.prompts)
-      .filter(function (p) {
-        return p.createdAt;
+  }
+
+  if (totalGroups > 0 && totalPrompts > 0) {
+    const groupStats = data.groups.map((g) => ({
+      name: g.name,
+      color: g.color,
+      count: getPromptsInGroup(g.id).length,
+    }));
+    const ungroupedCount = getUngroupedPrompts().length;
+    if (ungroupedCount > 0)
+      groupStats.push({
+        name: "未分组",
+        color: "#888",
+        count: ungroupedCount,
+      });
+    html += `<div class="ms-stats-section">分组分布</div><div class="ms-stats-group-bar">`;
+    groupStats.forEach((gs) => {
+      const pct = Math.max((gs.count / totalPrompts) * 100, 1);
+      html += `<div class="ms-stats-group-seg" style="width:${pct}%;background:${gs.color};" title="${esc(gs.name)}: ${gs.count}"></div>`;
+    });
+    html += `</div><div class="ms-stats-group-legend">`;
+    groupStats.forEach((gs) => {
+      html += `<span class="ms-stats-group-legend-item"><span class="ms-stats-group-legend-dot" style="background:${gs.color};"></span>${esc(gs.name)} (${gs.count})</span>`;
+    });
+    html += `</div>`;
+  }
+
+  if (totalTags > 0 && totalPrompts > 0) {
+    var tagStats = data.settings.definedTags
+      .map(function (t) {
+        return {
+          name: t.name,
+          color: t.color,
+          count: data.prompts.filter(function (p) {
+            return p.tags && p.tags.includes(t.id);
+          }).length,
+        };
+      })
+      .filter(function (ts) {
+        return ts.count > 0;
       })
       .sort(function (a, b) {
-        return a.createdAt - b.createdAt;
+        return b.count - a.count;
       });
-    if (sortedByDate.length >= 2) {
-      var firstDate = new Date(sortedByDate[0].createdAt);
-      var lastDate = new Date(sortedByDate[sortedByDate.length - 1].createdAt);
-      var daysDiff = Math.max(1, Math.round((lastDate - firstDate) / 86400000));
-      var rate = (totalPrompts / daysDiff).toFixed(1);
+    if (tagStats.length > 0) {
       html +=
-        '<div class="ms-stats-section" style="margin-top:6px;">创作时间线</div>';
-      html +=
-        '<div style="padding:6px 14px;font-size:12px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;">';
-      html +=
-        '<div style="padding:2px 0;"><i class="fa-solid fa-calendar-day" style="margin-right:4px;color:var(--ms-accent);"></i>首次创作:<strong>' +
-        formatDate(sortedByDate[0].createdAt) +
-        "</strong></div>";
-      html +=
-        '<div style="padding:2px 0;"><i class="fa-solid fa-calendar-check" style="margin-right:4px;color:var(--ms-accent);"></i>最近创作: <strong>' +
-        formatDate(sortedByDate[sortedByDate.length - 1].createdAt) +
-        "</strong></div>";
-      html +=
-        '<div style="padding:2px 0;"><i class="fa-solid fa-chart-simple" style="margin-right:4px;color:var(--ms-accent);"></i>跨度 <strong>' +
-        daysDiff +
-        "</strong> 天，平均每天 <strong>" +
-        rate +
-        "</strong> 条</div>";
+        '<div class="ms-stats-section">标签分布</div><div class="ms-stats-group-bar">';
+      var tagTotal = tagStats.reduce(function (s, ts) {
+        return s + ts.count;
+      }, 0);
+      tagStats.forEach(function (ts) {
+        var pct = Math.max((ts.count / tagTotal) * 100, 1);
+        html +=
+          '<div class="ms-stats-group-seg" style="width:' +
+          pct +
+          "%;background:" +
+          ts.color +
+          ';" title="' +
+          esc(ts.name) +
+          ": " +
+          ts.count +
+          '"></div>';
+      });
+      html += '</div><div class="ms-stats-group-legend">';
+      tagStats.forEach(function (ts) {
+        html +=
+          '<span class="ms-stats-group-legend-item"><span class="ms-stats-group-legend-dot" style="background:' +
+          ts.color +
+          ';"></span>' +
+          esc(ts.name) +
+          " (" +
+          ts.count +
+          ")</span>";
+      });
       html += "</div>";
     }
-    var charNameCount = Object.keys(getAllCharactersWithStages()).length;
-    html +=
-      '<div style="padding:12px 14px;font-size:10px;color:var(--SmartThemeQuoteColor,#555);text-align:center;">' +
-      totalGroups +
-      " 个分组 · " +
-      totalTags +
-      " 个标签 · " +
-      charNameCount +
-      " 个角色 · " +
-      usedPrompts.length +
-      "/" +
-      totalPrompts +
-      " 条曾被使用</div>";
-
-    $p.find("#ms-body").html(html);
-    $p.find("#ms-footer").hide();
-    bindAllEvents();
   }
+
+  var totalChars = data.prompts.reduce(function (s, p) {
+    return s + (p.content || "").length;
+  }, 0);
+  var unusedCount = data.prompts.filter(function (p) {
+    return !p.usageCount || p.usageCount === 0;
+  }).length;
+  var longestPrompt = data.prompts.reduce(
+    function (max, p) {
+      return (p.content || "").length > (max.content || "").length ? p : max;
+    },
+    { content: "" },
+  );
+  var funFacts = [];
+  funFacts.push(
+    '<i class="fa-solid fa-pen-nib" style="margin-right:4px;color:var(--ms-accent);"></i>累计创作了 <strong>' +
+      totalChars.toLocaleString() +
+      "</strong> 个字符",
+  );
+  if (totalChars > 10000)
+    funFacts.push("约 " + Math.round(totalChars / 500) + " 页 A4 纸");
+  funFacts.push(
+    '<i class="fa-solid fa-layer-group" style="margin-right:4px;color:var(--ms-accent);"></i>共有 <strong>' +
+      seriesNames.length +
+      "</strong> 个系列",
+  );
+  if (unusedCount > 0)
+    funFacts.push(
+      '<i class="fa-solid fa-ghost" style="margin-right:4px;opacity:0.5;"></i>还有 <strong>' +
+        unusedCount +
+        "</strong> 条从未被使用过",
+    );
+  if (longestPrompt.title)
+    funFacts.push(
+      '<i class="fa-solid fa-ruler" style="margin-right:4px;opacity:0.5;"></i>最长的剧场是「' +
+        esc(truncate(longestPrompt.title, 15)) +
+        "」共 " +
+        (longestPrompt.content || "").length +
+        " 字",
+    );
+
+  html +=
+    '<div class="ms-stats-section" style="margin-top:6px;">趣味事实</div>';
+  html += '<div style="padding:6px 14px;">';
+  funFacts.forEach(function (f) {
+    html +=
+      '<div style="padding:4px 0;font-size:12px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;">' +
+      f +
+      "</div>";
+  });
+  html += "</div>";
+  var sortedByDate = []
+    .concat(data.prompts)
+    .filter(function (p) {
+      return p.createdAt;
+    })
+    .sort(function (a, b) {
+      return a.createdAt - b.createdAt;
+    });
+  if (sortedByDate.length >= 2) {
+    var firstDate = new Date(sortedByDate[0].createdAt);
+    var lastDate = new Date(sortedByDate[sortedByDate.length - 1].createdAt);
+    var daysDiff = Math.max(1, Math.round((lastDate - firstDate) / 86400000));
+    var rate = (totalPrompts / daysDiff).toFixed(1);
+    html +=
+      '<div class="ms-stats-section" style="margin-top:6px;">创作时间线</div>';
+    html +=
+      '<div style="padding:6px 14px;font-size:12px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;">';
+    html +=
+      '<div style="padding:2px 0;"><i class="fa-solid fa-calendar-day" style="margin-right:4px;color:var(--ms-accent);"></i>首次创作:<strong>' +
+      formatDate(sortedByDate[0].createdAt) +
+      "</strong></div>";
+    html +=
+      '<div style="padding:2px 0;"><i class="fa-solid fa-calendar-check" style="margin-right:4px;color:var(--ms-accent);"></i>最近创作: <strong>' +
+      formatDate(sortedByDate[sortedByDate.length - 1].createdAt) +
+      "</strong></div>";
+    html +=
+      '<div style="padding:2px 0;"><i class="fa-solid fa-chart-simple" style="margin-right:4px;color:var(--ms-accent);"></i>跨度 <strong>' +
+      daysDiff +
+      "</strong> 天，平均每天 <strong>" +
+      rate +
+      "</strong> 条</div>";
+    html += "</div>";
+  }
+  var charNameCount = Object.keys(getAllCharactersWithStages()).length;
+  html +=
+    '<div style="padding:12px 14px;font-size:10px;color:var(--SmartThemeQuoteColor,#555);text-align:center;">' +
+    totalGroups +
+    " 个分组 · " +
+    totalTags +
+    " 个标签 · " +
+    charNameCount +
+    " 个角色 · " +
+    usedPrompts.length +
+    "/" +
+    totalPrompts +
+    " 条曾被使用</div>";
+
+  $p.find("#ms-body").html(html);
+  $p.find("#ms-footer").hide();
+  bindAllEvents();
+}
 
 function renderSettings() {
   const $p = setupPage("设置");
@@ -13430,9 +13564,11 @@ function renderSettings() {
       .prop("disabled", true)
       .html('<i class="fa-solid fa-spinner fa-spin"></i> 正在更新...');
     try {
-      await fetch("https://cdn.jsdelivr.net/gh/Sanjs333/stage/stage.js", {
-        cache: "reload",
-      });
+      await msFetch(
+        "https://cdn.jsdelivr.net/gh/Sanjs333/stage/stage.js",
+        { cache: "reload" },
+        15000,
+      );
       toast("success", "缓存已刷新，3秒后自动刷新页面...");
       setTimeout(function () {
         try {
@@ -13442,6 +13578,7 @@ function renderSettings() {
         }
       }, 2000);
     } catch (e) {
+      if (isShutdownFetchError(e)) return;
       toast("error", "更新失败: " + e.message);
       $btn
         .prop("disabled", false)
@@ -17157,16 +17294,7 @@ function renderSettings() {
         (cleanUrl.indexOf("?") >= 0 ? "&" : "?") +
         "_t=" +
         Date.now();
-      var ctrl = new AbortController();
-      var timer = setTimeout(function () {
-        ctrl.abort();
-      }, 15000);
-      var response;
-      try {
-        response = await fetch(fetchUrl, { signal: ctrl.signal });
-      } finally {
-        clearTimeout(timer);
-      }
+      var response = await msFetch(fetchUrl, null, 15000);
 
       if (!response.ok) throw new Error("HTTP " + response.status);
       var rawText = await response.text();
@@ -17234,6 +17362,7 @@ function renderSettings() {
       }
       return result;
     } catch (e) {
+      if (isShutdownFetchError(e)) return null;
       if (!quiet) toast("error", sub.name + " 检查失败: " + e.message);
       return null;
     }
@@ -19500,7 +19629,7 @@ function renderSubscriptionAdd() {
     try {
       var fetchUrl =
         url + (url.indexOf("?") >= 0 ? "&" : "?") + "_t=" + Date.now();
-      var response = await fetch(fetchUrl);
+      var response = await msFetch(fetchUrl, null, 15000);
       if (!response.ok) throw new Error("HTTP " + response.status);
       var rawText = await response.text();
       var imported = JSON.parse(rawText);
@@ -19552,6 +19681,7 @@ function renderSubscriptionAdd() {
       );
       navigateBack();
     } catch (e) {
+      if (isShutdownFetchError(e)) return;
       toast("error", "验证失败: " + e.message);
       $btn
         .prop("disabled", false)
@@ -21516,612 +21646,606 @@ function renderSubscriptionDetail(v) {
     $("#" + btnId).on("click", togglePanel);
   }
 
-  async function deleteLastPair() {
-    const lastId = getLastMessageId();
-    if (lastId < 0) {
-      toast("warning", "没有消息可以删除");
-      return;
-    }
-    const idsToDelete = [lastId];
-    if (lastId - 1 >= 0) {
-      idsToDelete.push(lastId - 1);
-    }
-    await deleteChatMessages(idsToDelete, { refresh: "none" });
-    idsToDelete.forEach(function (id) {
-      $('#chat .mes[mesid="' + id + '"]').remove();
-    });
-    $("#chat .mes").removeClass("last_mes");
-    $("#chat .mes").last().addClass("last_mes");
-    var newLastId = getLastMessageId();
-    if (newLastId >= 0) {
-      await refreshOneMessage(newLastId);
-    }
+async function deleteLastPair() {
+  const lastId = getLastMessageId();
+  if (lastId < 0) {
+    toast("warning", "没有消息可以删除");
+    return;
   }
-
-  async function hideLastPair() {
-    const lastId = getLastMessageId();
-    if (lastId < 0) {
-      toast("warning", "没有消息可以隐藏");
-      return;
-    }
-    const idsToHide = [lastId];
-    if (lastId - 1 >= 0) {
-      idsToHide.push(lastId - 1);
-    }
-    await setChatMessages(
-      idsToHide.map(function (id) {
-        return { message_id: id, is_hidden: true };
-      }),
-      { refresh: "affected" },
-    );
-    toast("success", "已隐藏 " + idsToHide.length + " 条消息");
+  const idsToDelete = [lastId];
+  if (lastId - 1 >= 0) {
+    idsToDelete.push(lastId - 1);
   }
-
-  function addScriptButton() {
-    try {
-      if (
-        typeof appendInexistentScriptButtons === "function" &&
-        typeof getButtonEvent === "function" &&
-        typeof eventOn === "function"
-      ) {
-        appendInexistentScriptButtons([
-          { name: "小剧场", visible: true },
-          { name: "删除本轮", visible: true },
-          { name: "隐藏本轮", visible: true },
-        ]);
-        eventOn(getButtonEvent("小剧场"), togglePanel);
-        eventOn(getButtonEvent("删除本轮"), deleteLastPair);
-        eventOn(getButtonEvent("隐藏本轮"), hideLastPair);
-      }
-    } catch (e) {}
+  await deleteChatMessages(idsToDelete, { refresh: "none" });
+  idsToDelete.forEach(function (id) {
+    $('#chat .mes[mesid="' + id + '"]').remove();
+  });
+  $("#chat .mes").removeClass("last_mes");
+  $("#chat .mes").last().addClass("last_mes");
+  var newLastId = getLastMessageId();
+  if (newLastId >= 0) {
+    await refreshOneMessage(newLastId);
   }
+}
 
-  function init() {
-    const ctx = getCtx();
-    if (!ctx) {
-      setTimeout(init, 500);
-      return;
+async function hideLastPair() {
+  const lastId = getLastMessageId();
+  if (lastId < 0) {
+    toast("warning", "没有消息可以隐藏");
+    return;
+  }
+  const idsToHide = [lastId];
+  if (lastId - 1 >= 0) {
+    idsToHide.push(lastId - 1);
+  }
+  await setChatMessages(
+    idsToHide.map(function (id) {
+      return { message_id: id, is_hidden: true };
+    }),
+    { refresh: "affected" },
+  );
+  toast("success", "已隐藏 " + idsToHide.length + " 条消息");
+}
+
+function addScriptButton() {
+  try {
+    if (
+      typeof appendInexistentScriptButtons === "function" &&
+      typeof getButtonEvent === "function" &&
+      typeof eventOn === "function"
+    ) {
+      appendInexistentScriptButtons([
+        { name: "小剧场", visible: true },
+        { name: "删除本轮", visible: true },
+        { name: "隐藏本轮", visible: true },
+      ]);
+      eventOn(getButtonEvent("小剧场"), togglePanel);
+      eventOn(getButtonEvent("删除本轮"), deleteLastPair);
+      eventOn(getButtonEvent("隐藏本轮"), hideLastPair);
     }
-    loadData();
-    markTodayBirthdaysUnlocked();
-    addMenuButton();
-    addScriptButton();
-    if (data.settings.panelWasVisible) {
-      setTimeout(function () {
-        showPanel();
-      }, 2000);
-    }
+  } catch (e) {}
+}
+
+function init() {
+  const ctx = getCtx();
+  if (!ctx) {
+    setTimeout(init, 500);
+    return;
+  }
+  loadData();
+  markTodayBirthdaysUnlocked();
+  addMenuButton();
+  addScriptButton();
+  if (data.settings.panelWasVisible) {
     setTimeout(function () {
-      try {
-        cleanOldDismissedBirthdays();
-        var todays = getTodayBirthdayChars();
-        if (todays.length > 0 && !panelVisible) {
-          showPanel();
-        }
-      } catch (e) {
-        console.warn("[小剧场] 生日自动打开失败", e);
-      }
-    }, 3500);
-    setTimeout(async function () {
-      try {
-        await updateBuiltinGuidesFromRemote();
-      } catch (e) {
-        console.warn("[小剧场] 拉取远程指南失败，下次启动重试", e);
-      }
-    }, 15000);
-
+      showPanel();
+    }, 2000);
+  }
+  setTimeout(function () {
     try {
-      if (
-        typeof eventOn === "function" &&
-        typeof tavern_events !== "undefined"
-      ) {
-        eventOn(tavern_events.CHAT_CHANGED, function () {
-          _avatarPathCache = {};
-          _invalidateCharGroupCache();
-          if (panelVisible) {
-            var vname = currentView().name;
-            if (vname === "edit" || vname === "quick-phrase-edit") {
-              return;
-            }
-            renderView();
+      cleanOldDismissedBirthdays();
+      var todays = getTodayBirthdayChars();
+      if (todays.length > 0 && !panelVisible) {
+        showPanel();
+      }
+    } catch (e) {
+      console.warn("[小剧场] 生日自动打开失败", e);
+    }
+  }, 3500);
+  setTimeout(async function () {
+    try {
+      await updateBuiltinGuidesFromRemote();
+    } catch (e) {
+      console.warn("[小剧场] 拉取远程指南失败，下次启动重试", e);
+    }
+  }, 15000);
+
+  try {
+    if (typeof eventOn === "function" && typeof tavern_events !== "undefined") {
+      eventOn(tavern_events.CHAT_CHANGED, function () {
+        _avatarPathCache = {};
+        _invalidateCharGroupCache();
+        if (panelVisible) {
+          var vname = currentView().name;
+          if (vname === "edit" || vname === "quick-phrase-edit") {
+            return;
           }
-        });
-        var _invalidateAvatarOnCharChange = function (forceImageReload) {
-          _avatarPathCache = {};
-          if (forceImageReload === true) {
-            _avatarVersion = Date.now();
-            _imgPreloaded.clear();
-          }
-          _invalidateLocalCharKeySet();
-          _invalidateCharNameCache();
-          _invalidateCharGroupCache();
-          if (panelVisible) {
-            var vname = currentView().name;
-            if (
-              vname === "edit" ||
-              vname === "quick-phrase-edit" ||
-              vname === "history-diff"
-            ) {
-              return;
-            }
-            try {
-              renderView();
-            } catch (e) {}
-          }
-        };
-        if (tavern_events.CHARACTER_EDITED) {
-          var _charEditDebounce = null;
-          eventOn(tavern_events.CHARACTER_EDITED, function () {
-            if (_charEditDebounce) clearTimeout(_charEditDebounce);
-            _charEditDebounce = setTimeout(function () {
-              _charEditDebounce = null;
-              _invalidateAvatarOnCharChange(true);
-            }, 500);
-          });
+          renderView();
         }
-        if (tavern_events.CHARACTER_DELETED) {
-          eventOn(tavern_events.CHARACTER_DELETED, function (info) {
-            try {
-              var deletedAvatar =
-                info && info.character && info.character.avatar;
-              if (deletedAvatar) {
-                var _isOwnBd =
-                  data.settings.ownBirthdays &&
-                  data.settings.ownBirthdays[deletedAvatar] === true;
-                if (
-                  data.settings.charBirthdays &&
-                  data.settings.charBirthdays[deletedAvatar] &&
-                  !_isOwnBd
-                ) {
-                  delete data.settings.charBirthdays[deletedAvatar];
-                }
-                if (
-                  data.settings.charBirthdayMessages &&
-                  data.settings.charBirthdayMessages[deletedAvatar]
-                ) {
-                  var _bdMsg =
-                    data.settings.charBirthdayMessages[deletedAvatar];
-                  if (_bdMsg && _bdMsg.versions) {
-                    Object.keys(_bdMsg.versions).forEach(function (y) {
-                      var _v = _bdMsg.versions[y];
-                      if (_v && _v.isOwn !== true) {
-                        delete _bdMsg.versions[y];
-                      }
-                    });
-                    if (Object.keys(_bdMsg.versions).length === 0) {
-                      delete data.settings.charBirthdayMessages[deletedAvatar];
-                    }
-                  } else {
-                    delete data.settings.charBirthdayMessages[deletedAvatar];
-                  }
-                }
-                if (
-                  data.settings.dismissedBirthdays &&
-                  data.settings.dismissedBirthdays[deletedAvatar]
-                ) {
-                  delete data.settings.dismissedBirthdays[deletedAvatar];
-                }
-                if (
-                  data.settings.unlockedBirthdays &&
-                  data.settings.unlockedBirthdays[deletedAvatar]
-                ) {
-                  delete data.settings.unlockedBirthdays[deletedAvatar];
-                }
-                if (Array.isArray(data.settings.recentBoundChars)) {
-                  data.settings.recentBoundChars =
-                    data.settings.recentBoundChars.filter(function (k) {
-                      return k !== deletedAvatar;
-                    });
-                }
-                saveData();
-              }
-            } catch (e) {}
-            _invalidateAvatarOnCharChange();
-          });
+      });
+      var _invalidateAvatarOnCharChange = function (forceImageReload) {
+        _avatarPathCache = {};
+        if (forceImageReload === true) {
+          _avatarVersion = Date.now();
+          _imgPreloaded.clear();
         }
-        if (tavern_events.CHARACTER_DUPLICATED) {
-          eventOn(
-            tavern_events.CHARACTER_DUPLICATED,
-            _invalidateAvatarOnCharChange,
-          );
-        }
-        if (tavern_events.CHARACTER_RENAMED) {
-          eventOn(
-            tavern_events.CHARACTER_RENAMED,
-            function (old_avatar, new_avatar) {
-              if (!old_avatar || !new_avatar || old_avatar === new_avatar) {
-                _invalidateAvatarOnCharChange();
-                return;
-              }
-
-              var changed = false;
-
-              data.prompts.forEach(function (p) {
-                if (p.character === old_avatar) {
-                  p.character = new_avatar;
-                  changed = true;
-                }
-                if (
-                  p.usageByCharacter &&
-                  p.usageByCharacter[old_avatar] !== undefined
-                ) {
-                  p.usageByCharacter[new_avatar] =
-                    (p.usageByCharacter[new_avatar] || 0) +
-                    p.usageByCharacter[old_avatar];
-                  delete p.usageByCharacter[old_avatar];
-                  changed = true;
-                }
-              });
-
-              data.groups.forEach(function (g) {
-                if (Array.isArray(g.charKeys)) {
-                  var i = g.charKeys.indexOf(old_avatar);
-                  if (i >= 0) {
-                    if (g.charKeys.indexOf(new_avatar) < 0) {
-                      g.charKeys[i] = new_avatar;
-                    } else {
-                      g.charKeys.splice(i, 1);
-                    }
-                    changed = true;
-                  }
-                }
-
-                if (Array.isArray(g.charDisplayOrder)) {
-                  var oi = g.charDisplayOrder.indexOf(old_avatar);
-                  if (oi >= 0) {
-                    if (g.charDisplayOrder.indexOf(new_avatar) < 0) {
-                      g.charDisplayOrder[oi] = new_avatar;
-                    } else {
-                      g.charDisplayOrder.splice(oi, 1);
-                    }
-                    changed = true;
-                  }
-                }
-
-                if (g.iconCharKey === old_avatar) {
-                  g.iconCharKey = new_avatar;
-                  changed = true;
-                }
-              });
-
-              if (
-                data.settings.charBirthdayMessages &&
-                data.settings.charBirthdayMessages[old_avatar]
-              ) {
-                data.settings.charBirthdayMessages[new_avatar] =
-                  data.settings.charBirthdayMessages[old_avatar];
-                delete data.settings.charBirthdayMessages[old_avatar];
-                changed = true;
-              }
-              if (
-                data.settings.charBirthdays &&
-                data.settings.charBirthdays[old_avatar]
-              ) {
-                data.settings.charBirthdays[new_avatar] =
-                  data.settings.charBirthdays[old_avatar];
-                delete data.settings.charBirthdays[old_avatar];
-                changed = true;
-              }
-              if (
-                data.settings.unlockedBirthdays &&
-                data.settings.unlockedBirthdays[old_avatar]
-              ) {
-                data.settings.unlockedBirthdays[new_avatar] =
-                  data.settings.unlockedBirthdays[old_avatar];
-                delete data.settings.unlockedBirthdays[old_avatar];
-                changed = true;
-              }
-              if (
-                data.settings.dismissedBirthdays &&
-                data.settings.dismissedBirthdays[old_avatar]
-              ) {
-                data.settings.dismissedBirthdays[new_avatar] =
-                  data.settings.dismissedBirthdays[old_avatar];
-                delete data.settings.dismissedBirthdays[old_avatar];
-                changed = true;
-              }
-
-              if (Array.isArray(data.settings.recentBoundChars)) {
-                data.settings.recentBoundChars =
-                  data.settings.recentBoundChars.map(function (k) {
-                    return k === old_avatar ? new_avatar : k;
-                  });
-                changed = true;
-              }
-
-              if (changed) {
-                saveData();
-              }
-
-              _invalidateCharGroupCache();
-              _invalidateAvatarOnCharChange();
-            },
-          );
-        }
-        if (tavern_events.CHARACTER_PAGE_LOADED) {
-          eventOn(
-            tavern_events.CHARACTER_PAGE_LOADED,
-            _invalidateAvatarOnCharChange,
-          );
-        }
-
-        eventOn(
-          tavern_events.GENERATION_AFTER_COMMANDS,
-          async function (type, option, dry_run) {
-            if (dry_run) return;
-
-            if (_skipAllInjectForNextGeneration) {
-              _skipAllInjectForNextGeneration = false;
-              if (window._msInjectLockTimer) {
-                clearTimeout(window._msInjectLockTimer);
-                window._msInjectLockTimer = null;
-              }
-              _currentStagePrompts = [];
-              return;
-            }
-
-            if (!data.settings.stageInjectEnabled) return;
-            var stagePrompts = [];
-            var wasManual = false;
-            var sids = data.settings.stageSelectedIds || [];
-
-            if (sids.length > 0) {
-              sids.forEach(function (sid) {
-                var sp = getPrompt(sid);
-                if (sp) stagePrompts.push(sp);
-              });
-              wasManual = true;
-            }
-
-            if (
-              stagePrompts.length === 0 &&
-              data.settings.randomInject &&
-              data.settings.randomInject.enabled
-            ) {
-              if (data.settings.randomInject.multiEnabled) {
-                var rcount =
-                  parseInt(data.settings.randomInject.multiCount) || 2;
-                var rps = getRandomStagePrompts(rcount);
-                if (rps.length > 0) {
-                  rps.forEach(function (rp) {
-                    stagePrompts.push(rp);
-                  });
-                }
-              } else {
-                var rp = getRandomStagePrompt();
-                if (rp) stagePrompts.push(rp);
-              }
-              wasManual = false;
-            }
-            _currentStagePrompts = [];
-            if (stagePrompts.length === 0) {
-              _currentStagePrompts = [];
-              return;
-            }
-
-            if (data.settings.stageInjectMode === "macro") {
-              if (_macroInjectBusy) {
-                if (!_macroBusyWarned) {
-                  _macroBusyWarned = true;
-                  toast(
-                    "warning",
-                    "检测到并发生成，本次已跳过小剧场宏注入，避免串台",
-                  );
-                }
-                _currentStagePrompts = [];
-                return;
-              }
-              _macroInjectBusy = true;
-              _macroBusyWarned = false;
-              if (window._msMacroBusyTimer)
-                clearTimeout(window._msMacroBusyTimer);
-              window._msMacroBusyTimer = setTimeout(function () {
-                window._msMacroBusyTimer = null;
-                if (_macroInjectBusy) {
-                  _macroInjectBusy = false;
-                  _macroBusyWarned = false;
-                  console.warn("[小剧场] 宏注入锁超时自动解除");
-                }
-              }, 30000);
-            }
-
-            try {
-              _currentStagePrompts = stagePrompts;
-              stagePrompts.forEach(markPromptUsed);
-              saveData();
-              if (data.settings.stageInjectMode === "depth") {
-                var allContent = substitudeMacros(
-                  buildStageContent(stagePrompts),
-                );
-                injectPrompts(
-                  [
-                    {
-                      id: "mini-stage-inject",
-                      position: "in_chat",
-                      depth: data.settings.stageInjectDepth || 0,
-                      role: data.settings.stageInjectRole || "system",
-                      content: allContent,
-                    },
-                  ],
-                  { once: true },
-                );
-                _macroInjectBusy = false;
-              }
-            } catch (err) {
-              _currentStagePrompts = [];
-              _macroInjectBusy = false;
-              console.error("[小剧场] 注入失败", err);
-            }
-          },
-        );
-
-        var _onGenerationCleanup = function () {
-          _currentStagePrompts = [];
-          _skipAllInjectForNextGeneration = false;
-          _macroInjectBusy = false;
-          _macroBusyWarned = false;
-          if (window._msMacroBusyTimer) {
-            clearTimeout(window._msMacroBusyTimer);
-            window._msMacroBusyTimer = null;
-          }
-          if (window._msInjectLockTimer) {
-            clearTimeout(window._msInjectLockTimer);
-            window._msInjectLockTimer = null;
-          }
-          updateInjectIndicator();
-        };
-        var _onGenerationEnded = function (message_id) {
-          var hadInjection = _currentStagePrompts.length > 0;
-          var wasSkipped = _skipAllInjectForNextGeneration;
-          _onGenerationCleanup();
+        _invalidateLocalCharKeySet();
+        _invalidateCharNameCache();
+        _invalidateCharGroupCache();
+        if (panelVisible) {
+          var vname = currentView().name;
           if (
-            data.settings.clearStageAfterGeneration !== true ||
-            !hadInjection ||
-            wasSkipped
+            vname === "edit" ||
+            vname === "quick-phrase-edit" ||
+            vname === "history-diff"
           ) {
             return;
           }
-          var hasContent = false;
           try {
-            if (typeof message_id === "number" && message_id >= 0) {
-              var msgs = getChatMessages(message_id);
+            renderView();
+          } catch (e) {}
+        }
+      };
+      if (tavern_events.CHARACTER_EDITED) {
+        var _charEditDebounce = null;
+        eventOn(tavern_events.CHARACTER_EDITED, function () {
+          if (_charEditDebounce) clearTimeout(_charEditDebounce);
+          _charEditDebounce = setTimeout(function () {
+            _charEditDebounce = null;
+            _invalidateAvatarOnCharChange(true);
+          }, 500);
+        });
+      }
+      if (tavern_events.CHARACTER_DELETED) {
+        eventOn(tavern_events.CHARACTER_DELETED, function (info) {
+          try {
+            var deletedAvatar = info && info.character && info.character.avatar;
+            if (deletedAvatar) {
+              var _isOwnBd =
+                data.settings.ownBirthdays &&
+                data.settings.ownBirthdays[deletedAvatar] === true;
               if (
-                msgs &&
-                msgs[0] &&
-                typeof msgs[0].message === "string" &&
-                msgs[0].message.trim().length > 0
+                data.settings.charBirthdays &&
+                data.settings.charBirthdays[deletedAvatar] &&
+                !_isOwnBd
               ) {
-                hasContent = true;
+                delete data.settings.charBirthdays[deletedAvatar];
               }
+              if (
+                data.settings.charBirthdayMessages &&
+                data.settings.charBirthdayMessages[deletedAvatar]
+              ) {
+                var _bdMsg = data.settings.charBirthdayMessages[deletedAvatar];
+                if (_bdMsg && _bdMsg.versions) {
+                  Object.keys(_bdMsg.versions).forEach(function (y) {
+                    var _v = _bdMsg.versions[y];
+                    if (_v && _v.isOwn !== true) {
+                      delete _bdMsg.versions[y];
+                    }
+                  });
+                  if (Object.keys(_bdMsg.versions).length === 0) {
+                    delete data.settings.charBirthdayMessages[deletedAvatar];
+                  }
+                } else {
+                  delete data.settings.charBirthdayMessages[deletedAvatar];
+                }
+              }
+              if (
+                data.settings.dismissedBirthdays &&
+                data.settings.dismissedBirthdays[deletedAvatar]
+              ) {
+                delete data.settings.dismissedBirthdays[deletedAvatar];
+              }
+              if (
+                data.settings.unlockedBirthdays &&
+                data.settings.unlockedBirthdays[deletedAvatar]
+              ) {
+                delete data.settings.unlockedBirthdays[deletedAvatar];
+              }
+              if (Array.isArray(data.settings.recentBoundChars)) {
+                data.settings.recentBoundChars =
+                  data.settings.recentBoundChars.filter(function (k) {
+                    return k !== deletedAvatar;
+                  });
+              }
+              saveData();
             }
           } catch (e) {}
-          if (
-            hasContent &&
-            Array.isArray(data.settings.stageSelectedIds) &&
-            data.settings.stageSelectedIds.length > 0
-          ) {
-            data.settings.stageSelectedIds = [];
-            saveData();
-            if (panelVisible) {
-              try {
-                if (currentView().name === "preview") renderView();
-                else refreshKeepingState();
-              } catch (e) {}
-            }
-            updateInjectIndicator();
-          }
-        };
-        eventOn(tavern_events.GENERATION_ENDED, _onGenerationEnded);
-        eventOn(tavern_events.GENERATION_STOPPED, _onGenerationCleanup);
+          _invalidateAvatarOnCharChange();
+        });
       }
-    } catch (e) {}
-    try {
-      if (typeof registerMacroLike === "function") {
-        registerMacroLike(/\{\{stage\}\}/gi, function (context, substring) {
+      if (tavern_events.CHARACTER_DUPLICATED) {
+        eventOn(
+          tavern_events.CHARACTER_DUPLICATED,
+          _invalidateAvatarOnCharChange,
+        );
+      }
+      if (tavern_events.CHARACTER_RENAMED) {
+        eventOn(
+          tavern_events.CHARACTER_RENAMED,
+          function (old_avatar, new_avatar) {
+            if (!old_avatar || !new_avatar || old_avatar === new_avatar) {
+              _invalidateAvatarOnCharChange();
+              return;
+            }
+
+            var changed = false;
+
+            data.prompts.forEach(function (p) {
+              if (p.character === old_avatar) {
+                p.character = new_avatar;
+                changed = true;
+              }
+              if (
+                p.usageByCharacter &&
+                p.usageByCharacter[old_avatar] !== undefined
+              ) {
+                p.usageByCharacter[new_avatar] =
+                  (p.usageByCharacter[new_avatar] || 0) +
+                  p.usageByCharacter[old_avatar];
+                delete p.usageByCharacter[old_avatar];
+                changed = true;
+              }
+            });
+
+            data.groups.forEach(function (g) {
+              if (Array.isArray(g.charKeys)) {
+                var i = g.charKeys.indexOf(old_avatar);
+                if (i >= 0) {
+                  if (g.charKeys.indexOf(new_avatar) < 0) {
+                    g.charKeys[i] = new_avatar;
+                  } else {
+                    g.charKeys.splice(i, 1);
+                  }
+                  changed = true;
+                }
+              }
+
+              if (Array.isArray(g.charDisplayOrder)) {
+                var oi = g.charDisplayOrder.indexOf(old_avatar);
+                if (oi >= 0) {
+                  if (g.charDisplayOrder.indexOf(new_avatar) < 0) {
+                    g.charDisplayOrder[oi] = new_avatar;
+                  } else {
+                    g.charDisplayOrder.splice(oi, 1);
+                  }
+                  changed = true;
+                }
+              }
+
+              if (g.iconCharKey === old_avatar) {
+                g.iconCharKey = new_avatar;
+                changed = true;
+              }
+            });
+
+            if (
+              data.settings.charBirthdayMessages &&
+              data.settings.charBirthdayMessages[old_avatar]
+            ) {
+              data.settings.charBirthdayMessages[new_avatar] =
+                data.settings.charBirthdayMessages[old_avatar];
+              delete data.settings.charBirthdayMessages[old_avatar];
+              changed = true;
+            }
+            if (
+              data.settings.charBirthdays &&
+              data.settings.charBirthdays[old_avatar]
+            ) {
+              data.settings.charBirthdays[new_avatar] =
+                data.settings.charBirthdays[old_avatar];
+              delete data.settings.charBirthdays[old_avatar];
+              changed = true;
+            }
+            if (
+              data.settings.unlockedBirthdays &&
+              data.settings.unlockedBirthdays[old_avatar]
+            ) {
+              data.settings.unlockedBirthdays[new_avatar] =
+                data.settings.unlockedBirthdays[old_avatar];
+              delete data.settings.unlockedBirthdays[old_avatar];
+              changed = true;
+            }
+            if (
+              data.settings.dismissedBirthdays &&
+              data.settings.dismissedBirthdays[old_avatar]
+            ) {
+              data.settings.dismissedBirthdays[new_avatar] =
+                data.settings.dismissedBirthdays[old_avatar];
+              delete data.settings.dismissedBirthdays[old_avatar];
+              changed = true;
+            }
+
+            if (Array.isArray(data.settings.recentBoundChars)) {
+              data.settings.recentBoundChars =
+                data.settings.recentBoundChars.map(function (k) {
+                  return k === old_avatar ? new_avatar : k;
+                });
+              changed = true;
+            }
+
+            if (changed) {
+              saveData();
+            }
+
+            _invalidateCharGroupCache();
+            _invalidateAvatarOnCharChange();
+          },
+        );
+      }
+      if (tavern_events.CHARACTER_PAGE_LOADED) {
+        eventOn(
+          tavern_events.CHARACTER_PAGE_LOADED,
+          _invalidateAvatarOnCharChange,
+        );
+      }
+
+      eventOn(
+        tavern_events.GENERATION_AFTER_COMMANDS,
+        async function (type, option, dry_run) {
+          if (dry_run) return;
+
+          if (_skipAllInjectForNextGeneration) {
+            _skipAllInjectForNextGeneration = false;
+            if (window._msInjectLockTimer) {
+              clearTimeout(window._msInjectLockTimer);
+              window._msInjectLockTimer = null;
+            }
+            _currentStagePrompts = [];
+            return;
+          }
+
+          if (!data.settings.stageInjectEnabled) return;
+          var stagePrompts = [];
+          var wasManual = false;
+          var sids = data.settings.stageSelectedIds || [];
+
+          if (sids.length > 0) {
+            sids.forEach(function (sid) {
+              var sp = getPrompt(sid);
+              if (sp) stagePrompts.push(sp);
+            });
+            wasManual = true;
+          }
+
+          if (
+            stagePrompts.length === 0 &&
+            data.settings.randomInject &&
+            data.settings.randomInject.enabled
+          ) {
+            if (data.settings.randomInject.multiEnabled) {
+              var rcount = parseInt(data.settings.randomInject.multiCount) || 2;
+              var rps = getRandomStagePrompts(rcount);
+              if (rps.length > 0) {
+                rps.forEach(function (rp) {
+                  stagePrompts.push(rp);
+                });
+              }
+            } else {
+              var rp = getRandomStagePrompt();
+              if (rp) stagePrompts.push(rp);
+            }
+            wasManual = false;
+          }
+          _currentStagePrompts = [];
+          if (stagePrompts.length === 0) {
+            _currentStagePrompts = [];
+            return;
+          }
+
+          if (data.settings.stageInjectMode === "macro") {
+            if (_macroInjectBusy) {
+              if (!_macroBusyWarned) {
+                _macroBusyWarned = true;
+                toast(
+                  "warning",
+                  "检测到并发生成，本次已跳过小剧场宏注入，避免串台",
+                );
+              }
+              _currentStagePrompts = [];
+              return;
+            }
+            _macroInjectBusy = true;
+            _macroBusyWarned = false;
+            if (window._msMacroBusyTimer)
+              clearTimeout(window._msMacroBusyTimer);
+            window._msMacroBusyTimer = setTimeout(function () {
+              window._msMacroBusyTimer = null;
+              if (_macroInjectBusy) {
+                _macroInjectBusy = false;
+                _macroBusyWarned = false;
+                console.warn("[小剧场] 宏注入锁超时自动解除");
+              }
+            }, 30000);
+          }
+
+          try {
+            _currentStagePrompts = stagePrompts;
+            stagePrompts.forEach(markPromptUsed);
+            saveData();
+            if (data.settings.stageInjectMode === "depth") {
+              var allContent = substitudeMacros(
+                buildStageContent(stagePrompts),
+              );
+              injectPrompts(
+                [
+                  {
+                    id: "mini-stage-inject",
+                    position: "in_chat",
+                    depth: data.settings.stageInjectDepth || 0,
+                    role: data.settings.stageInjectRole || "system",
+                    content: allContent,
+                  },
+                ],
+                { once: true },
+              );
+              _macroInjectBusy = false;
+            }
+          } catch (err) {
+            _currentStagePrompts = [];
+            _macroInjectBusy = false;
+            console.error("[小剧场] 注入失败", err);
+          }
+        },
+      );
+
+      var _onGenerationCleanup = function () {
+        _currentStagePrompts = [];
+        _skipAllInjectForNextGeneration = false;
+        _macroInjectBusy = false;
+        _macroBusyWarned = false;
+        if (window._msMacroBusyTimer) {
+          clearTimeout(window._msMacroBusyTimer);
+          window._msMacroBusyTimer = null;
+        }
+        if (window._msInjectLockTimer) {
+          clearTimeout(window._msInjectLockTimer);
+          window._msInjectLockTimer = null;
+        }
+        updateInjectIndicator();
+      };
+      var _onGenerationEnded = function (message_id) {
+        var hadInjection = _currentStagePrompts.length > 0;
+        var wasSkipped = _skipAllInjectForNextGeneration;
+        _onGenerationCleanup();
+        if (
+          data.settings.clearStageAfterGeneration !== true ||
+          !hadInjection ||
+          wasSkipped
+        ) {
+          return;
+        }
+        var hasContent = false;
+        try {
+          var lastId = getLastMessageId();
+          if (lastId >= 0) {
+            var msgs = getChatMessages(lastId);
+            if (
+              msgs &&
+              msgs[0] &&
+              msgs[0].role === "assistant" &&
+              typeof msgs[0].message === "string" &&
+              msgs[0].message.trim().length > 0
+            ) {
+              hasContent = true;
+            }
+          }
+        } catch (e) {}
+        if (
+          hasContent &&
+          Array.isArray(data.settings.stageSelectedIds) &&
+          data.settings.stageSelectedIds.length > 0
+        ) {
+          data.settings.stageSelectedIds = [];
+          saveData();
+          if (panelVisible) {
+            try {
+              if (currentView().name === "preview") renderView();
+              else refreshKeepingState();
+            } catch (e) {}
+          }
+          updateInjectIndicator();
+        }
+      };
+      eventOn(tavern_events.GENERATION_ENDED, _onGenerationEnded);
+      eventOn(tavern_events.GENERATION_STOPPED, _onGenerationCleanup);
+    }
+  } catch (e) {}
+  try {
+    if (typeof registerMacroLike === "function") {
+      registerMacroLike(/\{\{stage\}\}/gi, function (context, substring) {
+        if (!data.settings.stageInjectEnabled) return "";
+        if (_currentStagePrompts.length === 0) return "";
+        if (data.settings.stageInjectMode !== "macro") return "";
+        if (_currentStagePrompts.length === 1) {
+          return substitudeMacros(_currentStagePrompts[0].content || "");
+        }
+        return substitudeMacros(buildStageContent(_currentStagePrompts));
+      });
+      registerMacroLike(
+        /\{\{stage_prompt\}\}/gi,
+        function (context, substring) {
           if (!data.settings.stageInjectEnabled) return "";
           if (_currentStagePrompts.length === 0) return "";
           if (data.settings.stageInjectMode !== "macro") return "";
-          if (_currentStagePrompts.length === 1) {
-            return substitudeMacros(_currentStagePrompts[0].content || "");
-          }
           return substitudeMacros(buildStageContent(_currentStagePrompts));
-        });
-        registerMacroLike(
-          /\{\{stage_prompt\}\}/gi,
-          function (context, substring) {
-            if (!data.settings.stageInjectEnabled) return "";
-            if (_currentStagePrompts.length === 0) return "";
-            if (data.settings.stageInjectMode !== "macro") return "";
-            return substitudeMacros(buildStageContent(_currentStagePrompts));
-          },
-        );
-        registerMacroLike(
-          /\{\{stage_title\}\}/gi,
-          function (context, substring) {
-            if (!data.settings.stageInjectEnabled) return "";
-            if (_currentStagePrompts.length === 0) return "";
-            return _currentStagePrompts
-              .map(function (p) {
-                return p.title || "";
-              })
-              .join(", ");
-          },
-        );
-      }
-    } catch (e) {}
-    try {
-      if (window.parent && window.parent.document) {
-        let themeDebounce = null;
-        if (window._msThemeObs) {
-          try {
-            window._msThemeObs.disconnect();
-          } catch (e) {}
-        }
-        const themeObs = new MutationObserver(function () {
-          if (!panelVisible) return;
-          clearTimeout(themeDebounce);
-          themeDebounce = setTimeout(function () {
-            updateAccentColor();
-            syncThemeBackground();
-            syncThemeColors();
-            applyUICustomization();
-          }, 300);
-        });
-        themeObs.observe(window.parent.document.documentElement, {
-          attributes: true,
-          attributeFilter: ["style"],
-        });
-        themeObs.observe(window.parent.document.body, {
-          attributes: true,
-          attributeFilter: ["class"],
-        });
-        window._msThemeObs = themeObs;
-      }
-    } catch (e) {}
-    window.addEventListener("resize", function () {
-      const $p = $("#" + PANEL_ID);
-      if (!$p.length || !panelVisible) return;
-      const el = $p[0];
-      const w =
-        ($p[0].ownerDocument && $p[0].ownerDocument.defaultView) || window;
-      const rect = el.getBoundingClientRect();
-      if (rect.top > w.innerHeight - 50)
-        el.style.setProperty(
-          "top",
-          Math.max(0, w.innerHeight - 80) + "px",
-          "important",
-        );
-      if (rect.left > w.innerWidth - 60)
-        el.style.setProperty(
-          "left",
-          Math.max(0, w.innerWidth - 100) + "px",
-          "important",
-        );
-      const maxW = w.innerWidth * 0.92;
-      if (el.offsetWidth > maxW)
-        el.style.setProperty("width", maxW + "px", "important");
-    });
-    $(window).on("pagehide beforeunload", function () {
-      flushSave();
-      removeEscHandler();
+        },
+      );
+      registerMacroLike(/\{\{stage_title\}\}/gi, function (context, substring) {
+        if (!data.settings.stageInjectEnabled) return "";
+        if (_currentStagePrompts.length === 0) return "";
+        return _currentStagePrompts
+          .map(function (p) {
+            return p.title || "";
+          })
+          .join(", ");
+      });
+    }
+  } catch (e) {}
+  try {
+    if (window.parent && window.parent.document) {
+      let themeDebounce = null;
       if (window._msThemeObs) {
         try {
           window._msThemeObs.disconnect();
         } catch (e) {}
-        window._msThemeObs = null;
       }
-    });
-  }
+      const themeObs = new MutationObserver(function () {
+        if (!panelVisible) return;
+        clearTimeout(themeDebounce);
+        themeDebounce = setTimeout(function () {
+          updateAccentColor();
+          syncThemeBackground();
+          syncThemeColors();
+          applyUICustomization();
+        }, 300);
+      });
+      themeObs.observe(window.parent.document.documentElement, {
+        attributes: true,
+        attributeFilter: ["style"],
+      });
+      themeObs.observe(window.parent.document.body, {
+        attributes: true,
+        attributeFilter: ["class"],
+      });
+      window._msThemeObs = themeObs;
+    }
+  } catch (e) {}
+  window.addEventListener("resize", function () {
+    const $p = $("#" + PANEL_ID);
+    if (!$p.length || !panelVisible) return;
+    const el = $p[0];
+    const w =
+      ($p[0].ownerDocument && $p[0].ownerDocument.defaultView) || window;
+    const rect = el.getBoundingClientRect();
+    if (rect.top > w.innerHeight - 50)
+      el.style.setProperty(
+        "top",
+        Math.max(0, w.innerHeight - 80) + "px",
+        "important",
+      );
+    if (rect.left > w.innerWidth - 60)
+      el.style.setProperty(
+        "left",
+        Math.max(0, w.innerWidth - 100) + "px",
+        "important",
+      );
+    const maxW = w.innerWidth * 0.92;
+    if (el.offsetWidth > maxW)
+      el.style.setProperty("width", maxW + "px", "important");
+  });
+  $(window).on("pagehide beforeunload", function () {
+    abortActiveFetches();
+    flushSave();
+    removeEscHandler();
+    if (window._msThemeObs) {
+      try {
+        window._msThemeObs.disconnect();
+      } catch (e) {}
+      window._msThemeObs = null;
+    }
+  });
+}
 
-  if (typeof $ !== "undefined" && getCtx()) $(init);
-  else {
-    let att = 0;
-    const w = setInterval(() => {
-      att++;
-      if (typeof $ !== "undefined" && getCtx()) {
-        clearInterval(w);
-        $(init);
-      } else if (att > 40) clearInterval(w);
-    }, 500);
-  }
+if (typeof $ !== "undefined" && getCtx()) $(init);
+else {
+  let att = 0;
+  const w = setInterval(() => {
+    att++;
+    if (typeof $ !== "undefined" && getCtx()) {
+      clearInterval(w);
+      $(init);
+    } else if (att > 40) clearInterval(w);
+  }, 500);
+}
 })();

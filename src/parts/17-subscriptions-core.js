@@ -541,16 +541,7 @@
         (cleanUrl.indexOf("?") >= 0 ? "&" : "?") +
         "_t=" +
         Date.now();
-      var ctrl = new AbortController();
-      var timer = setTimeout(function () {
-        ctrl.abort();
-      }, 15000);
-      var response;
-      try {
-        response = await fetch(fetchUrl, { signal: ctrl.signal });
-      } finally {
-        clearTimeout(timer);
-      }
+      var response = await msFetch(fetchUrl, null, 15000);
 
       if (!response.ok) throw new Error("HTTP " + response.status);
       var rawText = await response.text();
@@ -618,6 +609,7 @@
       }
       return result;
     } catch (e) {
+      if (isShutdownFetchError(e)) return null;
       if (!quiet) toast("error", sub.name + " 检查失败: " + e.message);
       return null;
     }

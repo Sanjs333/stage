@@ -2,7 +2,7 @@
 const STORAGE_KEY = "miniStage_data";
 const PANEL_ID = "mini-stage-panel";
 const STYLE_ID = "mini-stage-styles";
-const SCRIPT_VERSION = "3.5";
+const SCRIPT_VERSION = "3.6";
 const GROUP_COLORS = [
   "#D6A2A2",
   "#DDAA90",
@@ -88,6 +88,7 @@ let tagSelectMode = false,
 let editDirty = false;
 let editSnapshot = "";
 let groupEditDirty = false;
+let flushGroupEdit = null;
 let activeDropdownCleanup = null;
 let longPressTimer = null;
 let _editDraftTimer = null;
@@ -100,6 +101,59 @@ let _macroInjectBusy = false;
 let _macroBusyWarned = false;
 let _imgPreloaded = new Set();
 let _inputAppendList = [];
+let _msShuttingDown = false;
+let _msActiveFetchControllers = new Set();
+
+function isShutdownFetchError(e) {
+  var msg = e && e.message ? String(e.message) : "";
+  return (
+    _msShuttingDown ||
+    (e && e.name === "AbortError") ||
+    msg.indexOf("global scope is shutting down") >= 0
+  );
+}
+
+function abortActiveFetches() {
+  _msShuttingDown = true;
+  _msActiveFetchControllers.forEach(function (ctrl) {
+    try {
+      ctrl.abort();
+    } catch (e) {}
+  });
+  _msActiveFetchControllers.clear();
+}
+
+async function msFetch(url, options, timeoutMs) {
+  var ctrl = new AbortController();
+  var timer = null;
+  var opts = Object.assign({}, options || {});
+  var parentSignal = opts.signal;
+  var onParentAbort = function () {
+    ctrl.abort();
+  };
+  if (parentSignal) {
+    if (parentSignal.aborted) ctrl.abort();
+    else parentSignal.addEventListener("abort", onParentAbort, { once: true });
+  }
+  opts.signal = ctrl.signal;
+  _msActiveFetchControllers.add(ctrl);
+  if (timeoutMs && timeoutMs > 0) {
+    timer = setTimeout(function () {
+      ctrl.abort();
+    }, timeoutMs);
+  }
+  try {
+    return await fetch(url, opts);
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (parentSignal) {
+      try {
+        parentSignal.removeEventListener("abort", onParentAbort);
+      } catch (e) {}
+    }
+    _msActiveFetchControllers.delete(ctrl);
+  }
+}
 
 function preloadPanelImages() {
   try {
@@ -1133,10 +1187,7 @@ function getSelectedThemeNameFromDom() {
     var sel = selects[i];
     try {
       var opt = sel.options && sel.options[sel.selectedIndex];
-      var name =
-        (opt && (opt.value || opt.textContent)) ||
-        sel.value ||
-        "";
+      var name = (opt && (opt.value || opt.textContent)) || sel.value || "";
       name = String(name || "").trim();
       if (name) return name;
     } catch (e) {}

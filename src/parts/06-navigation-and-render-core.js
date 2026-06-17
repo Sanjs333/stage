@@ -21,6 +21,8 @@
       return;
     }
     if (currentView().name === "group-edit" && groupEditDirty) {
+      if (typeof flushGroupEdit === "function") flushGroupEdit();
+      if (!groupEditDirty) return navigateTo(view, reset);
       msConfirm("分组设置尚未保存，确定要离开吗？", {
         title: "未保存的改动",
         type: "warning",
@@ -32,6 +34,11 @@
       });
       return;
     }
+    if (
+      currentView().name === "group-edit" &&
+      typeof flushGroupEdit === "function"
+    )
+      flushGroupEdit();
     editDirty = false;
     closeActiveDropdown();
     if (typeof _searchTimer !== "undefined" && _searchTimer) {
@@ -95,6 +102,8 @@
       return;
     }
     if (currentView().name === "group-edit" && groupEditDirty) {
+      if (typeof flushGroupEdit === "function") flushGroupEdit();
+      if (!groupEditDirty) return navigateBack();
       msConfirm("分组设置尚未保存，确定要离开吗？", {
         title: "未保存的改动",
         type: "warning",
@@ -106,6 +115,11 @@
       });
       return;
     }
+    if (
+      currentView().name === "group-edit" &&
+      typeof flushGroupEdit === "function"
+    )
+      flushGroupEdit();
     editDirty = false;
     closeActiveDropdown();
     $("#" + PANEL_ID).off("keydown.ms-preview-nav");

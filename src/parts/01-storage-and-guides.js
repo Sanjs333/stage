@@ -41,7 +41,7 @@
         data.settings.panelWasVisible = false;
       if (data.settings.defaultStagePrefix === undefined)
         data.settings.defaultStagePrefix =
-          "<stage>\n在正文最后输出以下剧场内容，使用以下html折叠包裹。\n<details>\n<summary>小剧场 {{random::1::2::3::4::5::6::7::8}}| {{stage_title}}</summary>\n在此处输出剧场内容，纯文字直接输出，网页代码上下需```包裹\n</details>\n\n以下是需要输出的剧场内容：\n{{stage}}\n</stage>";
+          "<stage>\n在正文最后输出剧场内容，使用以下html折叠包裹\n<details>\n<summary>小剧场 {{random::1::2::3::4::5::6::7::8::9::10}} | {{stage_title}}</summary>\n在此处输出剧场内容，不重复剧场标题\n</details>\n\n【输出格式规则】\n- <details> 块裸输出为 HTML，外层不加代码块包裹\n- <details> 块之间不添加任何额外标记\n- 块内内容按以下规则处理：\n  - 纯文字：直接输出，不加任何包裹\n  - 网页代码（HTML/CSS/JS）：上下用 ``` 包裹\n\n以下是需要输出的剧场内容：\n{{stage}}\n\n</stage>";
       if (data.settings.uiCustomEnabled === undefined)
         data.settings.uiCustomEnabled = false;
       if (data.settings.uiFontSize === undefined) data.settings.uiFontSize = 14;
@@ -446,21 +446,13 @@ async function fetchRemoteGuide(url) {
   try {
     var fetchUrl =
       url + (url.indexOf("?") >= 0 ? "&" : "?") + "_t=" + Date.now();
-    var ctrl = new AbortController();
-    var timer = setTimeout(function () {
-      ctrl.abort();
-    }, 10000);
-    var response;
-    try {
-      response = await fetch(fetchUrl, { signal: ctrl.signal });
-    } finally {
-      clearTimeout(timer);
-    }
+    var response = await msFetch(fetchUrl, null, 10000);
     if (!response.ok) throw new Error("HTTP " + response.status);
     var text = await response.text();
     if (!text || text.length < 20) throw new Error("内容为空");
     return text;
   } catch (e) {
+    if (isShutdownFetchError(e)) return null;
     console.warn("[小剧场] 云端指南加载失败:", url, e);
     return null;
   }

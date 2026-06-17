@@ -1897,7 +1897,7 @@ function renderSubscriptionAdd() {
     try {
       var fetchUrl =
         url + (url.indexOf("?") >= 0 ? "&" : "?") + "_t=" + Date.now();
-      var response = await fetch(fetchUrl);
+      var response = await msFetch(fetchUrl, null, 15000);
       if (!response.ok) throw new Error("HTTP " + response.status);
       var rawText = await response.text();
       var imported = JSON.parse(rawText);
@@ -1949,6 +1949,7 @@ function renderSubscriptionAdd() {
       );
       navigateBack();
     } catch (e) {
+      if (isShutdownFetchError(e)) return;
       toast("error", "验证失败: " + e.message);
       $btn
         .prop("disabled", false)
