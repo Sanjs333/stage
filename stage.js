@@ -1738,8 +1738,16 @@ function loadData() {
         !Array.isArray(data.settings.randomInject.excludedCharGroupIds)
       )
         data.settings.randomInject.excludedCharGroupIds = [];
-      if (!Array.isArray(data.settings.definedTags))
-        data.settings.definedTags = [];
+      if (!Array.isArray(data.settings.tagMappings))
+        data.settings.tagMappings = [];
+      data.settings.tagMappings.forEach(function (m) {
+        if (!Array.isArray(m.tagIds)) m.tagIds = [];
+        if (!m.primaryTagId || m.tagIds.indexOf(m.primaryTagId) < 0) {
+          m.primaryTagId = m.tagIds.length > 0 ? m.tagIds[0] : null;
+        }
+      });
+      if (data.settings.tagFilterExactMatch === undefined)
+        data.settings.tagFilterExactMatch = false;
       if (
         !data.settings.themeBindings ||
         typeof data.settings.themeBindings !== "object"
@@ -1847,15 +1855,21 @@ function loadData() {
           delete _unlockedToMigrate[k];
         }
       });
-      if (!data.settings._bdIsOwnMigrated) {
+      if (data.settings._bdIsOwnMigrated !== 2) {
         Object.keys(data.settings.charBirthdayMessages).forEach(function (k) {
           var m = data.settings.charBirthdayMessages[k];
-          if (m && m.isOwn === undefined) m.isOwn = true;
+          if (m && m.versions) {
+            Object.keys(m.versions).forEach(function (year) {
+              var v = m.versions[year];
+              if (v) v.isOwn = true;
+            });
+          }
+          if (m && m.isOwn !== undefined) delete m.isOwn;
         });
         Object.keys(data.settings.charBirthdays || {}).forEach(function (k) {
           data.settings.ownBirthdays[k] = true;
         });
-        data.settings._bdIsOwnMigrated = true;
+        data.settings._bdIsOwnMigrated = 2;
       }
       if (
         !data.settings.dismissedBirthdays ||
@@ -2201,11 +2215,9 @@ async function updateBuiltinGuidesFromRemote(forceAll) {
 
 function setupPage(title, toolbarHtml) {
   var $p = $("#" + PANEL_ID);
-  $p.find("#ms-title").text(title);
+  $p.find("#ms-title").text(toolbarHtml !== undefined ? toolbarHtml : title);
   $p.find("#ms-toolbar").html(
-    '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">' +
-      (toolbarHtml !== undefined ? toolbarHtml : esc(title)) +
-      "</span>",
+    '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button>',
   );
   return $p;
 }
@@ -2794,7 +2806,7 @@ function getCharBdData(charKey) {
           authorName: raw.authorName || "",
           contentType: raw.contentType || "text",
           updatedAt: raw.updatedAt || 0,
-          isOwn: raw.isOwn === true,
+          isOwn: raw.isOwn !== false,
           year: "default",
         },
       },
@@ -3067,6 +3079,56 @@ function getTag(id) {
   if (!_tagIdx) _rebuildIdx();
   return _tagIdx[id] || null;
 }
+function getTagSourceGroups(tagId) {
+  var groupMap = {};
+  var ungroupedCount = 0;
+  data.prompts.forEach(function (p) {
+    if (!p.tags || p.tags.indexOf(tagId) < 0) return;
+    var g = p.groupId ? getGroup(p.groupId) : null;
+    if (g) {
+      if (!groupMap[g.id]) groupMap[g.id] = { group: g, count: 0 };
+      groupMap[g.id].count++;
+    } else {
+      ungroupedCount++;
+    }
+  });
+  var result = Object.keys(groupMap).map(function (gid) {
+    return groupMap[gid];
+  });
+  if (ungroupedCount > 0) {
+    result.push({
+      group: { id: "_ungrouped", name: "未分组", color: "#888" },
+      count: ungroupedCount,
+    });
+  }
+  return result;
+}
+
+function expandTagsByMapping(tagIds) {
+  if (!Array.isArray(tagIds) || tagIds.length === 0) return tagIds || [];
+  if (data.settings.tagFilterExactMatch) return tagIds.slice();
+  var mappings = data.settings.tagMappings || [];
+  if (mappings.length === 0) return tagIds.slice();
+  var expanded = new Set(tagIds);
+  tagIds.forEach(function (tid) {
+    mappings.forEach(function (m) {
+      if (Array.isArray(m.tagIds) && m.tagIds.indexOf(tid) >= 0) {
+        m.tagIds.forEach(function (linkedTid) {
+          expanded.add(linkedTid);
+        });
+      }
+    });
+  });
+  return Array.from(expanded);
+}
+
+function getTagMappingGroups(tagId) {
+  var mappings = data.settings.tagMappings || [];
+  return mappings.filter(function (m) {
+    return Array.isArray(m.tagIds) && m.tagIds.indexOf(tagId) >= 0;
+  });
+}
+
 var _tagOrderCache = null;
 var _tagOrderVersion = 0;
 var _tagOrderCachedVersion = -1;
@@ -3190,476 +3252,474 @@ function _buildIPGroupFromImport(icg) {
   };
 }
 
-  function createGroup(name) {
-    const g = {
-      id: uid(),
-      name,
-      color: GROUP_COLORS[data.groups.length % GROUP_COLORS.length],
-      note: "",
-      defaultAuthor: "",
-      stagePrefix: "",
-      charKeys: [],
-    };
-    data.groups.push(g);
-    _invalidateCharGroupCache();
-    saveData();
-    return g;
-  }
-  function updateGroup(id, u) {
-    const g = getGroup(id);
-    if (g) {
-      Object.assign(g, u);
-      if (u.charKeys !== undefined) _invalidateCharGroupCache();
-      saveData();
-    }
-  }
-
-  function deleteGroup(id) {
-    data.groups = data.groups.filter((g) => g.id !== id);
-    if (data.settings.generalCollapsed)
-      delete data.settings.generalCollapsed[id];
-    data.prompts.forEach((p) => {
-      if (p.groupId === id) p.groupId = null;
-    });
-    data.subscriptions.forEach((s) => {
-      if (s.targetGroupId === id) s.targetGroupId = null;
-    });
-    var ri = data.settings.randomInject;
-    if (ri && Array.isArray(ri.excludedGroupIds)) {
-      ri.excludedGroupIds = ri.excludedGroupIds.filter(function (x) {
-        return x !== id;
-      });
-    }
-    if (ri && Array.isArray(ri.excludedSeries)) {
-      ri.excludedSeries = ri.excludedSeries.filter(function (s) {
-        return s.groupId !== id;
-      });
-    }
-    _invalidateCharGroupCache();
+function createGroup(name) {
+  const g = {
+    id: uid(),
+    name,
+    color: GROUP_COLORS[data.groups.length % GROUP_COLORS.length],
+    note: "",
+    defaultAuthor: "",
+    stagePrefix: "",
+    charKeys: [],
+  };
+  data.groups.push(g);
+  _invalidateCharGroupCache();
+  saveData();
+  return g;
+}
+function updateGroup(id, u) {
+  const g = getGroup(id);
+  if (g) {
+    Object.assign(g, u);
+    if (u.charKeys !== undefined) _invalidateCharGroupCache();
     saveData();
   }
-  function deleteGroupWithPrompts(gid) {
-    var ids = data.prompts
-      .filter(function (p) {
-        return p.groupId === gid;
-      })
-      .map(function (p) {
-        return p.id;
-      });
-    if (ids.length > 0) deletePrompts(ids);
-    deleteGroup(gid);
-  }
-  function createPrompt(obj) {
-    const p = {
-      id: uid(),
-      title: obj.title || "未命名",
-      content: obj.content || "",
-      groupId: obj.groupId || null,
-      author: obj.author || "",
-      tags: obj.tags || [],
-      starred: false,
-      pinned: false,
-      sourceId: obj.sourceId || null,
-      createdAt: Date.now(),
-      lastUsedAt: null,
-      fingerprint: "",
-      usageCount: 0,
-      updatedAt: Date.now(),
-      series: obj.series || "",
-      history: [],
-      character: obj.character || "",
-      usageByCharacter: {},
-    };
-    p.fingerprint = contentFingerprint(p);
-    data.prompts.push(p);
-    if (p.character && isLocalCharKey(p.character)) _invalidateCharGroupCache();
-    saveData();
-    return p;
-  }
+}
 
-  function updatePrompt(id, u) {
-    const p = getPrompt(id);
-    if (p) {
-      var oldContent = p.content;
-      var oldChar = p.character;
-      var oldGroupId = p.groupId;
-      Object.assign(p, u);
-      _invalidateLc(p);
-      if (oldChar !== p.character || oldGroupId !== p.groupId) {
-        _invalidateCharGroupCache();
-      }
-      if (u.title !== undefined || u.content !== undefined) {
-        p.fingerprint = contentFingerprint(p);
-        p.updatedAt = Date.now();
-        if (typeof _renderMdCache !== "undefined" && oldContent) {
-          _renderMdCache.delete(oldContent);
-        }
-      } else if (
-        u.character !== undefined ||
-        u.author !== undefined ||
-        u.series !== undefined ||
-        u.tags !== undefined ||
-        u.groupId !== undefined
-      ) {
-        p.updatedAt = Date.now();
-      }
-      saveData();
-    }
-  }
-  function deletePrompt(id) {
-    deletePrompts([id]);
-  }
-  function deletePrompts(ids) {
-    const s = new Set(ids);
-    data.prompts = data.prompts.filter((p) => !s.has(p.id));
-    if (Array.isArray(data.settings.stageSelectedIds)) {
-      data.settings.stageSelectedIds = data.settings.stageSelectedIds.filter(
-        (sid) => !s.has(sid),
-      );
-    }
-    var ri = data.settings.randomInject;
-    if (ri && Array.isArray(ri.excludedPromptIds)) {
-      ri.excludedPromptIds = ri.excludedPromptIds.filter((pid) => !s.has(pid));
-    }
-    _invalidateCharGroupCache();
-    saveData();
-  }
-  function movePromptsToGroup(ids, gid) {
-    const s = new Set(ids);
-    data.prompts.forEach((p) => {
-      if (s.has(p.id)) p.groupId = gid;
-    });
-    _invalidateCharGroupCache();
-    saveData();
-  }
-  function duplicatePrompt(id) {
-    const p = getPrompt(id);
-    if (!p) return null;
-    return createPrompt({
-      title: p.title + " (副本)",
-      content: p.content,
-      groupId: p.groupId,
-      author: p.author,
-      tags: [...(p.tags || [])],
-      series: p.series || "",
-      character: p.character || "",
+function deleteGroup(id) {
+  data.groups = data.groups.filter((g) => g.id !== id);
+  if (data.settings.generalCollapsed) delete data.settings.generalCollapsed[id];
+  data.prompts.forEach((p) => {
+    if (p.groupId === id) p.groupId = null;
+  });
+  data.subscriptions.forEach((s) => {
+    if (s.targetGroupId === id) s.targetGroupId = null;
+  });
+  var ri = data.settings.randomInject;
+  if (ri && Array.isArray(ri.excludedGroupIds)) {
+    ri.excludedGroupIds = ri.excludedGroupIds.filter(function (x) {
+      return x !== id;
     });
   }
-  function toggleStar(id) {
-    const p = getPrompt(id);
-    if (p) {
-      p.starred = !p.starred;
-      saveData();
-    }
-  }
-  function togglePin(id) {
-    const p = getPrompt(id);
-    if (p) {
-      p.pinned = !p.pinned;
-      saveData();
-    }
-  }
-
-  function pushHistory(p) {
-    if (!p) return;
-    if (!Array.isArray(p.history)) p.history = [];
-    var now = Date.now();
-    var last = p.history.length > 0 ? p.history[p.history.length - 1] : null;
-    if (last && now - last.savedAt < 600000) {
-      var oldLen = (last.content || "").length;
-      var newLen = (p.content || "").length;
-      var diffRatio = oldLen > 0 ? Math.abs(newLen - oldLen) / oldLen : 1;
-      if (diffRatio < 0.2) return;
-    }
-    p.history.push({
-      title: p.title,
-      content: p.content,
-      author: p.author,
-      savedAt: now,
-    });
-    if (p.history.length > 5) p.history.shift();
-  }
-
-  function createTag(name) {
-    const t = {
-      id: uid(),
-      name,
-      color: TAG_COLORS[data.settings.definedTags.length % TAG_COLORS.length],
-    };
-    data.settings.definedTags.push(t);
-    _tagOrderVersion++;
-    saveData();
-    return t;
-  }
-  function updateTag(id, u) {
-    const t = getTag(id);
-    if (t) {
-      Object.assign(t, u);
-      _tagOrderVersion++;
-      saveData();
-    }
-  }
-  function deleteTag(id) {
-    data.settings.definedTags = data.settings.definedTags.filter(
-      (t) => t.id !== id,
-    );
-    data.prompts.forEach((p) => {
-      p.tags = p.tags.filter((tid) => tid !== id);
-    });
-    if (Array.isArray(filterState.includeTags)) {
-      filterState.includeTags = filterState.includeTags.filter(
-        (tid) => tid !== id,
-      );
-    }
-    if (Array.isArray(filterState.excludeTags)) {
-      filterState.excludeTags = filterState.excludeTags.filter(
-        (tid) => tid !== id,
-      );
-    }
-    _tagOrderVersion++;
-    saveData();
-  }
-
-  function filterPrompts(list) {
-    let r = list;
-    if (filterState.includeTags.length > 0) {
-      if (data.settings.filterTagMode === "and") {
-        r = r.filter(
-          (p) =>
-            p.tags &&
-            filterState.includeTags.every((tid) => p.tags.includes(tid)),
-        );
-      } else {
-        r = r.filter(
-          (p) =>
-            p.tags &&
-            filterState.includeTags.some((tid) => p.tags.includes(tid)),
-        );
-      }
-    }
-    if (filterState.excludeTags.length > 0) {
-      r = r.filter(
-        (p) =>
-          !p.tags ||
-          !filterState.excludeTags.some((tid) => p.tags.includes(tid)),
-      );
-    }
-    if (filterState.groupId) {
-      if (filterState.groupId === "_ungrouped")
-        r = r.filter((p) => !p.groupId || !getGroup(p.groupId));
-      else r = r.filter((p) => p.groupId === filterState.groupId);
-    }
-    if (filterState.onlyCurrentChar) {
-      var curK2 = getCurrentCharKeySafe();
-      r = curK2
-        ? r.filter(function (p) {
-            return p.character === curK2;
-          })
-        : [];
-    }
-    return r;
-  }
-
-  var _lcMap = new WeakMap();
-  function _getLc(p, field) {
-    var rec = _lcMap.get(p);
-    if (!rec) {
-      rec = {};
-      _lcMap.set(p, rec);
-    }
-    if (rec[field] === undefined || rec[field + "_src"] !== p[field]) {
-      var v = p[field];
-      rec[field] = v ? String(v).toLowerCase() : "";
-      rec[field + "_src"] = v;
-    }
-    return rec[field];
-  }
-  function _invalidateLc(p) {
-    if (p) _lcMap.delete(p);
-  }
-  function searchPrompts(list, q) {
-    if (!q) return list;
-    const lq = q.toLowerCase();
-    return list.filter(function (p) {
-      if (_getLc(p, "title").indexOf(lq) >= 0) return true;
-      if (_getLc(p, "content").indexOf(lq) >= 0) return true;
-      if (_getLc(p, "author").indexOf(lq) >= 0) return true;
-      if (_getLc(p, "series").indexOf(lq) >= 0) return true;
-      if (p.character) {
-        var dn = getCharDisplayName(p.character);
-        if (dn && dn.toLowerCase().indexOf(lq) >= 0) return true;
-      }
-      return false;
+  if (ri && Array.isArray(ri.excludedSeries)) {
+    ri.excludedSeries = ri.excludedSeries.filter(function (s) {
+      return s.groupId !== id;
     });
   }
-  function highlightText(text, query) {
-    if (!query || !text) return esc(text);
-    const escaped = esc(text);
-    const eq = esc(query).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    return escaped.replace(
-      new RegExp(`(${eq})`, "gi"),
-      '<mark class="ms-hl">$1</mark>',
-    );
-  }
-
-  var _visIdsCache = null;
-  var _visIdsCacheKey = "";
-  function getVisiblePromptIds() {
-    const v = currentView();
-    var curCharForCache = getCurrentCharKeySafe() || "";
-    var cacheKey =
-      v.name +
-      "|" +
-      (v.groupId || "") +
-      "|" +
-      (v.charKey || "") +
-      "|" +
-      searchQuery +
-      "|" +
-      JSON.stringify(filterState) +
-      "|" +
-      (data.settings.sortMode || "") +
-      "|" +
-      data.prompts.length +
-      "|" +
-      curCharForCache;
-    if (_visIdsCacheKey === cacheKey && _visIdsCache) return _visIdsCache;
-    let list = [];
-    if (v.name === "list") list = data.prompts;
-    else if (v.name === "group")
-      list =
-        v.groupId === "_ungrouped"
-          ? getUngroupedPrompts()
-          : getPromptsInGroup(v.groupId);
-    else if (v.name === "starred") list = getStarredPrompts();
-    else if (v.name === "recent") list = getRecentPrompts();
-    else if (v.name === "character")
-      list = getPromptsByCharacter(v.charKey || v.charName);
-    else return [];
-    var sorted = sortPrompts(filterPrompts(searchPrompts(list, searchQuery)));
-
-    function _groupBySeriesVisual(items) {
-      var out = [];
-      var seen = new Set();
-      items.forEach(function (p) {
-        if (seen.has(p.id)) return;
-        if (p.series && p.series.trim()) {
-          var sn = p.series.trim();
-          items.forEach(function (q) {
-            if (q.series && q.series.trim() === sn && !seen.has(q.id)) {
-              out.push(q);
-              seen.add(q.id);
-            }
-          });
-        } else {
-          out.push(p);
-          seen.add(p.id);
-        }
-      });
-      return out;
-    }
-
-    var ordered = sorted;
-    if (v.name === "group" && v.groupId && !searchQuery) {
-      var g = v.groupId !== "_ungrouped" ? getGroup(v.groupId) : null;
-      var hasAnyCharBind =
-        !!g &&
-        sorted.some(function (p) {
-          return p.character && isLocalCharKey(p.character);
-        });
-      var usingPartitioned =
-        hasAnyCharBind &&
-        filterState.includeTags.length === 0 &&
-        filterState.excludeTags.length === 0 &&
-        !filterState.onlyCurrentChar;
-      if (usingPartitioned) {
-        var general = sorted.filter(function (p) {
-          return !p.character;
-        });
-        var byChar = {};
-        sorted.forEach(function (p) {
-          if (p.character) {
-            if (!byChar[p.character]) byChar[p.character] = [];
-            byChar[p.character].push(p);
-          }
-        });
-        var orderedKeys = [];
-        var curKeyForOrder = getCurrentCharKeySafe();
-        var userOrder = g ? getCharDisplayOrder(g) : [];
-        var hasUserOrder =
-          g &&
-          Array.isArray(g.charDisplayOrder) &&
-          g.charDisplayOrder.length > 0;
-        if (!hasUserOrder && curKeyForOrder && byChar[curKeyForOrder]) {
-          orderedKeys.push(curKeyForOrder);
-        }
-        userOrder.forEach(function (k) {
-          if (orderedKeys.indexOf(k) < 0 && byChar[k]) orderedKeys.push(k);
-        });
-        Object.keys(byChar).forEach(function (k) {
-          if (orderedKeys.indexOf(k) < 0) orderedKeys.push(k);
-        });
-        var visual = [];
-        _groupBySeriesVisual(general).forEach(function (p) {
-          visual.push(p);
-        });
-        orderedKeys.forEach(function (k) {
-          _groupBySeriesVisual(byChar[k] || []).forEach(function (p) {
-            visual.push(p);
-          });
-        });
-        ordered = visual;
-      } else {
-        ordered = _groupBySeriesVisual(sorted);
-      }
-    } else if (v.name === "character" && !searchQuery) {
-      ordered = _groupBySeriesVisual(sorted);
-    } else if (
-      v.name === "list" &&
-      filterState.groupId &&
-      filterState.groupId !== "_ungrouped" &&
-      !searchQuery
-    ) {
-      ordered = _groupBySeriesVisual(sorted);
-    }
-
-    var result = ordered.map(function (p) {
+  _invalidateCharGroupCache();
+  saveData();
+}
+function deleteGroupWithPrompts(gid) {
+  var ids = data.prompts
+    .filter(function (p) {
+      return p.groupId === gid;
+    })
+    .map(function (p) {
       return p.id;
     });
-    _visIdsCacheKey = cacheKey;
-    _visIdsCache = result;
-    return result;
-  }
+  if (ids.length > 0) deletePrompts(ids);
+  deleteGroup(gid);
+}
+function createPrompt(obj) {
+  const p = {
+    id: uid(),
+    title: obj.title || "未命名",
+    content: obj.content || "",
+    groupId: obj.groupId || null,
+    author: obj.author || "",
+    tags: obj.tags || [],
+    starred: false,
+    pinned: false,
+    sourceId: obj.sourceId || null,
+    createdAt: Date.now(),
+    lastUsedAt: null,
+    fingerprint: "",
+    usageCount: 0,
+    updatedAt: Date.now(),
+    series: obj.series || "",
+    history: [],
+    character: obj.character || "",
+    usageByCharacter: {},
+  };
+  p.fingerprint = contentFingerprint(p);
+  data.prompts.push(p);
+  if (p.character && isLocalCharKey(p.character)) _invalidateCharGroupCache();
+  saveData();
+  return p;
+}
 
-  function autoCollapsePanel() {
-    const $panel = $("#" + PANEL_ID);
-    if ($panel.length && !$panel.hasClass("ms-collapsed")) {
-      $panel.addClass("ms-collapsed");
-      data.settings.collapsed = true;
-      $panel
-        .find("#ms-btn-collapse i")
-        .attr("class", "fa-solid fa-window-maximize");
-      saveData();
+function updatePrompt(id, u) {
+  const p = getPrompt(id);
+  if (p) {
+    var oldContent = p.content;
+    var oldChar = p.character;
+    var oldGroupId = p.groupId;
+    Object.assign(p, u);
+    _invalidateLc(p);
+    if (oldChar !== p.character || oldGroupId !== p.groupId) {
+      _invalidateCharGroupCache();
     }
-  }
-  function _setupInjectLock() {
-    _skipAllInjectForNextGeneration = true;
-    if (window._msInjectLockTimer) clearTimeout(window._msInjectLockTimer);
-    window._msInjectLockTimer = setTimeout(function () {
-      if (_skipAllInjectForNextGeneration) {
-        _skipAllInjectForNextGeneration = false;
-        console.warn("[小剧场] 注入锁超时自动解除");
+    if (u.title !== undefined || u.content !== undefined) {
+      p.fingerprint = contentFingerprint(p);
+      p.updatedAt = Date.now();
+      if (typeof _renderMdCache !== "undefined" && oldContent) {
+        _renderMdCache.delete(oldContent);
       }
-    }, 30000);
+    } else if (
+      u.character !== undefined ||
+      u.author !== undefined ||
+      u.series !== undefined ||
+      u.tags !== undefined ||
+      u.groupId !== undefined
+    ) {
+      p.updatedAt = Date.now();
+    }
+    saveData();
   }
+}
+function deletePrompt(id) {
+  deletePrompts([id]);
+}
+function deletePrompts(ids) {
+  const s = new Set(ids);
+  data.prompts = data.prompts.filter((p) => !s.has(p.id));
+  if (Array.isArray(data.settings.stageSelectedIds)) {
+    data.settings.stageSelectedIds = data.settings.stageSelectedIds.filter(
+      (sid) => !s.has(sid),
+    );
+  }
+  var ri = data.settings.randomInject;
+  if (ri && Array.isArray(ri.excludedPromptIds)) {
+    ri.excludedPromptIds = ri.excludedPromptIds.filter((pid) => !s.has(pid));
+  }
+  _invalidateCharGroupCache();
+  saveData();
+}
+function movePromptsToGroup(ids, gid) {
+  const s = new Set(ids);
+  data.prompts.forEach((p) => {
+    if (s.has(p.id)) p.groupId = gid;
+  });
+  _invalidateCharGroupCache();
+  saveData();
+}
+function duplicatePrompt(id) {
+  const p = getPrompt(id);
+  if (!p) return null;
+  return createPrompt({
+    title: p.title + " (副本)",
+    content: p.content,
+    groupId: p.groupId,
+    author: p.author,
+    tags: [...(p.tags || [])],
+    series: p.series || "",
+    character: p.character || "",
+  });
+}
+function toggleStar(id) {
+  const p = getPrompt(id);
+  if (p) {
+    p.starred = !p.starred;
+    saveData();
+  }
+}
+function togglePin(id) {
+  const p = getPrompt(id);
+  if (p) {
+    p.pinned = !p.pinned;
+    saveData();
+  }
+}
 
-  function _clearInjectLock() {
-    _skipAllInjectForNextGeneration = false;
-    if (window._msInjectLockTimer) {
-      clearTimeout(window._msInjectLockTimer);
-      window._msInjectLockTimer = null;
+function pushHistory(p) {
+  if (!p) return;
+  if (!Array.isArray(p.history)) p.history = [];
+  var now = Date.now();
+  var last = p.history.length > 0 ? p.history[p.history.length - 1] : null;
+  if (last && now - last.savedAt < 600000) {
+    var oldLen = (last.content || "").length;
+    var newLen = (p.content || "").length;
+    var diffRatio = oldLen > 0 ? Math.abs(newLen - oldLen) / oldLen : 1;
+    if (diffRatio < 0.2) return;
+  }
+  p.history.push({
+    title: p.title,
+    content: p.content,
+    author: p.author,
+    savedAt: now,
+  });
+  if (p.history.length > 5) p.history.shift();
+}
+
+function createTag(name) {
+  const t = {
+    id: uid(),
+    name,
+    color: TAG_COLORS[data.settings.definedTags.length % TAG_COLORS.length],
+  };
+  data.settings.definedTags.push(t);
+  _tagOrderVersion++;
+  saveData();
+  return t;
+}
+function updateTag(id, u) {
+  const t = getTag(id);
+  if (t) {
+    Object.assign(t, u);
+    _tagOrderVersion++;
+    saveData();
+  }
+}
+function deleteTag(id) {
+  data.settings.definedTags = data.settings.definedTags.filter(
+    (t) => t.id !== id,
+  );
+  data.prompts.forEach((p) => {
+    p.tags = p.tags.filter((tid) => tid !== id);
+  });
+  if (Array.isArray(filterState.includeTags)) {
+    filterState.includeTags = filterState.includeTags.filter(
+      (tid) => tid !== id,
+    );
+  }
+  if (Array.isArray(filterState.excludeTags)) {
+    filterState.excludeTags = filterState.excludeTags.filter(
+      (tid) => tid !== id,
+    );
+  }
+  _tagOrderVersion++;
+  saveData();
+}
+
+function filterPrompts(list) {
+  let r = list;
+  if (filterState.includeTags.length > 0) {
+    var effIncludeTags = expandTagsByMapping(filterState.includeTags);
+    if (data.settings.filterTagMode === "and") {
+      r = r.filter(
+        (p) =>
+          p.tags &&
+          filterState.includeTags.every((tid) => {
+            var linked = expandTagsByMapping([tid]);
+            return linked.some((ltid) => p.tags.includes(ltid));
+          }),
+      );
+    } else {
+      r = r.filter(
+        (p) => p.tags && effIncludeTags.some((tid) => p.tags.includes(tid)),
+      );
     }
   }
+  if (filterState.excludeTags.length > 0) {
+    var effExcludeTags = expandTagsByMapping(filterState.excludeTags);
+    r = r.filter(
+      (p) => !p.tags || !effExcludeTags.some((tid) => p.tags.includes(tid)),
+    );
+  }
+  if (filterState.groupId) {
+    if (filterState.groupId === "_ungrouped")
+      r = r.filter((p) => !p.groupId || !getGroup(p.groupId));
+    else r = r.filter((p) => p.groupId === filterState.groupId);
+  }
+  if (filterState.onlyCurrentChar) {
+    var curK2 = getCurrentCharKeySafe();
+    r = curK2
+      ? r.filter(function (p) {
+          return p.character === curK2;
+        })
+      : [];
+  }
+  return r;
+}
+
+var _lcMap = new WeakMap();
+function _getLc(p, field) {
+  var rec = _lcMap.get(p);
+  if (!rec) {
+    rec = {};
+    _lcMap.set(p, rec);
+  }
+  if (rec[field] === undefined || rec[field + "_src"] !== p[field]) {
+    var v = p[field];
+    rec[field] = v ? String(v).toLowerCase() : "";
+    rec[field + "_src"] = v;
+  }
+  return rec[field];
+}
+function _invalidateLc(p) {
+  if (p) _lcMap.delete(p);
+}
+function searchPrompts(list, q) {
+  if (!q) return list;
+  const lq = q.toLowerCase();
+  return list.filter(function (p) {
+    if (_getLc(p, "title").indexOf(lq) >= 0) return true;
+    if (_getLc(p, "content").indexOf(lq) >= 0) return true;
+    if (_getLc(p, "author").indexOf(lq) >= 0) return true;
+    if (_getLc(p, "series").indexOf(lq) >= 0) return true;
+    if (p.character) {
+      var dn = getCharDisplayName(p.character);
+      if (dn && dn.toLowerCase().indexOf(lq) >= 0) return true;
+    }
+    return false;
+  });
+}
+function highlightText(text, query) {
+  if (!query || !text) return esc(text);
+  const escaped = esc(text);
+  const eq = esc(query).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return escaped.replace(
+    new RegExp(`(${eq})`, "gi"),
+    '<mark class="ms-hl">$1</mark>',
+  );
+}
+
+var _visIdsCache = null;
+var _visIdsCacheKey = "";
+function getVisiblePromptIds() {
+  const v = currentView();
+  var curCharForCache = getCurrentCharKeySafe() || "";
+  var cacheKey =
+    v.name +
+    "|" +
+    (v.groupId || "") +
+    "|" +
+    (v.charKey || "") +
+    "|" +
+    searchQuery +
+    "|" +
+    JSON.stringify(filterState) +
+    "|" +
+    (data.settings.sortMode || "") +
+    "|" +
+    data.prompts.length +
+    "|" +
+    curCharForCache;
+  if (_visIdsCacheKey === cacheKey && _visIdsCache) return _visIdsCache;
+  let list = [];
+  if (v.name === "list") list = data.prompts;
+  else if (v.name === "group")
+    list =
+      v.groupId === "_ungrouped"
+        ? getUngroupedPrompts()
+        : getPromptsInGroup(v.groupId);
+  else if (v.name === "starred") list = getStarredPrompts();
+  else if (v.name === "recent") list = getRecentPrompts();
+  else if (v.name === "character")
+    list = getPromptsByCharacter(v.charKey || v.charName);
+  else return [];
+  var sorted = sortPrompts(filterPrompts(searchPrompts(list, searchQuery)));
+
+  function _groupBySeriesVisual(items) {
+    var out = [];
+    var seen = new Set();
+    items.forEach(function (p) {
+      if (seen.has(p.id)) return;
+      if (p.series && p.series.trim()) {
+        var sn = p.series.trim();
+        items.forEach(function (q) {
+          if (q.series && q.series.trim() === sn && !seen.has(q.id)) {
+            out.push(q);
+            seen.add(q.id);
+          }
+        });
+      } else {
+        out.push(p);
+        seen.add(p.id);
+      }
+    });
+    return out;
+  }
+
+  var ordered = sorted;
+  if (v.name === "group" && v.groupId && !searchQuery) {
+    var g = v.groupId !== "_ungrouped" ? getGroup(v.groupId) : null;
+    var hasAnyCharBind =
+      !!g &&
+      sorted.some(function (p) {
+        return p.character && isLocalCharKey(p.character);
+      });
+    var usingPartitioned =
+      hasAnyCharBind &&
+      filterState.includeTags.length === 0 &&
+      filterState.excludeTags.length === 0 &&
+      !filterState.onlyCurrentChar;
+    if (usingPartitioned) {
+      var general = sorted.filter(function (p) {
+        return !p.character;
+      });
+      var byChar = {};
+      sorted.forEach(function (p) {
+        if (p.character) {
+          if (!byChar[p.character]) byChar[p.character] = [];
+          byChar[p.character].push(p);
+        }
+      });
+      var orderedKeys = [];
+      var curKeyForOrder = getCurrentCharKeySafe();
+      var userOrder = g ? getCharDisplayOrder(g) : [];
+      var hasUserOrder =
+        g && Array.isArray(g.charDisplayOrder) && g.charDisplayOrder.length > 0;
+      if (!hasUserOrder && curKeyForOrder && byChar[curKeyForOrder]) {
+        orderedKeys.push(curKeyForOrder);
+      }
+      userOrder.forEach(function (k) {
+        if (orderedKeys.indexOf(k) < 0 && byChar[k]) orderedKeys.push(k);
+      });
+      Object.keys(byChar).forEach(function (k) {
+        if (orderedKeys.indexOf(k) < 0) orderedKeys.push(k);
+      });
+      var visual = [];
+      _groupBySeriesVisual(general).forEach(function (p) {
+        visual.push(p);
+      });
+      orderedKeys.forEach(function (k) {
+        _groupBySeriesVisual(byChar[k] || []).forEach(function (p) {
+          visual.push(p);
+        });
+      });
+      ordered = visual;
+    } else {
+      ordered = _groupBySeriesVisual(sorted);
+    }
+  } else if (v.name === "character" && !searchQuery) {
+    ordered = _groupBySeriesVisual(sorted);
+  } else if (
+    v.name === "list" &&
+    filterState.groupId &&
+    filterState.groupId !== "_ungrouped" &&
+    !searchQuery
+  ) {
+    ordered = _groupBySeriesVisual(sorted);
+  }
+
+  var result = ordered.map(function (p) {
+    return p.id;
+  });
+  _visIdsCacheKey = cacheKey;
+  _visIdsCache = result;
+  return result;
+}
+
+function autoCollapsePanel() {
+  const $panel = $("#" + PANEL_ID);
+  if ($panel.length && !$panel.hasClass("ms-collapsed")) {
+    $panel.addClass("ms-collapsed");
+    data.settings.collapsed = true;
+    $panel
+      .find("#ms-btn-collapse i")
+      .attr("class", "fa-solid fa-window-maximize");
+    saveData();
+  }
+}
+function _setupInjectLock() {
+  _skipAllInjectForNextGeneration = true;
+  if (window._msInjectLockTimer) clearTimeout(window._msInjectLockTimer);
+  window._msInjectLockTimer = setTimeout(function () {
+    if (_skipAllInjectForNextGeneration) {
+      _skipAllInjectForNextGeneration = false;
+      console.warn("[小剧场] 注入锁超时自动解除");
+    }
+  }, 30000);
+}
+
+function _clearInjectLock() {
+  _skipAllInjectForNextGeneration = false;
+  if (window._msInjectLockTimer) {
+    clearTimeout(window._msInjectLockTimer);
+    window._msInjectLockTimer = null;
+  }
+}
 
   function sendToInput(id) {
     const p = getPrompt(id);
@@ -4134,1109 +4194,1132 @@ function _buildIPGroupFromImport(icg) {
     return { capture, scheduleCapture, undo, redo, getState, setState };
   }
 
-  function buildExportPayload(
-    exportPrompts,
-    includeGroups,
-    includeTags,
-    includeHistory,
-    includeCharacter,
-    includeCharGroups,
-  ) {
-    const gidSet = new Set(exportPrompts.map((p) => p.groupId).filter(Boolean));
-    const exportGroups = includeGroups
-      ? data.groups.filter((g) => gidSet.has(g.id))
-      : [];
-    const tagIds = new Set();
-    exportPrompts.forEach((p) =>
-      (p.tags || []).forEach((tid) => tagIds.add(tid)),
-    );
-    const exportTags = includeTags
-      ? data.settings.definedTags.filter((t) => tagIds.has(t.id))
-      : [];
-    const finalPrompts = exportPrompts.map((p) => {
-      const cp = { ...p };
-      if (!includeHistory) delete cp.history;
-      if (!includeCharacter) {
-        cp.character = "";
-        cp.usageByCharacter = {};
-      } else if (cp.character) {
-        cp.character_name = getCharDisplayName(cp.character);
-      }
-      cp.pinned = false;
-      cp.starred = false;
-      cp.lastUsedAt = null;
-      cp.usageCount = 0;
-      delete cp._lastSubFingerprint;
-      return cp;
+function buildExportPayload(
+  exportPrompts,
+  includeGroups,
+  includeTags,
+  includeHistory,
+  includeCharacter,
+  includeCharGroups,
+) {
+  const gidSet = new Set(exportPrompts.map((p) => p.groupId).filter(Boolean));
+  const exportGroups = includeGroups
+    ? data.groups.filter((g) => gidSet.has(g.id))
+    : [];
+  const tagIds = new Set();
+  exportPrompts.forEach((p) =>
+    (p.tags || []).forEach((tid) => tagIds.add(tid)),
+  );
+  const exportTags = includeTags
+    ? data.settings.definedTags.filter((t) => tagIds.has(t.id))
+    : [];
+  const finalPrompts = exportPrompts.map((p) => {
+    const cp = { ...p };
+    if (!includeHistory) delete cp.history;
+    if (!includeCharacter) {
+      cp.character = "";
+      cp.usageByCharacter = {};
+    } else if (cp.character) {
+      cp.character_name = getCharDisplayName(cp.character);
+    }
+    cp.pinned = false;
+    cp.starred = false;
+    cp.lastUsedAt = null;
+    cp.usageCount = 0;
+    delete cp._lastSubFingerprint;
+    return cp;
+  });
+  var exportCharGroups = [];
+  if (includeCharGroups && includeCharacter) {
+    var involvedKeys = new Set();
+    exportPrompts.forEach(function (p) {
+      if (p.character) involvedKeys.add(p.character);
     });
-    var exportCharGroups = [];
-    if (includeCharGroups && includeCharacter) {
-      var involvedKeys = new Set();
-      exportPrompts.forEach(function (p) {
-        if (p.character) involvedKeys.add(p.character);
+    getIPGroups().forEach(function (cg) {
+      var matchedKeys = (cg.charKeys || []).filter(function (k) {
+        return involvedKeys.has(k);
       });
-      getIPGroups().forEach(function (cg) {
-        var matchedKeys = (cg.charKeys || []).filter(function (k) {
-          return involvedKeys.has(k);
-        });
-        if (matchedKeys.length > 0) {
-          exportCharGroups.push({
-            id: cg.id,
-            name: cg.name,
-            color: cg.color,
-            note: cg.note || "",
-            defaultAuthor: cg.defaultAuthor || "",
-            stagePrefix: cg.stagePrefix || "",
-            multiStagePrefix: cg.multiStagePrefix || "",
-            iconMode: cg.iconMode || "group",
-            iconUrl: cg.iconUrl || "",
-            iconCharKey: cg.iconCharKey || "",
-            charKeys: matchedKeys,
-            charDisplayOrder: Array.isArray(cg.charDisplayOrder)
-              ? cg.charDisplayOrder.filter(function (k) {
-                  return matchedKeys.indexOf(k) >= 0;
-                })
-              : [],
-            multiPrefixEnabled: cg.multiPrefixEnabled === true,
-            prefixTemplates: Array.isArray(cg.prefixTemplates)
-              ? JSON.parse(JSON.stringify(cg.prefixTemplates))
-              : [],
-            prefixAssignments:
-              cg.prefixAssignments && typeof cg.prefixAssignments === "object"
-                ? Object.assign({}, cg.prefixAssignments)
-                : {},
-          });
-        }
-      });
-    }
-    var exportBdMessages = {};
-    var exportBdDates = {};
-    if (includeCharacter) {
-      var involvedKeys = new Set();
-      exportPrompts.forEach(function (p) {
-        if (p.character) involvedKeys.add(p.character);
-      });
-      if (includeCharGroups) {
-        exportCharGroups.forEach(function (cg) {
-          (cg.charKeys || []).forEach(function (k) {
-            involvedKeys.add(k);
-          });
-        });
-      }
-      involvedKeys.forEach(function (k) {
-        if (data.settings.charBirthdayMessages) {
-          var mm = data.settings.charBirthdayMessages[k];
-          if (mm && mm.versions) {
-            var hasAny = Object.keys(mm.versions).some(function (y) {
-              var v = mm.versions[y];
-              return v && (v.message || "").trim();
-            });
-            if (hasAny) exportBdMessages[k] = mm;
-          } else if (mm && (mm.message || "").trim()) {
-            exportBdMessages[k] = {
-              versions: {
-                default: {
-                  message: mm.message || "",
-                  authorName: mm.authorName || "",
-                  contentType: mm.contentType || "text",
-                  updatedAt: mm.updatedAt || 0,
-                  isOwn: mm.isOwn === true,
-                  year: "default",
-                },
-              },
-            };
-          }
-        }
-        if (data.settings.charBirthdays && data.settings.charBirthdays[k]) {
-          exportBdDates[k] = data.settings.charBirthdays[k];
-        }
-      });
-    }
-    return {
-      _miniStage: true,
-      version: 3,
-      exportedAt: new Date().toISOString(),
-      groups: exportGroups,
-      prompts: finalPrompts,
-      tags: exportTags,
-      charGroups: exportCharGroups,
-      charBirthdayMessages: exportBdMessages,
-      charBirthdays: exportBdDates,
-    };
-  }
-
-  function downloadJSON(obj, filename) {
-    const json = JSON.stringify(obj, null, 2);
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    let targetDoc = document;
-    try {
-      if (
-        window.parent &&
-        window.parent.document &&
-        window.parent.document.body
-      ) {
-        targetDoc = window.parent.document;
-      }
-    } catch (e) {}
-    const a = targetDoc.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.style.cssText =
-      "position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none;";
-    targetDoc.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      try {
-        targetDoc.body.removeChild(a);
-      } catch (e) {}
-      URL.revokeObjectURL(url);
-    }, 1000);
-  }
-
-  function doExportSingle(pr) {
-    navigateTo({ name: "export-single-options", promptId: pr.id });
-  }
-
-  function doExportGroup(groupId) {
-    const g = getGroup(groupId);
-    const prompts = getPromptsInGroup(groupId);
-    if (prompts.length === 0) {
-      toast("warning", "该分组没有剧场");
-      return;
-    }
-    navigateTo({
-      name: "export-group-options",
-      groupId,
-      groupName: g ? g.name : "未知",
-    });
-  }
-
-  function doImport(file) {
-    const reader = new FileReader();
-    reader.onload = function (e) {
-      try {
-        const imported = JSON.parse(e.target.result);
-        if (!imported.prompts && !imported.groups)
-          throw new Error("无效的小剧场数据");
-        navigateTo({
-          name: "import-confirm",
-          importedGroups: imported.groups || [],
-          importedPrompts: imported.prompts || [],
-          importedTags: imported.tags || [],
-          importedCharGroups: imported.charGroups || [],
-          importedBdMessages: imported.charBirthdayMessages || {},
-          importedBdDates: imported.charBirthdays || {},
-        });
-      } catch (err) {
-        toast("error", "文件解析失败: " + err.message);
-      }
-    };
-    reader.readAsText(file);
-  }
-
-  function executeImport(
-    mode,
-    ig,
-    ip,
-    itags,
-    useGroups,
-    useTags,
-    targetGroupId,
-    icgs,
-    useCharGroups,
-    ibdmsgs,
-    ibddates,
-  ) {
-    icgs = icgs || [];
-    ibdmsgs = ibdmsgs || {};
-    ibddates = ibddates || {};
-    var _importNameMap = _buildLocalNameIndex();
-    var importBdDateConflicts = [];
-    var importBdMsgConflicts = [];
-    ip.forEach(function (p) {
-      _rebindPromptChar(p, _importNameMap);
-    });
-    if (icgs && icgs.length > 0) {
-      icgs.forEach(function (icg) {
-        if (!Array.isArray(icg.charKeys)) return;
-        icg.charKeys = icg.charKeys.map(function (k) {
-          return _rebindLostKeyByName(k, _importNameMap);
-        });
-      });
-    }
-    function applyImportCharGroups(cleanFirst) {
-      if (!useCharGroups || icgs.length === 0) return;
-      if (cleanFirst) {
-        data.groups.forEach(function (gg) {
-          if (Array.isArray(gg.charKeys)) gg.charKeys = [];
-        });
-      }
-      icgs.forEach(function (icg) {
-        if (!icg.name) return;
-        var importKeys = Array.isArray(icg.charKeys)
-          ? icg.charKeys.filter(function (k, idx, arr) {
-              return k && arr.indexOf(k) === idx;
-            })
-          : [];
-        if (importKeys.length === 0) return;
-        var existing = data.groups.find(function (gg) {
-          return gg.name === icg.name;
-        });
-        if (existing) {
-          if (!Array.isArray(existing.charKeys)) existing.charKeys = [];
-          importKeys.forEach(function (k) {
-            data.groups.forEach(function (other) {
-              if (other === existing) return;
-              if (!Array.isArray(other.charKeys)) return;
-              var oi = other.charKeys.indexOf(k);
-              if (oi >= 0) other.charKeys.splice(oi, 1);
-            });
-            if (existing.charKeys.indexOf(k) < 0) existing.charKeys.push(k);
-          });
-          if (!existing.stagePrefix && icg.stagePrefix)
-            existing.stagePrefix = icg.stagePrefix;
-          if (!existing.multiStagePrefix && icg.multiStagePrefix)
-            existing.multiStagePrefix = icg.multiStagePrefix;
-          if (mode !== "append") {
-            if (icg.color !== undefined) existing.color = icg.color;
-            if (icg.note !== undefined) existing.note = icg.note;
-            if (icg.defaultAuthor !== undefined)
-              existing.defaultAuthor = icg.defaultAuthor;
-            if (icg.iconMode !== undefined) existing.iconMode = icg.iconMode;
-            if (icg.iconUrl !== undefined) existing.iconUrl = icg.iconUrl;
-            if (icg.iconCharKey !== undefined)
-              existing.iconCharKey = icg.iconCharKey;
-            if (Array.isArray(icg.charDisplayOrder)) {
-              existing.charDisplayOrder = icg.charDisplayOrder.slice();
-            }
-            if (icg.multiPrefixEnabled !== undefined)
-              existing.multiPrefixEnabled = icg.multiPrefixEnabled === true;
-            if (Array.isArray(icg.prefixTemplates))
-              existing.prefixTemplates = JSON.parse(
-                JSON.stringify(icg.prefixTemplates),
-              );
-            if (
-              icg.prefixAssignments &&
-              typeof icg.prefixAssignments === "object"
-            )
-              existing.prefixAssignments = Object.assign(
-                {},
-                icg.prefixAssignments,
-              );
-          } else {
-            if (
-              Array.isArray(icg.charDisplayOrder) &&
-              icg.charDisplayOrder.length > 0
-            ) {
-              if (!Array.isArray(existing.charDisplayOrder))
-                existing.charDisplayOrder = [];
-              icg.charDisplayOrder.forEach(function (k) {
-                if (existing.charDisplayOrder.indexOf(k) < 0)
-                  existing.charDisplayOrder.push(k);
-              });
-            }
-          }
-        } else {
-          var newG = _buildIPGroupFromImport(icg);
-          importKeys.forEach(function (k) {
-            data.groups.forEach(function (other) {
-              if (!Array.isArray(other.charKeys)) return;
-              var oi = other.charKeys.indexOf(k);
-              if (oi >= 0) other.charKeys.splice(oi, 1);
-            });
-            if (newG.charKeys.indexOf(k) < 0) newG.charKeys.push(k);
-          });
-          data.groups.push(newG);
-        }
-      });
-    }
-    let importMsg = "导入完成";
-    if (mode === "replace") {
-      var _replaceKeys = new Set();
-      ip.forEach(function (p) {
-        if (p.character) _replaceKeys.add(p.character);
-      });
-      (icgs || []).forEach(function (icg) {
-        (icg.charKeys || []).forEach(function (k) {
-          _replaceKeys.add(k);
-        });
-      });
-      Object.keys(ibdmsgs || {}).forEach(function (k) {
-        _replaceKeys.add(k);
-      });
-      Object.keys(ibddates || {}).forEach(function (k) {
-        _replaceKeys.add(k);
-      });
-      _replaceKeys.forEach(function (k) {
-        if (data.settings.charBirthdays) delete data.settings.charBirthdays[k];
-        if (data.settings.charBirthdayMessages)
-          delete data.settings.charBirthdayMessages[k];
-        if (data.settings.ownBirthdays) delete data.settings.ownBirthdays[k];
-        if (data.settings.unlockedBirthdays)
-          delete data.settings.unlockedBirthdays[k];
-        if (data.settings.dismissedBirthdays)
-          delete data.settings.dismissedBirthdays[k];
-      });
-      const replaceTagIdMap = {};
-      if (useTags && itags.length) {
-        var _impTagNames = new Set(
-          itags.map(function (t) {
-            return t.name;
-          }),
-        );
-        var _removedTagIds = new Set();
-        data.settings.definedTags.forEach(function (t) {
-          if (_impTagNames.has(t.name)) _removedTagIds.add(t.id);
-        });
-        data.settings.definedTags = data.settings.definedTags.filter(
-          function (t) {
-            return !_impTagNames.has(t.name);
-          },
-        );
-        if (_removedTagIds.size > 0) {
-          data.prompts.forEach(function (p) {
-            if (Array.isArray(p.tags)) {
-              p.tags = p.tags.filter(function (tid) {
-                return !_removedTagIds.has(tid);
-              });
-            }
-          });
-        }
-        itags.forEach(function (t) {
-          var nt = Object.assign({}, t, { id: t.id || uid() });
-          data.settings.definedTags.push(nt);
-          replaceTagIdMap[t.id] = nt.id;
-        });
-      }
-      var replaceGidMap = {};
-      var replacedLocalGids = new Set();
-      if (useGroups && ig.length > 0) {
-        ig.forEach(function (impG) {
-          var ex = data.groups.find(function (g) {
-            return g.name === impG.name;
-          });
-          if (ex) {
-            replacedLocalGids.add(ex.id);
-            Object.assign(ex, impG, { id: ex.id });
-            replaceGidMap[impG.id] = ex.id;
-          } else {
-            var newG = Object.assign({}, impG, { id: uid() });
-            data.groups.push(newG);
-            replaceGidMap[impG.id] = newG.id;
-          }
-        });
-      }
-      if (useGroups && replacedLocalGids.size > 0) {
-        data.prompts = data.prompts.filter(function (p) {
-          return !replacedLocalGids.has(p.groupId);
-        });
-      } else if (!useGroups) {
-        var _effectiveTarget = targetGroupId || null;
-        data.prompts = data.prompts.filter(function (p) {
-          var _gid = p.groupId && getGroup(p.groupId) ? p.groupId : null;
-          return _gid !== _effectiveTarget;
-        });
-      }
-      data.subscriptions.forEach(function (s) {
-        if (
-          s.targetGroupId &&
-          !data.groups.find(function (g) {
-            return g.id === s.targetGroupId;
-          })
-        ) {
-          s.targetGroupId = null;
-        }
-      });
-      ip.forEach(function (p) {
-        var np = Object.assign({}, p, {
-          id: p.id || uid(),
-          sourceId: p.sourceId || p.id || null,
-          tags: useTags
-            ? (p.tags || []).map(function (tid) {
-                return replaceTagIdMap[tid] || tid;
+      if (matchedKeys.length > 0) {
+        exportCharGroups.push({
+          id: cg.id,
+          name: cg.name,
+          color: cg.color,
+          note: cg.note || "",
+          defaultAuthor: cg.defaultAuthor || "",
+          stagePrefix: cg.stagePrefix || "",
+          multiStagePrefix: cg.multiStagePrefix || "",
+          iconMode: cg.iconMode || "group",
+          iconUrl: cg.iconUrl || "",
+          iconCharKey: cg.iconCharKey || "",
+          charKeys: matchedKeys,
+          charDisplayOrder: Array.isArray(cg.charDisplayOrder)
+            ? cg.charDisplayOrder.filter(function (k) {
+                return matchedKeys.indexOf(k) >= 0;
               })
             : [],
-          author: p.author || "",
-          pinned: p.pinned || false,
-          usageCount: p.usageCount || 0,
-          history: p.history || [],
+          multiPrefixEnabled: cg.multiPrefixEnabled === true,
+          prefixTemplates: Array.isArray(cg.prefixTemplates)
+            ? JSON.parse(JSON.stringify(cg.prefixTemplates))
+            : [],
+          prefixAssignments:
+            cg.prefixAssignments && typeof cg.prefixAssignments === "object"
+              ? Object.assign({}, cg.prefixAssignments)
+              : {},
         });
-        if (np.character && !isLocalCharKey(np.character)) {
-          np.usageByCharacter = {};
+      }
+    });
+  }
+  var exportBdMessages = {};
+  var exportBdDates = {};
+  if (includeCharacter) {
+    var involvedKeys = new Set();
+    exportPrompts.forEach(function (p) {
+      if (p.character) involvedKeys.add(p.character);
+    });
+    if (includeCharGroups) {
+      exportCharGroups.forEach(function (cg) {
+        (cg.charKeys || []).forEach(function (k) {
+          involvedKeys.add(k);
+        });
+      });
+    }
+    involvedKeys.forEach(function (k) {
+      if (data.settings.charBirthdayMessages) {
+        var mm = data.settings.charBirthdayMessages[k];
+        if (mm && mm.versions) {
+          var hasAny = Object.keys(mm.versions).some(function (y) {
+            var v = mm.versions[y];
+            return v && (v.message || "").trim();
+          });
+          if (hasAny) exportBdMessages[k] = mm;
+        } else if (mm && (mm.message || "").trim()) {
+          exportBdMessages[k] = {
+            versions: {
+              default: {
+                message: mm.message || "",
+                authorName: mm.authorName || "",
+                contentType: mm.contentType || "text",
+                updatedAt: mm.updatedAt || 0,
+                isOwn: mm.isOwn === true,
+                year: "default",
+              },
+            },
+          };
         }
-        np.fingerprint = contentFingerprint(np);
-        if (useGroups) {
-          np.groupId = replaceGidMap[p.groupId] || null;
-        } else {
-          np.groupId = targetGroupId || null;
-        }
-        data.prompts.push(np);
+      }
+      if (data.settings.charBirthdays && data.settings.charBirthdays[k]) {
+        exportBdDates[k] = data.settings.charBirthdays[k];
+      }
+    });
+  }
+  return {
+    _miniStage: true,
+    version: 3,
+    exportedAt: new Date().toISOString(),
+    groups: exportGroups,
+    prompts: finalPrompts,
+    tags: exportTags,
+    charGroups: exportCharGroups,
+    charBirthdayMessages: exportBdMessages,
+    charBirthdays: exportBdDates,
+  };
+}
+
+function downloadJSON(obj, filename) {
+  const json = JSON.stringify(obj, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  let targetDoc = document;
+  try {
+    if (
+      window.parent &&
+      window.parent.document &&
+      window.parent.document.body
+    ) {
+      targetDoc = window.parent.document;
+    }
+  } catch (e) {}
+  const a = targetDoc.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.cssText =
+    "position:fixed;left:-9999px;top:-9999px;opacity:0;pointer-events:none;";
+  targetDoc.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    try {
+      targetDoc.body.removeChild(a);
+    } catch (e) {}
+    URL.revokeObjectURL(url);
+  }, 1000);
+}
+
+function doExportSingle(pr) {
+  navigateTo({ name: "export-single-options", promptId: pr.id });
+}
+
+function doExportGroup(groupId) {
+  const g = getGroup(groupId);
+  const prompts = getPromptsInGroup(groupId);
+  if (prompts.length === 0) {
+    toast("warning", "该分组没有剧场");
+    return;
+  }
+  navigateTo({
+    name: "export-group-options",
+    groupId,
+    groupName: g ? g.name : "未知",
+  });
+}
+
+function doImport(file) {
+  const reader = new FileReader();
+  reader.onload = function (e) {
+    try {
+      const imported = JSON.parse(e.target.result);
+      if (!imported.prompts && !imported.groups)
+        throw new Error("无效的小剧场数据");
+      navigateTo({
+        name: "import-confirm",
+        importedGroups: imported.groups || [],
+        importedPrompts: imported.prompts || [],
+        importedTags: imported.tags || [],
+        importedCharGroups: imported.charGroups || [],
+        importedBdMessages: imported.charBirthdayMessages || {},
+        importedBdDates: imported.charBirthdays || {},
       });
-    } else if (mode === "merge") {
-      const sourceIdIndex = {};
-      data.prompts.forEach((p) => {
-        if (p.sourceId && !sourceIdIndex[p.sourceId])
-          sourceIdIndex[p.sourceId] = p;
+    } catch (err) {
+      toast("error", "文件解析失败: " + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+function executeImport(
+  mode,
+  ig,
+  ip,
+  itags,
+  useGroups,
+  useTags,
+  targetGroupId,
+  icgs,
+  useCharGroups,
+  ibdmsgs,
+  ibddates,
+) {
+  icgs = icgs || [];
+  ibdmsgs = ibdmsgs || {};
+  ibddates = ibddates || {};
+  var _importNameMap = _buildLocalNameIndex();
+  var importBdDateConflicts = [];
+  var importBdMsgConflicts = [];
+  ip.forEach(function (p) {
+    _rebindPromptChar(p, _importNameMap);
+  });
+  if (icgs && icgs.length > 0) {
+    icgs.forEach(function (icg) {
+      if (!Array.isArray(icg.charKeys)) return;
+      icg.charKeys = icg.charKeys.map(function (k) {
+        return _rebindLostKeyByName(k, _importNameMap);
       });
-      data.prompts.forEach((p) => {
-        if (!sourceIdIndex[p.id]) sourceIdIndex[p.id] = p;
+    });
+  }
+  function applyImportCharGroups(cleanFirst) {
+    if (!useCharGroups || icgs.length === 0) return;
+    if (cleanFirst) {
+      data.groups.forEach(function (gg) {
+        if (Array.isArray(gg.charKeys)) gg.charKeys = [];
       });
-      const existFingerprints = new Set(
-        data.prompts.map((p) => {
-          if (!p.fingerprint) {
-            p.fingerprint = contentFingerprint(p);
+    }
+    icgs.forEach(function (icg) {
+      if (!icg.name) return;
+      var importKeys = Array.isArray(icg.charKeys)
+        ? icg.charKeys.filter(function (k, idx, arr) {
+            return k && arr.indexOf(k) === idx;
+          })
+        : [];
+      if (importKeys.length === 0) return;
+      var existing = data.groups.find(function (gg) {
+        return gg.name === icg.name;
+      });
+      if (existing) {
+        if (!Array.isArray(existing.charKeys)) existing.charKeys = [];
+        importKeys.forEach(function (k) {
+          data.groups.forEach(function (other) {
+            if (other === existing) return;
+            if (!Array.isArray(other.charKeys)) return;
+            var oi = other.charKeys.indexOf(k);
+            if (oi >= 0) other.charKeys.splice(oi, 1);
+          });
+          if (existing.charKeys.indexOf(k) < 0) existing.charKeys.push(k);
+        });
+        if (!existing.stagePrefix && icg.stagePrefix)
+          existing.stagePrefix = icg.stagePrefix;
+        if (!existing.multiStagePrefix && icg.multiStagePrefix)
+          existing.multiStagePrefix = icg.multiStagePrefix;
+        if (mode !== "append") {
+          if (icg.color !== undefined) existing.color = icg.color;
+          if (icg.note !== undefined) existing.note = icg.note;
+          if (icg.defaultAuthor !== undefined)
+            existing.defaultAuthor = icg.defaultAuthor;
+          if (icg.iconMode !== undefined) existing.iconMode = icg.iconMode;
+          if (icg.iconUrl !== undefined) existing.iconUrl = icg.iconUrl;
+          if (icg.iconCharKey !== undefined)
+            existing.iconCharKey = icg.iconCharKey;
+          if (Array.isArray(icg.charDisplayOrder)) {
+            existing.charDisplayOrder = icg.charDisplayOrder.slice();
           }
-          return p.fingerprint;
+          if (icg.multiPrefixEnabled !== undefined)
+            existing.multiPrefixEnabled = icg.multiPrefixEnabled === true;
+          if (Array.isArray(icg.prefixTemplates))
+            existing.prefixTemplates = JSON.parse(
+              JSON.stringify(icg.prefixTemplates),
+            );
+          if (
+            icg.prefixAssignments &&
+            typeof icg.prefixAssignments === "object"
+          )
+            existing.prefixAssignments = Object.assign(
+              {},
+              icg.prefixAssignments,
+            );
+        } else {
+          if (
+            Array.isArray(icg.charDisplayOrder) &&
+            icg.charDisplayOrder.length > 0
+          ) {
+            if (!Array.isArray(existing.charDisplayOrder))
+              existing.charDisplayOrder = [];
+            icg.charDisplayOrder.forEach(function (k) {
+              if (existing.charDisplayOrder.indexOf(k) < 0)
+                existing.charDisplayOrder.push(k);
+            });
+          }
+        }
+      } else {
+        var newG = _buildIPGroupFromImport(icg);
+        importKeys.forEach(function (k) {
+          data.groups.forEach(function (other) {
+            if (!Array.isArray(other.charKeys)) return;
+            var oi = other.charKeys.indexOf(k);
+            if (oi >= 0) other.charKeys.splice(oi, 1);
+          });
+          if (newG.charKeys.indexOf(k) < 0) newG.charKeys.push(k);
+        });
+        data.groups.push(newG);
+      }
+    });
+  }
+  let importMsg = "导入完成";
+  if (mode === "replace") {
+    var _replaceKeys = new Set();
+    ip.forEach(function (p) {
+      if (p.character) _replaceKeys.add(p.character);
+    });
+    (icgs || []).forEach(function (icg) {
+      (icg.charKeys || []).forEach(function (k) {
+        _replaceKeys.add(k);
+      });
+    });
+    Object.keys(ibdmsgs || {}).forEach(function (k) {
+      _replaceKeys.add(k);
+    });
+    Object.keys(ibddates || {}).forEach(function (k) {
+      _replaceKeys.add(k);
+    });
+    _replaceKeys.forEach(function (k) {
+      if (data.settings.charBirthdays) delete data.settings.charBirthdays[k];
+      if (data.settings.charBirthdayMessages)
+        delete data.settings.charBirthdayMessages[k];
+      if (data.settings.ownBirthdays) delete data.settings.ownBirthdays[k];
+      if (data.settings.unlockedBirthdays)
+        delete data.settings.unlockedBirthdays[k];
+      if (data.settings.dismissedBirthdays)
+        delete data.settings.dismissedBirthdays[k];
+    });
+    const replaceTagIdMap = {};
+    if (useTags && itags.length) {
+      var _impTagNames = new Set(
+        itags.map(function (t) {
+          return t.name;
         }),
       );
-      const gidMap = {};
-      if (useGroups) {
-        ig.forEach((g) => {
-          const ex = data.groups.find((eg) => eg.name === g.name);
-          if (ex) gidMap[g.id] = ex.id;
-          else {
-            const ng = { ...g, id: uid() };
-            data.groups.push(ng);
-            gidMap[g.id] = ng.id;
-          }
-        });
-      }
-      const tagIdMap = {};
-      if (useTags && itags.length) {
-        itags.forEach((t) => {
-          const ex = data.settings.definedTags.find((et) => et.name === t.name);
-          if (ex) tagIdMap[t.id] = ex.id;
-          else {
-            const nt = { ...t, id: uid() };
-            data.settings.definedTags.push(nt);
-            tagIdMap[t.id] = nt.id;
-          }
-        });
-      }
-      let addedCount = 0,
-        updatedCount = 0,
-        skippedCount = 0;
-      ip.forEach((p) => {
-        const importSourceId = p.sourceId || p.id;
-        const fp = contentFingerprint(p);
-        const existingBySource = sourceIdIndex[importSourceId];
-        if (existingBySource) {
-          const existingFp =
-            existingBySource.fingerprint ||
-            contentFingerprint(existingBySource);
-          if (fp === existingFp) {
-            skippedCount++;
-            return;
-          }
-          existingBySource.title = p.title || existingBySource.title;
-          existingBySource.content =
-            p.content !== undefined ? p.content : existingBySource.content;
-          existingBySource.author = p.author || existingBySource.author;
-          existingBySource.series =
-            p.series !== undefined ? p.series : existingBySource.series;
-          existingBySource.fingerprint = fp;
-          existingBySource.updatedAt = Date.now();
-          if (useGroups && p.groupId)
-            existingBySource.groupId = gidMap[p.groupId] || p.groupId;
-          if (useTags && p.tags)
-            existingBySource.tags = p.tags.map((tid) => tagIdMap[tid] || tid);
-          updatedCount++;
-          return;
-        }
-        if (existFingerprints.has(fp)) {
-          skippedCount++;
-          return;
-        }
-        const np = {
-          ...p,
-          id: uid(),
-          sourceId: importSourceId,
-          author: p.author || "",
-          pinned: p.pinned || false,
-          fingerprint: fp,
-          usageCount: p.usageCount || 0,
-          history: p.history || [],
-        };
-        if (np.character && !isLocalCharKey(np.character)) {
-          np.usageByCharacter = {};
-        }
-        np.groupId = useGroups
-          ? gidMap[p.groupId] || p.groupId || null
-          : targetGroupId || null;
-        np.tags = useTags
-          ? (p.tags || []).map((tid) => tagIdMap[tid] || tid)
-          : [];
-        data.prompts.push(np);
-        existFingerprints.add(fp);
-        addedCount++;
+      var _removedTagIds = new Set();
+      data.settings.definedTags.forEach(function (t) {
+        if (_impTagNames.has(t.name)) _removedTagIds.add(t.id);
       });
-      const parts = [];
-      if (addedCount > 0) parts.push("新增 " + addedCount + " 条");
-      if (updatedCount > 0) parts.push("更新 " + updatedCount + " 条");
-      if (skippedCount > 0) parts.push("跳过 " + skippedCount + " 条");
-      importMsg =
-        "导入完成：" + (parts.length > 0 ? parts.join("，") : "无变化");
-    } else {
-      const gidMap = {};
+      data.settings.definedTags = data.settings.definedTags.filter(
+        function (t) {
+          return !_impTagNames.has(t.name);
+        },
+      );
+      if (_removedTagIds.size > 0) {
+        data.prompts.forEach(function (p) {
+          if (Array.isArray(p.tags)) {
+            p.tags = p.tags.filter(function (tid) {
+              return !_removedTagIds.has(tid);
+            });
+          }
+        });
+      }
+      itags.forEach(function (t) {
+        var nt = Object.assign({}, t, { id: t.id || uid() });
+        data.settings.definedTags.push(nt);
+        replaceTagIdMap[t.id] = nt.id;
+      });
+    }
+    var replaceGidMap = {};
+    var replacedLocalGids = new Set();
+    if (useGroups && ig.length > 0) {
+      ig.forEach(function (impG) {
+        var ex = data.groups.find(function (g) {
+          return g.name === impG.name;
+        });
+        if (ex) {
+          replacedLocalGids.add(ex.id);
+          Object.assign(ex, impG, { id: ex.id });
+          replaceGidMap[impG.id] = ex.id;
+        } else {
+          var newG = Object.assign({}, impG, { id: uid() });
+          data.groups.push(newG);
+          replaceGidMap[impG.id] = newG.id;
+        }
+      });
+    }
+    if (useGroups && replacedLocalGids.size > 0) {
+      data.prompts = data.prompts.filter(function (p) {
+        return !replacedLocalGids.has(p.groupId);
+      });
+    } else if (!useGroups) {
+      var _effectiveTarget = targetGroupId || null;
+      data.prompts = data.prompts.filter(function (p) {
+        var _gid = p.groupId && getGroup(p.groupId) ? p.groupId : null;
+        return _gid !== _effectiveTarget;
+      });
+    }
+    data.subscriptions.forEach(function (s) {
+      if (
+        s.targetGroupId &&
+        !data.groups.find(function (g) {
+          return g.id === s.targetGroupId;
+        })
+      ) {
+        s.targetGroupId = null;
+      }
+    });
+    ip.forEach(function (p) {
+      var np = Object.assign({}, p, {
+        id: p.id || uid(),
+        sourceId: p.sourceId || p.id || null,
+        tags: useTags
+          ? (p.tags || []).map(function (tid) {
+              return replaceTagIdMap[tid] || tid;
+            })
+          : [],
+        author: p.author || "",
+        pinned: p.pinned || false,
+        usageCount: p.usageCount || 0,
+        history: p.history || [],
+      });
+      if (np.character && !isLocalCharKey(np.character)) {
+        np.usageByCharacter = {};
+      }
+      np.fingerprint = contentFingerprint(np);
       if (useGroups) {
-        ig.forEach((g) => {
+        np.groupId = replaceGidMap[p.groupId] || null;
+      } else {
+        np.groupId = targetGroupId || null;
+      }
+      data.prompts.push(np);
+    });
+  } else if (mode === "merge") {
+    const sourceIdIndex = {};
+    data.prompts.forEach((p) => {
+      if (p.sourceId && !sourceIdIndex[p.sourceId])
+        sourceIdIndex[p.sourceId] = p;
+    });
+    data.prompts.forEach((p) => {
+      if (!sourceIdIndex[p.id]) sourceIdIndex[p.id] = p;
+    });
+    const existFingerprints = new Set(
+      data.prompts.map((p) => {
+        if (!p.fingerprint) {
+          p.fingerprint = contentFingerprint(p);
+        }
+        return p.fingerprint;
+      }),
+    );
+    const gidMap = {};
+    if (useGroups) {
+      ig.forEach((g) => {
+        const ex = data.groups.find((eg) => eg.name === g.name);
+        if (ex) gidMap[g.id] = ex.id;
+        else {
           const ng = { ...g, id: uid() };
           data.groups.push(ng);
           gidMap[g.id] = ng.id;
-        });
-      }
-      const tagIdMap = {};
-      if (useTags && itags.length) {
-        itags.forEach((t) => {
+        }
+      });
+    }
+    const tagIdMap = {};
+    if (useTags && itags.length) {
+      itags.forEach((t) => {
+        const ex = data.settings.definedTags.find((et) => et.name === t.name);
+        if (ex) tagIdMap[t.id] = ex.id;
+        else {
           const nt = { ...t, id: uid() };
           data.settings.definedTags.push(nt);
           tagIdMap[t.id] = nt.id;
-        });
-      }
-      ip.forEach((p) => {
-        const np = {
-          ...p,
-          id: uid(),
-          author: p.author || "",
-          pinned: p.pinned || false,
-          usageCount: p.usageCount || 0,
-          history: p.history || [],
-        };
-        if (np.character && !isLocalCharKey(np.character)) {
-          np.usageByCharacter = {};
-        }
-        np.fingerprint = contentFingerprint(np);
-        np.sourceId = p.sourceId || p.id || null;
-        np.groupId = useGroups
-          ? gidMap[p.groupId] || null
-          : targetGroupId || null;
-        np.tags = useTags
-          ? (p.tags || []).map((tid) => tagIdMap[tid] || tid)
-          : [];
-        data.prompts.push(np);
-      });
-    }
-    if (mode === "replace") applyImportCharGroups(true);
-    else applyImportCharGroups(false);
-    (function () {
-      var _expIdToLocal = {};
-      ip.forEach(function (p) {
-        var sid = p.sourceId || p.id;
-        var found = data.prompts.find(function (lp) {
-          return (sid && lp.sourceId === sid) || lp.id === p.id;
-        });
-        if (found) _expIdToLocal[p.id] = found.id;
-      });
-      function _remapAssign(localGroup, srcAssign) {
-        if (!localGroup || !srcAssign || typeof srcAssign !== "object") return;
-        if (!localGroup.prefixAssignments) localGroup.prefixAssignments = {};
-        Object.keys(srcAssign).forEach(function (oldPid) {
-          if (
-            localGroup.prefixAssignments[oldPid] !== undefined &&
-            !_expIdToLocal[oldPid]
-          ) {
-            delete localGroup.prefixAssignments[oldPid];
-          }
-          var newPid = _expIdToLocal[oldPid];
-          if (newPid) localGroup.prefixAssignments[newPid] = srcAssign[oldPid];
-        });
-      }
-      (ig || []).forEach(function (impG) {
-        if (!impG || !impG.prefixAssignments) return;
-        var localG = data.groups.find(function (g) {
-          return g.name === impG.name;
-        });
-        _remapAssign(localG, impG.prefixAssignments);
-      });
-      (icgs || []).forEach(function (icg) {
-        if (!icg || !icg.prefixAssignments) return;
-        var localG = data.groups.find(function (g) {
-          return g.name === icg.name;
-        });
-        _remapAssign(localG, icg.prefixAssignments);
-      });
-    })();
-    var bdMsgKeys = Object.keys(ibdmsgs);
-    if (bdMsgKeys.length > 0) {
-      if (mode === "replace") {
-        data.settings.charBirthdayMessages = {};
-      }
-      if (!data.settings.charBirthdayMessages)
-        data.settings.charBirthdayMessages = {};
-      bdMsgKeys.forEach(function (k) {
-        var rawImp = ibdmsgs[k];
-        if (!rawImp) return;
-        var impVersions;
-        if (rawImp.versions) {
-          impVersions = rawImp.versions;
-        } else if (rawImp.message !== undefined) {
-          impVersions = {
-            default: {
-              message: rawImp.message || "",
-              authorName: rawImp.authorName || "",
-              contentType: rawImp.contentType || "text",
-              updatedAt: rawImp.updatedAt || 0,
-              isOwn: false,
-              year: "default",
-            },
-          };
-        } else {
-          return;
-        }
-        var newKey = _rebindLostKeyByName(k, _importNameMap);
-        var existing = data.settings.charBirthdayMessages[newKey] || {
-          versions: {},
-        };
-        if (!existing.versions) existing.versions = {};
-        Object.keys(impVersions).forEach(function (year) {
-          var ivRaw = impVersions[year];
-          if (!ivRaw || !(ivRaw.message || "").trim()) return;
-          var iv = Object.assign({}, ivRaw, { isOwn: false, year: year });
-          var ev = existing.versions[year];
-          if (mode === "replace" || mode === "append" || !ev) {
-            existing.versions[year] = iv;
-          } else if (mode === "merge") {
-            if (ev.isOwn === true) {
-              if ((ev.message || "") !== (iv.message || "")) {
-                importBdMsgConflicts.push({
-                  charKey: newKey,
-                  year: year,
-                  localMsg: ev,
-                  incomingMsg: iv,
-                });
-              }
-              return;
-            }
-            var impTs = iv.updatedAt || 0;
-            var existTs = ev.updatedAt || 0;
-            if (impTs === 0 || impTs >= existTs) {
-              existing.versions[year] = iv;
-            }
-          }
-        });
-        if (Object.keys(existing.versions).length > 0) {
-          data.settings.charBirthdayMessages[newKey] = existing;
         }
       });
     }
-    var bdDateKeys = Object.keys(ibddates);
-    if (bdDateKeys.length > 0) {
-      if (mode === "replace") {
-        data.settings.charBirthdays = {};
-      }
-      if (!data.settings.charBirthdays) data.settings.charBirthdays = {};
-      if (!data.settings.ownBirthdays) data.settings.ownBirthdays = {};
-      bdDateKeys.forEach(function (k) {
-        var d = ibddates[k];
-        if (!d || !/^\d{2}-\d{2}$/.test(d)) return;
-        var newKey = _rebindLostKeyByName(k, _importNameMap);
-        if (mode === "merge" && data.settings.ownBirthdays[newKey] === true) {
-          var _localBdDate2 = data.settings.charBirthdays[newKey];
-          if (_localBdDate2 && _localBdDate2 !== d) {
-            importBdDateConflicts.push({
-              charKey: newKey,
-              localDate: _localBdDate2,
-              incomingDate: d,
-            });
-          }
+    let addedCount = 0,
+      updatedCount = 0,
+      skippedCount = 0;
+    ip.forEach((p) => {
+      const importSourceId = p.sourceId || p.id;
+      const fp = contentFingerprint(p);
+      const existingBySource = sourceIdIndex[importSourceId];
+      if (existingBySource) {
+        const existingFp =
+          existingBySource.fingerprint || contentFingerprint(existingBySource);
+        if (fp === existingFp) {
+          skippedCount++;
           return;
         }
+        existingBySource.title = p.title || existingBySource.title;
+        existingBySource.content =
+          p.content !== undefined ? p.content : existingBySource.content;
+        existingBySource.author = p.author || existingBySource.author;
+        existingBySource.series =
+          p.series !== undefined ? p.series : existingBySource.series;
+        existingBySource.fingerprint = fp;
+        existingBySource.updatedAt = Date.now();
+        if (useGroups && p.groupId)
+          existingBySource.groupId = gidMap[p.groupId] || p.groupId;
+        if (useTags && p.tags)
+          existingBySource.tags = p.tags.map((tid) => tagIdMap[tid] || tid);
+        updatedCount++;
+        return;
+      }
+      if (existFingerprints.has(fp)) {
+        skippedCount++;
+        return;
+      }
+      const np = {
+        ...p,
+        id: uid(),
+        sourceId: importSourceId,
+        author: p.author || "",
+        pinned: p.pinned || false,
+        fingerprint: fp,
+        usageCount: p.usageCount || 0,
+        history: p.history || [],
+      };
+      if (np.character && !isLocalCharKey(np.character)) {
+        np.usageByCharacter = {};
+      }
+      np.groupId = useGroups
+        ? gidMap[p.groupId] || p.groupId || null
+        : targetGroupId || null;
+      np.tags = useTags
+        ? (p.tags || []).map((tid) => tagIdMap[tid] || tid)
+        : [];
+      data.prompts.push(np);
+      existFingerprints.add(fp);
+      addedCount++;
+    });
+    const parts = [];
+    if (addedCount > 0) parts.push("新增 " + addedCount + " 条");
+    if (updatedCount > 0) parts.push("更新 " + updatedCount + " 条");
+    if (skippedCount > 0) parts.push("跳过 " + skippedCount + " 条");
+    importMsg = "导入完成：" + (parts.length > 0 ? parts.join("，") : "无变化");
+  } else {
+    const gidMap = {};
+    if (useGroups) {
+      ig.forEach((g) => {
+        const ng = { ...g, id: uid() };
+        data.groups.push(ng);
+        gidMap[g.id] = ng.id;
+      });
+    }
+    const tagIdMap = {};
+    if (useTags && itags.length) {
+      itags.forEach((t) => {
+        const nt = { ...t, id: uid() };
+        data.settings.definedTags.push(nt);
+        tagIdMap[t.id] = nt.id;
+      });
+    }
+    ip.forEach((p) => {
+      const np = {
+        ...p,
+        id: uid(),
+        author: p.author || "",
+        pinned: p.pinned || false,
+        usageCount: p.usageCount || 0,
+        history: p.history || [],
+      };
+      if (np.character && !isLocalCharKey(np.character)) {
+        np.usageByCharacter = {};
+      }
+      np.fingerprint = contentFingerprint(np);
+      np.sourceId = p.sourceId || p.id || null;
+      np.groupId = useGroups
+        ? gidMap[p.groupId] || null
+        : targetGroupId || null;
+      np.tags = useTags
+        ? (p.tags || []).map((tid) => tagIdMap[tid] || tid)
+        : [];
+      data.prompts.push(np);
+    });
+  }
+  if (mode === "replace") applyImportCharGroups(true);
+  else applyImportCharGroups(false);
+  (function () {
+    var _expIdToLocal = {};
+    ip.forEach(function (p) {
+      var sid = p.sourceId || p.id;
+      var found = data.prompts.find(function (lp) {
+        return (sid && lp.sourceId === sid) || lp.id === p.id;
+      });
+      if (found) _expIdToLocal[p.id] = found.id;
+    });
+    function _remapAssign(localGroup, srcAssign) {
+      if (!localGroup || !srcAssign || typeof srcAssign !== "object") return;
+      if (!localGroup.prefixAssignments) localGroup.prefixAssignments = {};
+      Object.keys(srcAssign).forEach(function (oldPid) {
         if (
-          mode === "replace" ||
-          mode === "append" ||
-          mode === "merge" ||
-          !data.settings.charBirthdays[newKey]
+          localGroup.prefixAssignments[oldPid] !== undefined &&
+          !_expIdToLocal[oldPid]
         ) {
-          data.settings.charBirthdays[newKey] = d;
-          if (data.settings.ownBirthdays[newKey]) {
-            delete data.settings.ownBirthdays[newKey];
-          }
+          delete localGroup.prefixAssignments[oldPid];
         }
+        var newPid = _expIdToLocal[oldPid];
+        if (newPid) localGroup.prefixAssignments[newPid] = srcAssign[oldPid];
       });
     }
-    _invalidateCharGroupCache();
-    saveData();
-    toast("success", importMsg);
-    navigateTo({ name: "list" }, true);
-    if (importBdDateConflicts.length > 0 || importBdMsgConflicts.length > 0) {
-      setTimeout(function () {
-        showBirthdayConflictDialog(importBdDateConflicts, importBdMsgConflicts);
-      }, 400);
-    }
-    setTimeout(function () {
-      try {
-        if (
-          typeof SillyTavern === "undefined" ||
-          !SillyTavern.characters ||
-          SillyTavern.characters.length === 0
-        ) {
-          return;
-        }
-        var lostKeys = new Set();
-        if (icgs && icgs.length > 0) {
-          icgs.forEach(function (icg) {
-            (icg.charKeys || []).forEach(function (k) {
-              if (k && !isLocalCharKey(k)) lostKeys.add(k);
-            });
-          });
-        }
-        if (lostKeys.size > 0) {
-          msConfirm(
-            "导入完成，但发现 " +
-              lostKeys.size +
-              " 个角色在本地找不到对应的卡（文件名不匹配）。\n\n" +
-              "是否前往「失联角色」页面，把它们重绑到你本地的角色卡？\n" +
-              "（不处理也可以，剧场内容不受影响，只是无法显示在「角色专属」分类下）",
-            { title: "检测到失联角色", type: "warning", okText: "去处理" },
-          ).then(function (ok) {
-            if (ok) navigateTo({ name: "lost-chars" });
-          });
-        }
-      } catch (e) {
-        console.warn("[小剧场] 失联角色检测失败", e);
-      }
-    }, 600);
-  }
-
-  function exitSelectMode() {
-    selectMode = false;
-    selectedIds.clear();
-    rangeSelectMode = false;
-    rangeSelectAnchor = null;
-    rangeSelectAnchorPids = [];
-  }
-
-  function exitFocusMode() {
-    const $panel = $("#" + PANEL_ID);
-    if (!$panel.hasClass("ms-focus-mode")) return;
-    const el = $panel[0];
-    $panel.removeClass("ms-focus-mode");
-    applyUICustomization();
-    const saved = $panel.data("ms-focus-saved-pos");
-    if (saved) {
-      if (saved.left) el.style.setProperty("left", saved.left, "important");
-      else el.style.removeProperty("left");
-      if (saved.top) el.style.setProperty("top", saved.top, "important");
-      else el.style.removeProperty("top");
-      if (saved.transform)
-        el.style.setProperty("transform", saved.transform, "important");
-      else el.style.removeProperty("transform");
-      data.settings.panelPos = saved.panelPos || null;
-      saveData();
-    } else {
-      el.style.removeProperty("left");
-      el.style.removeProperty("top");
-      el.style.removeProperty("transform");
-    }
-    $panel.removeData("ms-focus-saved-pos");
-  }
-
-  function updateInjectIndicator() {
-    var $p = $("#" + PANEL_ID);
-    if (!$p.length) return;
-    var $ind = $p.find("#ms-inject-indicator");
-    if (!data.settings.stageInjectEnabled) {
-      $ind.removeClass("visible").empty();
-      return;
-    }
-    var sids = data.settings.stageSelectedIds || [];
-    sids = sids.filter(function (sid) {
-      return getPrompt(sid);
-    });
-    if (sids.length !== (data.settings.stageSelectedIds || []).length) {
-      data.settings.stageSelectedIds = sids;
-      saveData();
-    }
-    if (sids.length > 0) {
-      var label =
-        sids.length === 1
-          ? esc(truncate(getPrompt(sids[0]).title, 16))
-          : "已选 " + sids.length + " 条";
-      $ind
-        .html(
-          '<i class="fa-solid fa-syringe"></i><span>' +
-            label +
-            '</span><i class="fa-solid fa-xmark ms-inject-clear-btn" title="清除所有注入选择" style="margin-left:6px;font-size:10px;opacity:0.6;cursor:pointer;padding:2px 4px;border-radius:3px;"></i>',
-        )
-        .addClass("visible");
-    } else if (
-      data.settings.randomInject &&
-      data.settings.randomInject.enabled
-    ) {
-      var poolCount = data.prompts.filter(function (p) {
-        return isInRandomPool(p);
-      }).length;
-      $ind
-        .html(
-          '<i class="fa-solid fa-dice"></i><span>随机 ' +
-            poolCount +
-            "条</span>",
-        )
-        .addClass("visible");
-    } else {
-      $ind.removeClass("visible").empty();
-    }
-  }
-  function isInRandomPool(p) {
-    var ri = data.settings.randomInject;
-    if (!ri) return true;
-    var effectiveGid =
-      p.groupId && getGroup(p.groupId) ? p.groupId : "_ungrouped";
-    if (ri.excludedGroupIds && ri.excludedGroupIds.indexOf(effectiveGid) >= 0)
-      return false;
-    if (p.character) {
-      var charG = getCharGroupOfChar(p.character);
-      if (
-        charG &&
-        ri.excludedGroupIds &&
-        ri.excludedGroupIds.indexOf(charG.id) >= 0
-      ) {
-        return false;
-      }
-    }
-    var sn = String(p.series || "").trim();
-    if (
-      sn &&
-      ri.excludedSeries &&
-      ri.excludedSeries.some(function (s) {
-        return s.groupId === effectiveGid && s.seriesName === sn;
-      })
-    )
-      return false;
-    if (ri.excludedPromptIds && ri.excludedPromptIds.indexOf(p.id) >= 0)
-      return false;
-    return true;
-  }
-  function stripOuterTagIfMatchesShell(text, shellTagName) {
-    if (!text || !shellTagName) return text;
-    var trimmed = text.replace(/^\s+|\s+$/g, "");
-    if (!trimmed) return text;
-    var openMatch = trimmed.match(/^<([A-Za-z_][\w-]*)\b[^>]*>/);
-    if (!openMatch) return text;
-    if (openMatch[1].toLowerCase() !== shellTagName.toLowerCase()) return text;
-    var tagName = openMatch[1];
-    var closeRe = new RegExp("</\\s*" + tagName + "\\s*>$", "i");
-    var closeMatch = trimmed.match(closeRe);
-    if (!closeMatch) return text;
-    var inner = trimmed.substring(
-      openMatch[0].length,
-      trimmed.length - closeMatch[0].length,
-    );
-    var openTagRe = new RegExp("<" + tagName + "\\b", "gi");
-    var closeTagRe = new RegExp("</" + tagName + "\\b", "gi");
-    var openCount = (inner.match(openTagRe) || []).length;
-    var closeCount = (inner.match(closeTagRe) || []).length;
-    if (openCount !== closeCount) return text;
-    return inner.replace(/^\n+/, "").replace(/\n+$/, "");
-  }
-
-  function buildStageContent(stagePrompts) {
-    if (stagePrompts.length === 0) return "";
-    if (stagePrompts.length === 1) {
-      var pr = stagePrompts[0];
-      var g = pr.groupId ? getGroup(pr.groupId) : null;
-      var prefix = "";
-      if (
-        g &&
-        g.multiPrefixEnabled &&
-        g.prefixAssignments &&
-        g.prefixAssignments[pr.id] &&
-        Array.isArray(g.prefixTemplates)
-      ) {
-        var _tpl = g.prefixTemplates.find(function (t) {
-          return t.id === g.prefixAssignments[pr.id];
-        });
-        if (_tpl && _tpl.content && _tpl.content.trim()) prefix = _tpl.content;
-      }
-      if (!prefix) {
-        if (g && g.stagePrefix) prefix = g.stagePrefix;
-        else if (data.settings.defaultStagePrefix)
-          prefix = data.settings.defaultStagePrefix;
-      }
-      var result = "";
-      if (prefix) {
-        if (/\{\{stages\}\}/i.test(prefix)) {
-          result = prefix.replace(/\{\{stages\}\}/gi, function () {
-            return pr.content;
-          });
-        } else if (/\{\{stage\}\}/i.test(prefix)) {
-          result = prefix.replace(/\{\{stage\}\}/gi, function () {
-            return pr.content;
-          });
-        } else {
-          result = prefix + "\n" + pr.content;
-        }
-      } else {
-        result = pr.content;
-      }
-      return result.replace(/\{\{stage_title\}\}/gi, function () {
-        return pr.title || "";
+    (ig || []).forEach(function (impG) {
+      if (!impG || !impG.prefixAssignments) return;
+      var localG = data.groups.find(function (g) {
+        return g.name === impG.name;
       });
-    }
-    var wrapper = "";
-    var _firstGid = stagePrompts[0].groupId || null;
-    var _allSameGroup = stagePrompts.every(function (p) {
-      return (p.groupId || null) === _firstGid;
+      _remapAssign(localG, impG.prefixAssignments);
     });
-    if (_allSameGroup && _firstGid) {
-      var _firstG = getGroup(_firstGid);
-      if (
-        _firstG &&
-        _firstG.multiStagePrefix &&
-        _firstG.multiStagePrefix.trim()
-      ) {
-        wrapper = _firstG.multiStagePrefix;
-      }
-    }
-    if (!wrapper) {
-      wrapper = data.settings.multiStagePrefix || "";
-    }
-    if (!wrapper || wrapper.indexOf("{{stage_tasks}}") < 0) {
-      wrapper =
-        "<stage>\n\u4ee5\u4e0b\u5171\u6709 {{stage_count}} \u4e2a\u72ec\u7acb\u5c0f\u5267\u573a\u4efb\u52a1\uff0c\u8bf7\u5728\u6b63\u6587\u6700\u540e\u6309\u987a\u5e8f\u9010\u4e00\u5b8c\u6210\uff0c\u6bcf\u6761\u5267\u573a\u5355\u72ec\u4f7f\u7528\u5bf9\u5e94\u683c\u5f0f\u5305\u88f9\u3002\n\n{{stage_tasks}}\n</stage>";
-    }
-    var shellTagName = (function () {
-      var _tw = wrapper.replace(/^\s+/, "");
-      var _tm = _tw.match(/^<([A-Za-z_][\w-]*)\b/);
-      return _tm ? _tm[1].toLowerCase() : null;
-    })();
-    var groupedByPrefix = {};
-    var prefixOrder = [];
-    stagePrompts.forEach(function (pr) {
-      var g = pr.groupId ? getGroup(pr.groupId) : null;
-      var rawPrefix = "";
-      if (
-        g &&
-        g.multiPrefixEnabled &&
-        g.prefixAssignments &&
-        g.prefixAssignments[pr.id] &&
-        Array.isArray(g.prefixTemplates)
-      ) {
-        var _tpl = g.prefixTemplates.find(function (t) {
-          return t.id === g.prefixAssignments[pr.id];
-        });
-        if (_tpl && _tpl.content && _tpl.content.trim())
-          rawPrefix = _tpl.content;
-      }
-      if (!rawPrefix) {
-        if (g && g.stagePrefix) rawPrefix = g.stagePrefix;
-        else if (data.settings.defaultStagePrefix)
-          rawPrefix = data.settings.defaultStagePrefix;
-      }
-      var key = rawPrefix || "_no_prefix_";
-      if (!groupedByPrefix[key]) {
-        groupedByPrefix[key] = { rawPrefix: rawPrefix, prompts: [] };
-        prefixOrder.push(key);
-      }
-      groupedByPrefix[key].prompts.push(pr);
+    (icgs || []).forEach(function (icg) {
+      if (!icg || !icg.prefixAssignments) return;
+      var localG = data.groups.find(function (g) {
+        return g.name === icg.name;
+      });
+      _remapAssign(localG, icg.prefixAssignments);
     });
-    var taskBlocks = [];
-    var taskCounter = 0;
-    prefixOrder.forEach(function (key) {
-      var grp = groupedByPrefix[key];
-      var rawPrefix = grp.rawPrefix;
-      var innerPrefix = stripOuterTagIfMatchesShell(rawPrefix, shellTagName);
-      var hasStagesMacro = /\{\{stages\}\}/i.test(innerPrefix);
-      var hasStageMacro = /\{\{stage\}\}/i.test(innerPrefix);
-      if (hasStagesMacro) {
-        var subTasks = [];
-        var allTitles = [];
-        grp.prompts.forEach(function (pr) {
-          taskCounter++;
-          var _subHeader = "\u3010\u4efb\u52a1" + taskCounter;
-          if (pr.title && pr.title.trim()) {
-            _subHeader += " | " + pr.title.trim();
-          }
-          _subHeader += "\u3011";
-          subTasks.push(_subHeader + "\n" + pr.content);
-          allTitles.push(pr.title || "");
-        });
-        var stagesContent = subTasks.join("\n\n");
-        var processedPrefix = innerPrefix
-          .replace(/\{\{stage_title\}\}/gi, function () {
-            return allTitles.join("\u3001");
-          })
-          .replace(/\{\{stages\}\}/gi, function () {
-            return stagesContent;
-          });
-        taskBlocks.push(processedPrefix);
-      } else if (!innerPrefix || hasStageMacro) {
-        grp.prompts.forEach(function (pr) {
-          taskCounter++;
-          var taskContent = "";
-          if (innerPrefix) {
-            if (hasStageMacro) {
-              taskContent = innerPrefix.replace(/\{\{stage\}\}/gi, function () {
-                return pr.content;
-              });
-            } else {
-              taskContent = innerPrefix + "\n" + pr.content;
-            }
-          } else {
-            taskContent = pr.content;
-          }
-          taskContent = taskContent.replace(
-            /\{\{stage_title\}\}/gi,
-            function () {
-              return pr.title || "";
-            },
-          );
-          var _taskHeader = "\u3010\u4efb\u52a1" + taskCounter;
-          if (pr.title && pr.title.trim()) {
-            _taskHeader += " | " + pr.title.trim();
-          }
-          _taskHeader += "\u3011";
-          taskBlocks.push(_taskHeader + "\n" + taskContent);
-        });
-      } else {
-        var subTasks = [];
-        var allTitles = [];
-        grp.prompts.forEach(function (pr) {
-          taskCounter++;
-          var _subHeader = "\u3010\u4efb\u52a1" + taskCounter;
-          if (pr.title && pr.title.trim()) {
-            _subHeader += " | " + pr.title.trim();
-          }
-          _subHeader += "\u3011";
-          subTasks.push(_subHeader + "\n" + pr.content);
-          allTitles.push(pr.title || "");
-        });
-        var processedPrefix = innerPrefix.replace(
-          /\{\{stage_title\}\}/gi,
-          function () {
-            return allTitles.join("\u3001");
+  })();
+  var bdMsgKeys = Object.keys(ibdmsgs);
+  if (bdMsgKeys.length > 0) {
+    if (mode === "replace") {
+      data.settings.charBirthdayMessages = {};
+    }
+    if (!data.settings.charBirthdayMessages)
+      data.settings.charBirthdayMessages = {};
+    bdMsgKeys.forEach(function (k) {
+      var rawImp = ibdmsgs[k];
+      if (!rawImp) return;
+      var impVersions;
+      if (rawImp.versions) {
+        impVersions = rawImp.versions;
+      } else if (rawImp.message !== undefined) {
+        impVersions = {
+          default: {
+            message: rawImp.message || "",
+            authorName: rawImp.authorName || "",
+            contentType: rawImp.contentType || "text",
+            updatedAt: rawImp.updatedAt || 0,
+            isOwn: false,
+            year: "default",
           },
-        );
-        taskBlocks.push(processedPrefix + "\n\n" + subTasks.join("\n\n"));
+        };
+      } else {
+        return;
+      }
+      var newKey = _rebindLostKeyByName(k, _importNameMap);
+      var existing = data.settings.charBirthdayMessages[newKey] || {
+        versions: {},
+      };
+      if (!existing.versions) existing.versions = {};
+      Object.keys(impVersions).forEach(function (year) {
+        var ivRaw = impVersions[year];
+        if (!ivRaw || !(ivRaw.message || "").trim()) return;
+        var iv = Object.assign({}, ivRaw, { isOwn: false, year: year });
+        var ev = existing.versions[year];
+        if (mode === "replace" || mode === "append" || !ev) {
+          existing.versions[year] = iv;
+        } else if (mode === "merge") {
+          if (ev.isOwn === true) {
+            if ((ev.message || "") !== (iv.message || "")) {
+              importBdMsgConflicts.push({
+                charKey: newKey,
+                year: year,
+                localMsg: ev,
+                incomingMsg: iv,
+              });
+            }
+            return;
+          }
+          var impTs = iv.updatedAt || 0;
+          var existTs = ev.updatedAt || 0;
+          if (impTs === 0 || impTs >= existTs) {
+            existing.versions[year] = iv;
+          }
+        }
+      });
+      if (Object.keys(existing.versions).length > 0) {
+        data.settings.charBirthdayMessages[newKey] = existing;
       }
     });
-    var tasksStr = taskBlocks.join("\n\n---\n\n");
-    var allTitles = stagePrompts
-      .map(function (p) {
-        return p.title || "";
-      })
-      .join("、");
-    var result = wrapper
-      .replace(/\{\{stage_count\}\}/gi, function () {
-        return String(stagePrompts.length);
-      })
-      .replace(/\{\{stage_tasks\}\}/gi, function () {
-        return tasksStr;
-      })
-      .replace(/\{\{stage_title\}\}/gi, function () {
-        return allTitles;
-      });
-    return result;
   }
-
-  function getRandomStagePrompt() {
-    var pool = data.prompts.filter(function (p) {
-      return isInRandomPool(p);
+  var bdDateKeys = Object.keys(ibddates);
+  if (bdDateKeys.length > 0) {
+    if (mode === "replace") {
+      data.settings.charBirthdays = {};
+    }
+    if (!data.settings.charBirthdays) data.settings.charBirthdays = {};
+    if (!data.settings.ownBirthdays) data.settings.ownBirthdays = {};
+    bdDateKeys.forEach(function (k) {
+      var d = ibddates[k];
+      if (!d || !/^\d{2}-\d{2}$/.test(d)) return;
+      var newKey = _rebindLostKeyByName(k, _importNameMap);
+      if (mode === "merge" && data.settings.ownBirthdays[newKey] === true) {
+        var _localBdDate2 = data.settings.charBirthdays[newKey];
+        if (_localBdDate2 && _localBdDate2 !== d) {
+          importBdDateConflicts.push({
+            charKey: newKey,
+            localDate: _localBdDate2,
+            incomingDate: d,
+          });
+        }
+        return;
+      }
+      if (
+        mode === "replace" ||
+        mode === "append" ||
+        mode === "merge" ||
+        !data.settings.charBirthdays[newKey]
+      ) {
+        data.settings.charBirthdays[newKey] = d;
+        if (data.settings.ownBirthdays[newKey]) {
+          delete data.settings.ownBirthdays[newKey];
+        }
+      }
     });
-    if (pool.length === 0) return null;
-    var now = Date.now();
-    var weighted = pool.map(function (p) {
+  }
+  _invalidateCharGroupCache();
+  saveData();
+  toast("success", importMsg);
+  navigateTo({ name: "list" }, true);
+  if (importBdDateConflicts.length > 0 || importBdMsgConflicts.length > 0) {
+    setTimeout(function () {
+      showBirthdayConflictDialog(importBdDateConflicts, importBdMsgConflicts);
+    }, 400);
+  }
+  setTimeout(function () {
+    try {
+      if (
+        typeof SillyTavern === "undefined" ||
+        !SillyTavern.characters ||
+        SillyTavern.characters.length === 0
+      ) {
+        return;
+      }
+      var lostKeys = new Set();
+      if (icgs && icgs.length > 0) {
+        icgs.forEach(function (icg) {
+          (icg.charKeys || []).forEach(function (k) {
+            if (k && !isLocalCharKey(k)) lostKeys.add(k);
+          });
+        });
+      }
+      if (lostKeys.size > 0) {
+        msConfirm(
+          "导入完成，但发现 " +
+            lostKeys.size +
+            " 个角色在本地找不到对应的卡（文件名不匹配）。\n\n" +
+            "是否前往「失联角色」页面，把它们重绑到你本地的角色卡？\n" +
+            "（不处理也可以，剧场内容不受影响，只是无法显示在「角色专属」分类下）",
+          { title: "检测到失联角色", type: "warning", okText: "去处理" },
+        ).then(function (ok) {
+          if (ok) navigateTo({ name: "lost-chars" });
+        });
+      }
+    } catch (e) {
+      console.warn("[小剧场] 失联角色检测失败", e);
+    }
+  }, 600);
+}
+
+function exitSelectMode() {
+  selectMode = false;
+  selectedIds.clear();
+  rangeSelectMode = false;
+  rangeSelectAnchor = null;
+  rangeSelectAnchorPids = [];
+}
+
+function exitFocusMode() {
+  const $panel = $("#" + PANEL_ID);
+  if (!$panel.hasClass("ms-focus-mode")) return;
+  const el = $panel[0];
+  $panel.removeClass("ms-focus-mode");
+  applyUICustomization();
+  const saved = $panel.data("ms-focus-saved-pos");
+  if (saved) {
+    if (saved.left) el.style.setProperty("left", saved.left, "important");
+    else el.style.removeProperty("left");
+    if (saved.top) el.style.setProperty("top", saved.top, "important");
+    else el.style.removeProperty("top");
+    if (saved.transform)
+      el.style.setProperty("transform", saved.transform, "important");
+    else el.style.removeProperty("transform");
+    data.settings.panelPos = saved.panelPos || null;
+    saveData();
+  } else {
+    el.style.removeProperty("left");
+    el.style.removeProperty("top");
+    el.style.removeProperty("transform");
+  }
+  $panel.removeData("ms-focus-saved-pos");
+}
+
+function updateInjectIndicator() {
+  var $p = $("#" + PANEL_ID);
+  if (!$p.length) return;
+  var $ind = $p.find("#ms-inject-indicator");
+  if (!data.settings.stageInjectEnabled) {
+    $ind.removeClass("visible").empty();
+    return;
+  }
+  var sids = data.settings.stageSelectedIds || [];
+  sids = sids.filter(function (sid) {
+    return getPrompt(sid);
+  });
+  if (sids.length !== (data.settings.stageSelectedIds || []).length) {
+    data.settings.stageSelectedIds = sids;
+    saveData();
+  }
+  if (sids.length > 0) {
+    var label =
+      sids.length === 1
+        ? esc(truncate(getPrompt(sids[0]).title, 16))
+        : "已选 " + sids.length + " 条";
+    $ind
+      .html(
+        '<i class="fa-solid fa-syringe"></i><span>' +
+          label +
+          '</span><i class="fa-solid fa-xmark ms-inject-clear-btn" title="清除所有注入选择" style="margin-left:6px;font-size:10px;opacity:0.6;cursor:pointer;padding:2px 4px;border-radius:3px;"></i>',
+      )
+      .addClass("visible");
+  } else if (data.settings.randomInject && data.settings.randomInject.enabled) {
+    var poolCount = data.prompts.filter(function (p) {
+      return isInRandomPool(p);
+    }).length;
+    $ind
+      .html(
+        '<i class="fa-solid fa-dice"></i><span>随机 ' + poolCount + "条</span>",
+      )
+      .addClass("visible");
+  } else {
+    $ind.removeClass("visible").empty();
+  }
+}
+function isInRandomPool(p) {
+  var ri = data.settings.randomInject;
+  if (!ri) return true;
+  var effectiveGid =
+    p.groupId && getGroup(p.groupId) ? p.groupId : "_ungrouped";
+  if (ri.excludedGroupIds && ri.excludedGroupIds.indexOf(effectiveGid) >= 0)
+    return false;
+  if (p.character) {
+    var charG = getCharGroupOfChar(p.character);
+    if (
+      charG &&
+      ri.excludedGroupIds &&
+      ri.excludedGroupIds.indexOf(charG.id) >= 0
+    ) {
+      return false;
+    }
+  }
+  var sn = String(p.series || "").trim();
+  if (
+    sn &&
+    ri.excludedSeries &&
+    ri.excludedSeries.some(function (s) {
+      return s.groupId === effectiveGid && s.seriesName === sn;
+    })
+  )
+    return false;
+  if (ri.excludedPromptIds && ri.excludedPromptIds.indexOf(p.id) >= 0)
+    return false;
+  return true;
+}
+function stripOuterTagIfMatchesShell(text, shellTagName) {
+  if (!text || !shellTagName) return text;
+  var trimmed = text.replace(/^\s+|\s+$/g, "");
+  if (!trimmed) return text;
+  var openMatch = trimmed.match(/^<([A-Za-z_][\w-]*)\b[^>]*>/);
+  if (!openMatch) return text;
+  if (openMatch[1].toLowerCase() !== shellTagName.toLowerCase()) return text;
+  var tagName = openMatch[1];
+  var closeRe = new RegExp("</\\s*" + tagName + "\\s*>$", "i");
+  var closeMatch = trimmed.match(closeRe);
+  if (!closeMatch) return text;
+  var inner = trimmed.substring(
+    openMatch[0].length,
+    trimmed.length - closeMatch[0].length,
+  );
+  var openTagRe = new RegExp("<" + tagName + "\\b", "gi");
+  var closeTagRe = new RegExp("</" + tagName + "\\b", "gi");
+  var openCount = (inner.match(openTagRe) || []).length;
+  var closeCount = (inner.match(closeTagRe) || []).length;
+  if (openCount !== closeCount) return text;
+  return inner.replace(/^\n+/, "").replace(/\n+$/, "");
+}
+
+function buildStageContent(stagePrompts) {
+  if (stagePrompts.length === 0) return "";
+  if (stagePrompts.length === 1) {
+    var pr = stagePrompts[0];
+    var g = pr.groupId ? getGroup(pr.groupId) : null;
+    var prefix = "";
+    if (
+      g &&
+      g.multiPrefixEnabled &&
+      g.prefixAssignments &&
+      g.prefixAssignments[pr.id] &&
+      Array.isArray(g.prefixTemplates)
+    ) {
+      var _tpl = g.prefixTemplates.find(function (t) {
+        return t.id === g.prefixAssignments[pr.id];
+      });
+      if (_tpl && _tpl.content && _tpl.content.trim()) prefix = _tpl.content;
+    }
+    if (!prefix) {
+      if (g && g.stagePrefix) prefix = g.stagePrefix;
+      else if (data.settings.defaultStagePrefix)
+        prefix = data.settings.defaultStagePrefix;
+    }
+    var result = "";
+    if (prefix) {
+      if (/\{\{stages\}\}/i.test(prefix)) {
+        result = prefix.replace(/\{\{stages\}\}/gi, function () {
+          return pr.content;
+        });
+      } else if (/\{\{stage\}\}/i.test(prefix)) {
+        result = prefix.replace(/\{\{stage\}\}/gi, function () {
+          return pr.content;
+        });
+      } else {
+        result = prefix + "\n" + pr.content;
+      }
+    } else {
+      result = pr.content;
+    }
+    return result.replace(/\{\{stage_title\}\}/gi, function () {
+      return pr.title || "";
+    });
+  }
+  var wrapper = "";
+  var _firstGid = stagePrompts[0].groupId || null;
+  var _allSameGroup = stagePrompts.every(function (p) {
+    return (p.groupId || null) === _firstGid;
+  });
+  if (_allSameGroup && _firstGid) {
+    var _firstG = getGroup(_firstGid);
+    if (
+      _firstG &&
+      _firstG.multiStagePrefix &&
+      _firstG.multiStagePrefix.trim()
+    ) {
+      wrapper = _firstG.multiStagePrefix;
+    }
+  }
+  if (!wrapper) {
+    wrapper = data.settings.multiStagePrefix || "";
+  }
+  if (!wrapper || wrapper.indexOf("{{stage_tasks}}") < 0) {
+    wrapper =
+      "<stage>\n\u4ee5\u4e0b\u5171\u6709 {{stage_count}} \u4e2a\u72ec\u7acb\u5c0f\u5267\u573a\u4efb\u52a1\uff0c\u8bf7\u5728\u6b63\u6587\u6700\u540e\u6309\u987a\u5e8f\u9010\u4e00\u5b8c\u6210\uff0c\u6bcf\u6761\u5267\u573a\u5355\u72ec\u4f7f\u7528\u5bf9\u5e94\u683c\u5f0f\u5305\u88f9\u3002\n\n{{stage_tasks}}\n</stage>";
+  }
+  var shellTagName = (function () {
+    var _tw = wrapper.replace(/^\s+/, "");
+    var _tm = _tw.match(/^<([A-Za-z_][\w-]*)\b/);
+    return _tm ? _tm[1].toLowerCase() : null;
+  })();
+  var groupedByPrefix = {};
+  var prefixOrder = [];
+  stagePrompts.forEach(function (pr) {
+    var g = pr.groupId ? getGroup(pr.groupId) : null;
+    var rawPrefix = "";
+    if (
+      g &&
+      g.multiPrefixEnabled &&
+      g.prefixAssignments &&
+      g.prefixAssignments[pr.id] &&
+      Array.isArray(g.prefixTemplates)
+    ) {
+      var _tpl = g.prefixTemplates.find(function (t) {
+        return t.id === g.prefixAssignments[pr.id];
+      });
+      if (_tpl && _tpl.content && _tpl.content.trim()) rawPrefix = _tpl.content;
+    }
+    if (!rawPrefix) {
+      if (g && g.stagePrefix) rawPrefix = g.stagePrefix;
+      else if (data.settings.defaultStagePrefix)
+        rawPrefix = data.settings.defaultStagePrefix;
+    }
+    var key = rawPrefix || "_no_prefix_";
+    if (!groupedByPrefix[key]) {
+      groupedByPrefix[key] = { rawPrefix: rawPrefix, prompts: [] };
+      prefixOrder.push(key);
+    }
+    groupedByPrefix[key].prompts.push(pr);
+  });
+  var taskBlocks = [];
+  var taskCounter = 0;
+  prefixOrder.forEach(function (key) {
+    var grp = groupedByPrefix[key];
+    var rawPrefix = grp.rawPrefix;
+    var innerPrefix = stripOuterTagIfMatchesShell(rawPrefix, shellTagName);
+    var hasStagesMacro = /\{\{stages\}\}/i.test(innerPrefix);
+    var hasStageMacro = /\{\{stage\}\}/i.test(innerPrefix);
+    if (hasStagesMacro) {
+      var subTasks = [];
+      var allTitles = [];
+      grp.prompts.forEach(function (pr) {
+        taskCounter++;
+        var _subHeader = "\u3010\u4efb\u52a1" + taskCounter;
+        if (pr.title && pr.title.trim()) {
+          _subHeader += " | " + pr.title.trim();
+        }
+        _subHeader += "\u3011";
+        subTasks.push(_subHeader + "\n" + pr.content);
+        allTitles.push(pr.title || "");
+      });
+      var stagesContent = subTasks.join("\n\n");
+      var processedPrefix = innerPrefix
+        .replace(/\{\{stage_title\}\}/gi, function () {
+          return allTitles.join("\u3001");
+        })
+        .replace(/\{\{stages\}\}/gi, function () {
+          return stagesContent;
+        });
+      taskBlocks.push(processedPrefix);
+    } else if (!innerPrefix || hasStageMacro) {
+      grp.prompts.forEach(function (pr) {
+        taskCounter++;
+        var taskContent = "";
+        if (innerPrefix) {
+          if (hasStageMacro) {
+            taskContent = innerPrefix.replace(/\{\{stage\}\}/gi, function () {
+              return pr.content;
+            });
+          } else {
+            taskContent = innerPrefix + "\n" + pr.content;
+          }
+        } else {
+          taskContent = pr.content;
+        }
+        taskContent = taskContent.replace(/\{\{stage_title\}\}/gi, function () {
+          return pr.title || "";
+        });
+        var _taskHeader = "\u3010\u4efb\u52a1" + taskCounter;
+        if (pr.title && pr.title.trim()) {
+          _taskHeader += " | " + pr.title.trim();
+        }
+        _taskHeader += "\u3011";
+        taskBlocks.push(_taskHeader + "\n" + taskContent);
+      });
+    } else {
+      var subTasks = [];
+      var allTitles = [];
+      grp.prompts.forEach(function (pr) {
+        taskCounter++;
+        var _subHeader = "\u3010\u4efb\u52a1" + taskCounter;
+        if (pr.title && pr.title.trim()) {
+          _subHeader += " | " + pr.title.trim();
+        }
+        _subHeader += "\u3011";
+        subTasks.push(_subHeader + "\n" + pr.content);
+        allTitles.push(pr.title || "");
+      });
+      var processedPrefix = innerPrefix.replace(
+        /\{\{stage_title\}\}/gi,
+        function () {
+          return allTitles.join("\u3001");
+        },
+      );
+      taskBlocks.push(processedPrefix + "\n\n" + subTasks.join("\n\n"));
+    }
+  });
+  var tasksStr = taskBlocks.join("\n\n---\n\n");
+  var allTitles = stagePrompts
+    .map(function (p) {
+      return p.title || "";
+    })
+    .join("、");
+  var result = wrapper
+    .replace(/\{\{stage_count\}\}/gi, function () {
+      return String(stagePrompts.length);
+    })
+    .replace(/\{\{stage_tasks\}\}/gi, function () {
+      return tasksStr;
+    })
+    .replace(/\{\{stage_title\}\}/gi, function () {
+      return allTitles;
+    });
+  return result;
+}
+
+function getRandomStagePrompt() {
+  var pool = data.prompts.filter(function (p) {
+    return isInRandomPool(p);
+  });
+  if (pool.length === 0) return null;
+  var now = Date.now();
+  var weighted = pool.map(function (p) {
+    var w = 1;
+    if (p.lastUsedAt) {
+      var hoursAgo = (now - p.lastUsedAt) / 3600000;
+      if (hoursAgo < 1) w = 0.1;
+      else if (hoursAgo < 6) w = 0.3;
+      else if (hoursAgo < 24) w = 0.6;
+      else if (hoursAgo < 72) w = 0.85;
+    }
+    return { p: p, w: w };
+  });
+  var totalW = 0;
+  weighted.forEach(function (it) {
+    totalW += it.w;
+  });
+  var r = Math.random() * totalW;
+  var acc = 0;
+  for (var i = 0; i < weighted.length; i++) {
+    acc += weighted[i].w;
+    if (r <= acc) return weighted[i].p;
+  }
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+function getRandomStagePrompts(count) {
+  var pool = data.prompts.filter(function (p) {
+    return isInRandomPool(p);
+  });
+  if (pool.length === 0) return [];
+  count = Math.min(Math.max(1, count), pool.length);
+  var now = Date.now();
+  var available = pool.slice();
+  var result = [];
+  while (result.length < count && available.length > 0) {
+    var weighted = available.map(function (p) {
       var w = 1;
       if (p.lastUsedAt) {
         var hoursAgo = (now - p.lastUsedAt) / 3600000;
@@ -5253,157 +5336,123 @@ function _buildIPGroupFromImport(icg) {
     });
     var r = Math.random() * totalW;
     var acc = 0;
+    var picked = null;
     for (var i = 0; i < weighted.length; i++) {
       acc += weighted[i].w;
-      if (r <= acc) return weighted[i].p;
+      if (r <= acc) {
+        picked = weighted[i].p;
+        break;
+      }
     }
-    return pool[Math.floor(Math.random() * pool.length)];
+    if (!picked)
+      picked = available[Math.floor(Math.random() * available.length)];
+    result.push(picked);
+    available = available.filter(function (p) {
+      return p.id !== picked.id;
+    });
   }
+  return result;
+}
 
-  function getRandomStagePrompts(count) {
-    var pool = data.prompts.filter(function (p) {
+function doRandomPick() {
+  var visibleIds = getVisiblePromptIds().filter(function (pid) {
+    return !!getPrompt(pid);
+  });
+  var pool = visibleIds
+    .map(function (pid) {
+      return getPrompt(pid);
+    })
+    .filter(function (p) {
+      return p && isInRandomPool(p);
+    });
+  var fallbackToGlobalPool = false;
+  if (pool.length === 0) {
+    fallbackToGlobalPool = visibleIds.length > 0;
+    pool = data.prompts.filter(function (p) {
       return isInRandomPool(p);
     });
-    if (pool.length === 0) return [];
-    count = Math.min(Math.max(1, count), pool.length);
-    var now = Date.now();
-    var available = pool.slice();
-    var result = [];
-    while (result.length < count && available.length > 0) {
-      var weighted = available.map(function (p) {
-        var w = 1;
-        if (p.lastUsedAt) {
-          var hoursAgo = (now - p.lastUsedAt) / 3600000;
-          if (hoursAgo < 1) w = 0.1;
-          else if (hoursAgo < 6) w = 0.3;
-          else if (hoursAgo < 24) w = 0.6;
-          else if (hoursAgo < 72) w = 0.85;
-        }
-        return { p: p, w: w };
-      });
-      var totalW = 0;
-      weighted.forEach(function (it) {
-        totalW += it.w;
-      });
-      var r = Math.random() * totalW;
-      var acc = 0;
-      var picked = null;
-      for (var i = 0; i < weighted.length; i++) {
-        acc += weighted[i].w;
-        if (r <= acc) {
-          picked = weighted[i].p;
-          break;
-        }
-      }
-      if (!picked)
-        picked = available[Math.floor(Math.random() * available.length)];
-      result.push(picked);
-      available = available.filter(function (p) {
-        return p.id !== picked.id;
-      });
-    }
-    return result;
   }
-
-  function doRandomPick() {
-    var visibleIds = getVisiblePromptIds().filter(function (pid) {
-      return !!getPrompt(pid);
-    });
-    var pool = visibleIds
-      .map(function (pid) {
-        return getPrompt(pid);
-      })
-      .filter(function (p) {
-        return p && isInRandomPool(p);
-      });
-    var fallbackToGlobalPool = false;
-    if (pool.length === 0) {
-      fallbackToGlobalPool = visibleIds.length > 0;
-      pool = data.prompts.filter(function (p) {
-        return isInRandomPool(p);
-      });
-    }
-    if (pool.length === 0) {
-      toast("warning", "随机池里没有可抽取的剧场");
-      return;
-    }
-    var picked = pool[Math.floor(Math.random() * pool.length)];
-    if (!picked) return;
-    if (fallbackToGlobalPool) {
-      toast("info", "当前范围都被排除了，已从全局随机池抽取");
-    }
-    navigateTo({
-      name: "preview",
-      promptId: picked.id,
-      _siblingIds: pool.map(function (p) {
-        return p.id;
-      }),
-    });
+  if (pool.length === 0) {
+    toast("warning", "随机池里没有可抽取的剧场");
+    return;
   }
+  var picked = pool[Math.floor(Math.random() * pool.length)];
+  if (!picked) return;
+  if (fallbackToGlobalPool) {
+    toast("info", "当前范围都被排除了，已从全局随机池抽取");
+  }
+  navigateTo({
+    name: "preview",
+    promptId: picked.id,
+    _siblingIds: pool.map(function (p) {
+      return p.id;
+    }),
+  });
+}
 
-  var _pagedCtx = null;
+var _pagedCtx = null;
 
-  function _clearPagedCtx() {
+function _clearPagedCtx() {
+  _pagedCtx = null;
+}
+
+function _buildPagedAnchor(rendered, total) {
+  return (
+    '<div id="ms-paged-anchor" style="padding:14px;text-align:center;font-size:11px;color:var(--SmartThemeQuoteColor,#888);background:rgba(var(--ms-accent-rgb),0.04);border-top:1px solid rgba(255,255,255,0.04);border-bottom:1px solid rgba(255,255,255,0.04);"><i class="fa-solid fa-arrow-down" style="margin-right:4px;color:var(--ms-accent);"></i>已显示 ' +
+    rendered +
+    " / " +
+    total +
+    " · 继续向下滚动加载</div>"
+  );
+}
+
+function _applyPagedRender(blockHtmls, options) {
+  options = options || {};
+  var firstBatch = options.firstBatch || 80;
+  var batchSize = options.batchSize || 50;
+  if (!Array.isArray(blockHtmls) || blockHtmls.length <= firstBatch + 20) {
+    return blockHtmls.join("");
+  }
+  _pagedCtx = {
+    blocks: blockHtmls,
+    rendered: firstBatch,
+    batchSize: batchSize,
+    _lastLoad: 0,
+  };
+  return (
+    blockHtmls.slice(0, firstBatch).join("") +
+    _buildPagedAnchor(firstBatch, blockHtmls.length)
+  );
+}
+
+function _loadMorePagedBlocks($body) {
+  if (!_pagedCtx) return;
+  var ctx = _pagedCtx;
+  var $anchor = $body.find("#ms-paged-anchor");
+  if (!$anchor.length) {
     _pagedCtx = null;
+    return;
   }
-
-  function _buildPagedAnchor(rendered, total) {
-    return (
-      '<div id="ms-paged-anchor" style="padding:14px;text-align:center;font-size:11px;color:var(--SmartThemeQuoteColor,#888);background:rgba(var(--ms-accent-rgb),0.04);border-top:1px solid rgba(255,255,255,0.04);border-bottom:1px solid rgba(255,255,255,0.04);"><i class="fa-solid fa-arrow-down" style="margin-right:4px;color:var(--ms-accent);"></i>已显示 ' +
-      rendered +
-      " / " +
-      total +
-      " · 继续向下滚动加载</div>"
-    );
+  var bodyEl = $body[0];
+  if (!bodyEl) return;
+  var distToBottom =
+    bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight;
+  if (distToBottom > 400) return;
+  var now = Date.now();
+  if (ctx._lastLoad && now - ctx._lastLoad < 80) return;
+  ctx._lastLoad = now;
+  var end = Math.min(ctx.rendered + ctx.batchSize, ctx.blocks.length);
+  var addHtml = "";
+  for (var i = ctx.rendered; i < end; i++) addHtml += ctx.blocks[i];
+  $anchor.before(addHtml);
+  ctx.rendered = end;
+  if (ctx.rendered >= ctx.blocks.length) {
+    $anchor.remove();
+    _pagedCtx = null;
+  } else {
+    $anchor.replaceWith(_buildPagedAnchor(ctx.rendered, ctx.blocks.length));
   }
-
-  function _applyPagedRender(blockHtmls, options) {
-    options = options || {};
-    var firstBatch = options.firstBatch || 80;
-    var batchSize = options.batchSize || 50;
-    if (!Array.isArray(blockHtmls) || blockHtmls.length <= firstBatch + 20) {
-      return blockHtmls.join("");
-    }
-    _pagedCtx = {
-      blocks: blockHtmls,
-      rendered: firstBatch,
-      batchSize: batchSize,
-      _lastLoad: 0,
-    };
-    return (
-      blockHtmls.slice(0, firstBatch).join("") +
-      _buildPagedAnchor(firstBatch, blockHtmls.length)
-    );
-  }
-
-  function _loadMorePagedBlocks($body) {
-    if (!_pagedCtx) return;
-    var ctx = _pagedCtx;
-    var $anchor = $body.find("#ms-paged-anchor");
-    if (!$anchor.length) {
-      _pagedCtx = null;
-      return;
-    }
-    var bodyEl = $body[0];
-    if (!bodyEl) return;
-    var distToBottom =
-      bodyEl.scrollHeight - bodyEl.scrollTop - bodyEl.clientHeight;
-    if (distToBottom > 400) return;
-    var now = Date.now();
-    if (ctx._lastLoad && now - ctx._lastLoad < 80) return;
-    ctx._lastLoad = now;
-    var end = Math.min(ctx.rendered + ctx.batchSize, ctx.blocks.length);
-    var addHtml = "";
-    for (var i = ctx.rendered; i < end; i++) addHtml += ctx.blocks[i];
-    $anchor.before(addHtml);
-    ctx.rendered = end;
-    if (ctx.rendered >= ctx.blocks.length) {
-      $anchor.remove();
-      _pagedCtx = null;
-    } else {
-      $anchor.replaceWith(_buildPagedAnchor(ctx.rendered, ctx.blocks.length));
-    }
-  }
+}
 
   function currentView() {
     return viewStack[viewStack.length - 1];
@@ -5629,7 +5678,7 @@ function getCSS() {
 .ms-nav-icon img{content-visibility:auto;}
 .ms-nav-info{flex:1;min-width:0;}
 .ms-nav-title{font-size:13px;font-weight:500;color:var(--SmartThemeBodyColor,#ddd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.ms-nav-note{font-size:10px;color:var(--SmartThemeQuoteColor,#555);margin-top:2px;font-style:italic;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;word-break:break-word;}
+.ms-nav-note{font-size:10px;color:var(--SmartThemeQuoteColor,#555);margin-top:2px;font-style:italic;line-height:1.35;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:break-word;word-break:break-word;}
 .ms-nav-cnt{font-size:11px;color:var(--SmartThemeQuoteColor,#777);flex-shrink:0;margin-left:auto;padding-left:8px;}
 .ms-nav-chevron{color:var(--SmartThemeQuoteColor,#555);font-size:11px;flex-shrink:0;}
 .ms-nav-sel-badge{font-size:9px;color:var(--ms-accent);flex-shrink:0;margin-left:4px;}
@@ -6156,6 +6205,7 @@ function renderView() {
     groups: renderGroups,
     "group-edit": renderGroupEdit,
     "tag-manage": renderTagManage,
+    "tag-mappings": renderTagMappings,
     export: renderExport,
     "export-single-options": renderExportSingleOptions,
     "export-group-options": renderExportGroupOptions,
@@ -6643,12 +6693,41 @@ function buildFilterPanel() {
         return _visibleTagIds.has(t.id);
       })
     : data.settings.definedTags;
+  if (!data.settings.tagFilterExactMatch) {
+    var _hideFromTags = new Set();
+    var _mappings = data.settings.tagMappings || [];
+    _mappings.forEach(function (mm) {
+      if (Array.isArray(mm.tagIds) && mm.primaryTagId) {
+        mm.tagIds.forEach(function (tid) {
+          if (tid !== mm.primaryTagId) _hideFromTags.add(tid);
+        });
+      }
+    });
+    if (_hideFromTags.size > 0) {
+      _tagsToShow = _tagsToShow.filter(function (t) {
+        if (!_hideFromTags.has(t.id)) return true;
+        return (
+          filterState.includeTags.indexOf(t.id) >= 0 ||
+          filterState.excludeTags.indexOf(t.id) >= 0
+        );
+      });
+    }
+  }
 
   if (_tagsToShow.length > 0) {
     var modeLabel =
       data.settings.filterTagMode === "and" ? "全部匹配" : "任一匹配";
     var excludeActive = filterState.tagSelectMode === "exclude";
-    html += `<div class="ms-filter-section" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">标签筛选（可多选）<button class="ms-filter-mode-btn" id="ms-tag-mode-toggle">${modeLabel}</button><button class="ms-filter-mode-btn ${excludeActive ? "ms-mode-exclude-active" : ""}" id="ms-tag-exclude-toggle" title="开启后点击的标签将被排除"><i class="fa-solid fa-ban"></i> 排除模式${excludeActive ? "·开" : ""}</button>${hasAnyFilter ? '<button class="ms-filter-mode-btn" id="ms-clear-filter" style="margin-left:auto;color:var(--ms-danger);border-color:rgba(var(--ms-danger-rgb),0.3);background:rgba(var(--ms-danger-rgb),0.05);"><i class="fa-solid fa-broom"></i> 清空筛选</button>' : ""}</div><div class="ms-tag-row">`;
+    var isExact = data.settings.tagFilterExactMatch === true;
+    var mappingCount = (data.settings.tagMappings || []).length;
+    var mappingBtnTitle = isExact
+      ? "当前为独立模式：只筛选你选中的标签\n点击切换到联动模式（同映射组的标签一起参与筛选）"
+      : "当前为映射模式：选中标签时，同映射组的其他标签也会参与筛选\n点击切换到独立模式";
+    var mappingBtnHtml =
+      mappingCount > 0
+        ? `<button class="ms-filter-mode-btn" id="ms-tag-mapping-toggle" title="${escAttr(mappingBtnTitle)}" style="${isExact ? "" : "background:rgba(var(--ms-accent-rgb),0.15);color:var(--ms-accent);border-color:var(--ms-accent);"}"><i class="fa-solid ${isExact ? "fa-link-slash" : "fa-link"}"></i> ${isExact ? "独立" : "映射"}</button>`
+        : "";
+    html += `<div class="ms-filter-section" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">标签筛选（可多选）${mappingBtnHtml}<button class="ms-filter-mode-btn" id="ms-tag-mode-toggle">${modeLabel}</button><button class="ms-filter-mode-btn ${excludeActive ? "ms-mode-exclude-active" : ""}" id="ms-tag-exclude-toggle" title="开启后点击的标签将被排除"><i class="fa-solid fa-ban"></i> 排除模式${excludeActive ? "·开" : ""}</button>${hasAnyFilter ? '<button class="ms-filter-mode-btn" id="ms-clear-filter" style="margin-left:auto;color:var(--ms-danger);border-color:rgba(var(--ms-danger-rgb),0.3);background:rgba(var(--ms-danger-rgb),0.05);"><i class="fa-solid fa-broom"></i> 清空筛选</button>' : ""}</div><div class="ms-tag-row">`;
     _tagsToShow.forEach((t) => {
       const inc = filterState.includeTags.includes(t.id);
       const exc = filterState.excludeTags.includes(t.id);
@@ -7089,6 +7168,8 @@ function showMoveDropdown($p) {
   });
 }
 
+var _batchTagSectionState = { used: true, global: true };
+
 function showBatchTagDropdown($p) {
   if ($p.find("#ms-dropdown").is(":visible")) {
     closeActiveDropdown();
@@ -7098,28 +7179,293 @@ function showBatchTagDropdown($p) {
     toast("warning", "还没有标签，请先在标签管理中创建");
     return;
   }
-  function buildTagContent() {
-    let html = `<div style="padding:6px 12px;font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#888);border-bottom:1px solid var(--SmartThemeBorderColor,#444);">批量标签管理 · 已选 ${selectedIds.size} 项</div>`;
-    data.settings.definedTags.forEach((t) => {
-      let cnt = 0;
-      selectedIds.forEach((pid) => {
-        const p = getPrompt(pid);
-        if (p && p.tags && p.tags.includes(t.id)) cnt++;
-      });
-      html += `<div class="ms-batch-tag-item">
-          <div class="ms-batch-tag-info"><span class="ms-tag-chip" style="background:${t.color};">${esc(t.name)}</span><span class="ms-batch-tag-cnt">${cnt}/${selectedIds.size}</span></div>
-          <button class="ms-batch-tag-btn add-btn" data-tagid="${t.id}" title="添加"><i class="fa-solid fa-plus"></i></button>
-          <button class="ms-batch-tag-btn rm-btn" data-tagid="${t.id}" title="移除"><i class="fa-solid fa-minus"></i></button>
-        </div>`;
+
+  var _expandedMappings = new Set();
+
+  function getUsedTagIds() {
+    var used = new Set();
+    var involvedGroups = new Set();
+    var hasUngrouped = false;
+    selectedIds.forEach(function (pid) {
+      var p = getPrompt(pid);
+      if (!p) return;
+      if (p.groupId && getGroup(p.groupId)) involvedGroups.add(p.groupId);
+      else hasUngrouped = true;
     });
-    html += `<div class="ms-batch-tag-item" style="border-top:1px solid var(--SmartThemeBorderColor,#444);">
-        <div class="ms-batch-tag-info" style="cursor:pointer;color:var(--ms-accent);" id="ms-batch-new-tag"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>新建标签</div>
-      </div>`;
+    data.prompts.forEach(function (p) {
+      if (!Array.isArray(p.tags) || p.tags.length === 0) return;
+      var inScope = false;
+      if (p.groupId && getGroup(p.groupId)) {
+        if (involvedGroups.has(p.groupId)) inScope = true;
+      } else {
+        if (hasUngrouped) inScope = true;
+      }
+      if (!inScope) return;
+      p.tags.forEach(function (tid) {
+        if (getTag(tid)) used.add(tid);
+      });
+    });
+    return used;
+  }
+
+  function getCountForTag(tid) {
+    var cnt = 0;
+    selectedIds.forEach(function (pid) {
+      var p = getPrompt(pid);
+      if (p && p.tags && p.tags.includes(tid)) cnt++;
+    });
+    return cnt;
+  }
+
+  function getMappingInfo() {
+    var primaryMap = {};
+    var memberMap = {};
+    var children = {};
+    (data.settings.tagMappings || []).forEach(function (m) {
+      if (!Array.isArray(m.tagIds) || m.tagIds.length === 0) return;
+      var primary = m.primaryTagId;
+      if (!primary || m.tagIds.indexOf(primary) < 0) primary = m.tagIds[0];
+      if (!primary || !getTag(primary)) return;
+      primaryMap[primary] = m;
+      children[m.id] = [];
+      m.tagIds.forEach(function (tid) {
+        if (tid !== primary && getTag(tid)) {
+          if (!memberMap[tid]) memberMap[tid] = m;
+          children[m.id].push(tid);
+        }
+      });
+    });
+    return { primaryMap: primaryMap, memberMap: memberMap, children: children };
+  }
+  function buildOwnershipBadge(actualSection, currentSection) {
+    if (actualSection === currentSection) return "";
+    var label = actualSection === "used" ? "本组" : "全局";
+    var bg =
+      actualSection === "used"
+        ? "background:rgba(var(--ms-accent-rgb),0.15);color:var(--ms-accent);"
+        : "background:rgba(255,255,255,0.06);color:var(--SmartThemeQuoteColor,#888);";
+    return (
+      '<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;' +
+      bg +
+      '">' +
+      label +
+      "</span>"
+    );
+  }
+
+  function buildTagRow(t, mappingInfo, sectionKey, options) {
+    options = options || {};
+    var cnt = getCountForTag(t.id);
+    var mapping = !options.isChild ? mappingInfo.primaryMap[t.id] : null;
+    var childIds = mapping ? mappingInfo.children[mapping.id] : null;
+    var hasChildren = childIds && childIds.length > 0;
+    var isExpanded = mapping && _expandedMappings.has(mapping.id);
+
+    var indentStyle = options.isChild
+      ? "padding-left:28px;background:rgba(var(--ms-accent-rgb),0.03);"
+      : "";
+    var ownershipBadge = options.isChild
+      ? buildOwnershipBadge(options.actualSection, sectionKey)
+      : "";
+    var prefixH;
+    if (hasChildren) {
+      prefixH =
+        '<i class="fa-solid fa-angle-' +
+        (isExpanded ? "down" : "right") +
+        ' ms-btag-toggle" data-mapping-id="' +
+        mapping.id +
+        '" style="cursor:pointer;font-size:11px;color:var(--ms-accent);width:14px;text-align:center;flex-shrink:0;padding:2px;"></i>';
+    } else if (options.isChild) {
+      prefixH =
+        '<i class="fa-solid fa-link" style="font-size:9px;color:var(--ms-accent);opacity:0.5;width:14px;text-align:center;flex-shrink:0;"></i>';
+    } else {
+      prefixH = '<span style="width:14px;flex-shrink:0;"></span>';
+    }
+    var childCntBadge = hasChildren
+      ? '<span style="font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.10);padding:1px 5px;border-radius:3px;margin-left:4px;flex-shrink:0;">+' +
+        childIds.length +
+        "</span>"
+      : "";
+
+    return (
+      '<div class="ms-batch-tag-item" data-row-tagid="' +
+      t.id +
+      '" style="' +
+      indentStyle +
+      '">' +
+      prefixH +
+      '<div class="ms-batch-tag-info">' +
+      '<span class="ms-tag-chip" style="background:' +
+      t.color +
+      ';">' +
+      esc(t.name) +
+      "</span>" +
+      childCntBadge +
+      ownershipBadge +
+      '<span class="ms-batch-tag-cnt">' +
+      cnt +
+      "/" +
+      selectedIds.size +
+      "</span>" +
+      "</div>" +
+      '<button class="ms-batch-tag-btn add-btn" data-tagid="' +
+      t.id +
+      '" title="添加"><i class="fa-solid fa-plus"></i></button>' +
+      '<button class="ms-batch-tag-btn rm-btn" data-tagid="' +
+      t.id +
+      '" title="移除"><i class="fa-solid fa-minus"></i></button>' +
+      "</div>"
+    );
+  }
+
+  function buildSection(
+    title,
+    icon,
+    iconColor,
+    tags,
+    sectionKey,
+    badgeText,
+    mappingInfo,
+    usedIds,
+  ) {
+    var isOpen = _batchTagSectionState[sectionKey] !== false;
+    var bodyH = "";
+    if (tags.length === 0) {
+      bodyH =
+        '<div style="padding:10px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#666);font-style:italic;text-align:center;">' +
+        (sectionKey === "used" ? "本组还没用过任何标签" : "没有其他可用标签") +
+        "</div>";
+    } else {
+      tags.forEach(function (t) {
+        bodyH += buildTagRow(t, mappingInfo, sectionKey);
+        var mapping = mappingInfo.primaryMap[t.id];
+        if (mapping && _expandedMappings.has(mapping.id)) {
+          mappingInfo.children[mapping.id].forEach(function (childId) {
+            var childTag = getTag(childId);
+            if (!childTag) return;
+            var actualSection = usedIds.has(childId) ? "used" : "global";
+            bodyH += buildTagRow(childTag, mappingInfo, sectionKey, {
+              isChild: true,
+              actualSection: actualSection,
+            });
+          });
+        }
+      });
+    }
+    var _stickyCss =
+      sectionKey === "used"
+        ? "position:sticky;top:21px;z-index:9;background:rgba(var(--ms-accent-rgb),0.06);"
+        : "background:rgba(var(--ms-accent-rgb),0.06);";
+    return (
+      '<div class="ms-btag-section" data-section-key="' +
+      sectionKey +
+      '">' +
+      '<div class="ms-btag-section-header" data-toggle-section="' +
+      sectionKey +
+      '" style="display:flex;align-items:center;gap:6px;padding:7px 12px;' +
+      _stickyCss +
+      'cursor:pointer;user-select:none;border-bottom:1px solid var(--SmartThemeBorderColor,#444);font-size:11px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);">' +
+      '<i class="fa-solid fa-angle-' +
+      (isOpen ? "down" : "right") +
+      '" style="font-size:10px;color:var(--ms-accent);width:10px;"></i>' +
+      '<i class="fa-solid ' +
+      icon +
+      '" style="color:' +
+      iconColor +
+      ';font-size:11px;"></i>' +
+      '<span style="flex:1;">' +
+      title +
+      "</span>" +
+      '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-weight:normal;">' +
+      badgeText +
+      "</span>" +
+      "</div>" +
+      '<div class="ms-btag-section-body" data-section-body="' +
+      sectionKey +
+      '" style="display:' +
+      (isOpen ? "block" : "none") +
+      ';">' +
+      bodyH +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function buildTagContent() {
+    var usedIds = getUsedTagIds();
+    var mappingInfo = getMappingInfo();
+    var usedTags = [];
+    var globalTags = [];
+    data.settings.definedTags.forEach(function (t) {
+      if (mappingInfo.memberMap[t.id]) return;
+      if (usedIds.has(t.id)) usedTags.push(t);
+      else globalTags.push(t);
+    });
+
+    var html =
+      '<div style="position:sticky;top:-4px;z-index:10;">' +
+      '<div style="padding:6px 12px;background:rgba(var(--ms-accent-rgb),0.06);font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#888);border-bottom:1px solid var(--SmartThemeBorderColor,#444);">批量标签管理 · 已选 ' +
+      selectedIds.size +
+      " 项</div>" +
+      "</div>";
+
+    html += buildSection(
+      "本组已使用标签",
+      "fa-check-circle",
+      "var(--ms-accent)",
+      usedTags,
+      "used",
+      usedTags.length + " 个",
+      mappingInfo,
+      usedIds,
+    );
+    html += buildSection(
+      "全局标签",
+      "fa-tags",
+      "var(--SmartThemeQuoteColor,#888)",
+      globalTags,
+      "global",
+      globalTags.length + " 个",
+      mappingInfo,
+      usedIds,
+    );
+
+    html +=
+      '<div class="ms-batch-tag-item" style="border-top:1px solid var(--SmartThemeBorderColor,#444);">' +
+      '<div class="ms-batch-tag-info" style="cursor:pointer;color:var(--ms-accent);" id="ms-batch-new-tag"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>新建标签</div>' +
+      "</div>";
+
     return html;
   }
-  var $dd = openDropdown($p, buildTagContent(), { minWidth: "220px" });
+
+  var $dd = openDropdown($p, buildTagContent(), { minWidth: "280px" });
   if (!$dd) return;
   $dd.off("click");
+
+  $dd.on("click.btag", "[data-toggle-section]", function (e) {
+    e.stopPropagation();
+    var key = $(this).attr("data-toggle-section");
+    var $body = $dd.find('[data-section-body="' + key + '"]');
+    var $arrow = $(this).find(".fa-angle-down, .fa-angle-right");
+    var isOpen = $body.is(":visible");
+    if (isOpen) {
+      $body.hide();
+      $arrow.removeClass("fa-angle-down").addClass("fa-angle-right");
+      _batchTagSectionState[key] = false;
+    } else {
+      $body.show();
+      $arrow.removeClass("fa-angle-right").addClass("fa-angle-down");
+      _batchTagSectionState[key] = true;
+    }
+  });
+  $dd.on("click.btag", ".ms-btag-toggle", function (e) {
+    e.stopPropagation();
+    var mid = $(this).data("mapping-id");
+    if (_expandedMappings.has(mid)) _expandedMappings.delete(mid);
+    else _expandedMappings.add(mid);
+    $dd.html(buildTagContent());
+  });
+
   $dd.on("click.btag", "#ms-batch-new-tag", function (e) {
     e.stopPropagation();
     msPrompt("", {
@@ -7136,15 +7482,15 @@ function showBatchTagDropdown($p) {
       refreshKeepingState();
     });
   });
+
   var _btagRefreshTimer = null;
   $dd.on("click.btag", ".ms-batch-tag-btn", function (e) {
     e.stopPropagation();
-    const tid = $(this).data("tagid");
-    const isAdd = $(this).hasClass("add-btn");
-    const tagObj = getTag(tid);
-    let changed = 0;
-    selectedIds.forEach((pid) => {
-      const p = getPrompt(pid);
+    var tid = $(this).data("tagid");
+    var isAdd = $(this).hasClass("add-btn");
+    var changed = 0;
+    selectedIds.forEach(function (pid) {
+      var p = getPrompt(pid);
       if (!p) return;
       if (isAdd) {
         if (!p.tags.includes(tid)) {
@@ -7152,22 +7498,17 @@ function showBatchTagDropdown($p) {
           changed++;
         }
       } else {
-        const before = p.tags.length;
-        p.tags = p.tags.filter((id) => id !== tid);
+        var before = p.tags.length;
+        p.tags = p.tags.filter(function (id) {
+          return id !== tid;
+        });
         if (p.tags.length !== before) changed++;
       }
     });
     if (changed === 0) return;
     saveData();
-    const $row = $dd
-      .find('.ms-batch-tag-btn[data-tagid="' + tid + '"]')
-      .closest(".ms-batch-tag-item");
-    let cnt = 0;
-    selectedIds.forEach((pid) => {
-      const p = getPrompt(pid);
-      if (p && p.tags && p.tags.includes(tid)) cnt++;
-    });
-    $row.find(".ms-batch-tag-cnt").text(cnt + "/" + selectedIds.size);
+    $dd.html(buildTagContent());
+
     if (_btagRefreshTimer) clearTimeout(_btagRefreshTimer);
     _btagRefreshTimer = setTimeout(function () {
       _btagRefreshTimer = null;
@@ -8628,6 +8969,13 @@ function bindFilterEvents($p) {
       bindFilterEvents($p);
       renderBodyOnly();
     })
+    .on("click.msf", "#ms-tag-mapping-toggle", function () {
+      data.settings.tagFilterExactMatch = !data.settings.tagFilterExactMatch;
+      saveData();
+      $p.find("#ms-filter-panel").html(buildFilterPanel());
+      bindFilterEvents($p);
+      renderBodyOnly();
+    })
     .on("click.msf", "#ms-tag-exclude-toggle", function () {
       filterState.tagSelectMode =
         filterState.tagSelectMode === "exclude" ? "include" : "exclude";
@@ -8726,13 +9074,24 @@ function renderGroup(v) {
     var $noteInline = $p.find("#ms-title-note-inline");
     var $notePanel = $p.find("#ms-title-note-panel");
     var rawNote = String(g.note || "").trim();
-    var noteText = rawNote.replace(
+    var _noteLinkStore = [];
+    var _protectedNote = rawNote.replace(
+      /(!?\[[^\]]*\]\([^)]+\))/g,
+      function (m) {
+        _noteLinkStore.push(m);
+        return "\u0000MSLINK" + (_noteLinkStore.length - 1) + "\u0000";
+      },
+    );
+    var noteText = _protectedNote.replace(
       /(^|[\s(（])((?:https?:\/\/|www\.)[^\s<>"'）)]+)/g,
       function (m, prefix, url) {
         var href = url.indexOf("www.") === 0 ? "https://" + url : url;
         return prefix + "[" + url + "](" + href + ")";
       },
     );
+    noteText = noteText.replace(/\u0000MSLINK(\d+)\u0000/g, function (m, i) {
+      return _noteLinkStore[parseInt(i)];
+    });
     $notePanel.html(
       '<div class="ms-preview-content">' + renderMd(noteText) + "</div>",
     );
@@ -9964,189 +10323,343 @@ function renderHistoryDiff(v) {
   });
 }
 
-  function renderEdit(v) {
-    if (v.promptId && !getPrompt(v.promptId)) {
-      toast("warning", "这条剧场不存在了，可能已被删除");
-      navigateBack();
-      return;
-    }
-    var pr = v.promptId ? getPrompt(v.promptId) : null,
-      isNew = !pr;
-    const title = isNew ? "" : pr.title,
-      content = isNew ? "" : pr.content;
-    const groupId = isNew ? v.defaultGroupId || "" : pr.groupId || "";
-    const g = groupId ? getGroup(groupId) : null;
-    const author = isNew
-      ? g && g.defaultAuthor
-        ? g.defaultAuthor
-        : data.settings.defaultAuthor || ""
-      : pr.author || "";
-    const series = isNew ? v.defaultSeries || "" : pr.series || "";
-    const promptTags = isNew ? [] : pr.tags || [];
-    if (!v._savedEditState && !v._draftChecked) {
-      v._draftChecked = true;
-      var draft = loadDraft();
-      if (
-        draft &&
-        draft.savedAt &&
-        Date.now() - draft.savedAt < 86400000 &&
-        Date.now() - draft.savedAt > 5000 &&
-        (!draft.charKey || draft.charKey === getCurrentCharKeySafe())
-      ) {
-        var draftHasContent =
-          (draft.title && draft.title.trim()) ||
-          (draft.content && draft.content.trim());
-        var draftMatchesCurrent;
-        if (v.promptId) {
-          draftMatchesCurrent = draft.promptId === v.promptId;
-        } else {
-          draftMatchesCurrent = !draft.promptId;
-        }
-        if (draftHasContent && draftMatchesCurrent) {
-          v._pendingDraft = draft;
-        }
+function renderEdit(v) {
+  if (v.promptId && !getPrompt(v.promptId)) {
+    toast("warning", "这条剧场不存在了，可能已被删除");
+    navigateBack();
+    return;
+  }
+  var pr = v.promptId ? getPrompt(v.promptId) : null,
+    isNew = !pr;
+  const title = isNew ? "" : pr.title,
+    content = isNew ? "" : pr.content;
+  const groupId = isNew ? v.defaultGroupId || "" : pr.groupId || "";
+  const g = groupId ? getGroup(groupId) : null;
+  const author = isNew
+    ? g && g.defaultAuthor
+      ? g.defaultAuthor
+      : data.settings.defaultAuthor || ""
+    : pr.author || "";
+  const series = isNew ? v.defaultSeries || "" : pr.series || "";
+  const promptTags = isNew ? [] : pr.tags || [];
+  if (!v._savedEditState && !v._draftChecked) {
+    v._draftChecked = true;
+    var draft = loadDraft();
+    if (
+      draft &&
+      draft.savedAt &&
+      Date.now() - draft.savedAt < 86400000 &&
+      Date.now() - draft.savedAt > 5000 &&
+      (!draft.charKey || draft.charKey === getCurrentCharKeySafe())
+    ) {
+      var draftHasContent =
+        (draft.title && draft.title.trim()) ||
+        (draft.content && draft.content.trim());
+      var draftMatchesCurrent;
+      if (v.promptId) {
+        draftMatchesCurrent = draft.promptId === v.promptId;
+      } else {
+        draftMatchesCurrent = !draft.promptId;
+      }
+      if (draftHasContent && draftMatchesCurrent) {
+        v._pendingDraft = draft;
       }
     }
+  }
 
-    editDirty = false;
-    editSnapshot = JSON.stringify({
-      title,
-      content,
-      groupId,
-      author,
-      series,
-      tags: promptTags,
-      character: isNew ? v.defaultCharacter || "" : pr.character || "",
-    });
-    var $p = setupPage(
-      isNew ? "新建小剧场" : "编辑",
-      isNew ? "新建小剧场" : "编辑小剧场",
-    );
-    var editCharacter = isNew ? v.defaultCharacter || "" : pr.character || "";
-    var editCharacterIsLost = editCharacter && !isLocalCharKey(editCharacter);
-    let groupOpts = `<option value="">未分组</option>`;
-    data.groups.forEach((gg) => {
-      groupOpts += `<option value="${gg.id}" ${groupId === gg.id ? "selected" : ""}>${esc(gg.name)}</option>`;
-    });
-    function buildCharBindUI() {
-      var curKey = getCurrentCharKeySafe();
-      var curName = curKey ? getCharDisplayName(curKey) : "";
-      var h = "";
-      if (editCharacter && editCharacterIsLost) {
-        var lostName = String(editCharacter).replace(/\.[^.]+$/, "");
-        h +=
-          '<span class="ms-tag-toggle" style="background:rgba(var(--ms-danger-rgb),0.15);color:var(--ms-danger);border-color:var(--ms-danger);cursor:default;" title="本地找不到这张卡，建议去「失联角色」处理"><i class="fa-solid fa-user-slash" style="margin-right:3px;"></i>失联：' +
-          esc(truncate(lostName, 14)) +
-          "</span>";
-        h +=
-          '<button class="ms-tbtn" id="ms-char-unbind" style="padding:3px 8px;font-size:11px;"><i class="fa-solid fa-xmark"></i> 解绑</button>';
-      }
-      if (editCharacter) {
-        var bn = getCharDisplayName(editCharacter);
-        var bnTip = String(editCharacter).replace(/\.[^.]+$/, "");
-        var _editAp = getCharAvatarPathSafe(editCharacter);
-        var _editAvH = _editAp
-          ? '<img src="' +
-            esc(_editAp) +
-            '" style="width:14px;height:14px;border-radius:3px;object-fit:cover;vertical-align:middle;margin-right:3px;" onerror="this.style.display=\'none\';this.nextElementSibling&&(this.nextElementSibling.style.display=\'\');">'
-          : '<i class="fa-solid fa-user-check" style="margin-right:3px;"></i>';
-        h +=
-          '<span class="ms-tag-toggle active" title="' +
-          esc(bnTip) +
-          '" style="background:#b48cc8;cursor:default;">' +
-          _editAvH +
-          esc(bn) +
-          "</span>";
-        h +=
-          '<button class="ms-tbtn" id="ms-char-unbind" style="padding:3px 8px;font-size:11px;"><i class="fa-solid fa-xmark"></i> 解绑</button>';
-      }
-      if (curKey && editCharacter !== curKey) {
-        h +=
-          '<button class="ms-tbtn" id="ms-char-bind-current" style="padding:3px 8px;font-size:11px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-user-plus"></i> ' +
-          (editCharacter ? "改绑当前 (" : "绑定到当前 (") +
-          esc(truncate(curName, 12)) +
-          ")</button>";
-      }
-      var recent = Array.isArray(data.settings.recentBoundChars)
-        ? data.settings.recentBoundChars
-            .filter(function (k) {
-              return (
-                k && isLocalCharKey(k) && k !== editCharacter && k !== curKey
-              );
-            })
-            .slice(0, 3)
-        : [];
-      recent.forEach(function (k) {
-        var dn = getCharDisplayName(k);
-        var ap = getCharAvatarPathSafe(k);
-        var av = ap
-          ? '<img src="' +
-            esc(ap) +
-            '" style="width:14px;height:14px;border-radius:3px;object-fit:cover;vertical-align:middle;margin-right:3px;" onerror="this.style.display=\'none\';this.onerror=null;">'
-          : '<i class="fa-solid fa-user" style="font-size:10px;margin-right:3px;opacity:0.6;"></i>';
-        h +=
-          '<button class="ms-tbtn ms-char-bind-recent" data-rk="' +
-          esc(k) +
-          '" style="padding:3px 8px;font-size:11px;" title="最近：' +
-          esc(dn) +
-          '">' +
-          av +
-          esc(truncate(dn, 8)) +
-          "</button>";
-      });
+  editDirty = false;
+  editSnapshot = JSON.stringify({
+    title,
+    content,
+    groupId,
+    author,
+    series,
+    tags: promptTags,
+    character: isNew ? v.defaultCharacter || "" : pr.character || "",
+  });
+  var $p = setupPage(
+    isNew ? "新建小剧场" : "编辑",
+    isNew ? "新建小剧场" : "编辑小剧场",
+  );
+  var _editInitialTitleText = isNew ? "新建小剧场" : pr.title || "未命名";
+  $p.find("#ms-toolbar").html(
+    '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button>' +
+      '<span class="ms-edit-current-title" id="ms-edit-current-title" style="flex:1;min-width:0;font-size:13px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:0 6px;">' +
+      esc(_editInitialTitleText) +
+      "</span>",
+  );
+  var editCharacter = isNew ? v.defaultCharacter || "" : pr.character || "";
+  var editCharacterIsLost = editCharacter && !isLocalCharKey(editCharacter);
+  let groupOpts = `<option value="">未分组</option>`;
+  data.groups.forEach((gg) => {
+    groupOpts += `<option value="${gg.id}" ${groupId === gg.id ? "selected" : ""}>${esc(gg.name)}</option>`;
+  });
+  function buildCharBindUI() {
+    var curKey = getCurrentCharKeySafe();
+    var curName = curKey ? getCharDisplayName(curKey) : "";
+    var h = "";
+    if (editCharacter && editCharacterIsLost) {
+      var lostName = String(editCharacter).replace(/\.[^.]+$/, "");
       h +=
-        '<button class="ms-tbtn" id="ms-char-bind-search" style="padding:3px 8px;font-size:11px;"><i class="fa-solid fa-magnifying-glass"></i> 搜索绑定</button>';
-      if (!editCharacter && !curKey && recent.length === 0) {
-        h +=
-          '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);margin-left:4px;">未打开角色卡，仅能搜索绑定</span>';
-      }
-      return h;
+        '<span class="ms-tag-toggle" style="background:rgba(var(--ms-danger-rgb),0.15);color:var(--ms-danger);border-color:var(--ms-danger);cursor:default;" title="本地找不到这张卡，建议去「失联角色」处理"><i class="fa-solid fa-user-slash" style="margin-right:3px;"></i>失联：' +
+        esc(truncate(lostName, 14)) +
+        "</span>";
+      h +=
+        '<button class="ms-tbtn" id="ms-char-unbind" style="padding:3px 8px;font-size:11px;"><i class="fa-solid fa-xmark"></i> 解绑</button>';
     }
+    if (editCharacter) {
+      var bn = getCharDisplayName(editCharacter);
+      var bnTip = String(editCharacter).replace(/\.[^.]+$/, "");
+      var _editAp = getCharAvatarPathSafe(editCharacter);
+      var _editAvH = _editAp
+        ? '<img src="' +
+          esc(_editAp) +
+          '" style="width:14px;height:14px;border-radius:3px;object-fit:cover;vertical-align:middle;margin-right:3px;" onerror="this.style.display=\'none\';this.nextElementSibling&&(this.nextElementSibling.style.display=\'\');">'
+        : '<i class="fa-solid fa-user-check" style="margin-right:3px;"></i>';
+      h +=
+        '<span class="ms-tag-toggle active" title="' +
+        esc(bnTip) +
+        '" style="background:#b48cc8;cursor:default;">' +
+        _editAvH +
+        esc(bn) +
+        "</span>";
+      h +=
+        '<button class="ms-tbtn" id="ms-char-unbind" style="padding:3px 8px;font-size:11px;"><i class="fa-solid fa-xmark"></i> 解绑</button>';
+    }
+    if (curKey && editCharacter !== curKey) {
+      h +=
+        '<button class="ms-tbtn" id="ms-char-bind-current" style="padding:3px 8px;font-size:11px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-user-plus"></i> ' +
+        (editCharacter ? "改绑当前 (" : "绑定到当前 (") +
+        esc(truncate(curName, 12)) +
+        ")</button>";
+    }
+    var recent = Array.isArray(data.settings.recentBoundChars)
+      ? data.settings.recentBoundChars
+          .filter(function (k) {
+            return (
+              k && isLocalCharKey(k) && k !== editCharacter && k !== curKey
+            );
+          })
+          .slice(0, 3)
+      : [];
+    recent.forEach(function (k) {
+      var dn = getCharDisplayName(k);
+      var ap = getCharAvatarPathSafe(k);
+      var av = ap
+        ? '<img src="' +
+          esc(ap) +
+          '" style="width:14px;height:14px;border-radius:3px;object-fit:cover;vertical-align:middle;margin-right:3px;" onerror="this.style.display=\'none\';this.onerror=null;">'
+        : '<i class="fa-solid fa-user" style="font-size:10px;margin-right:3px;opacity:0.6;"></i>';
+      h +=
+        '<button class="ms-tbtn ms-char-bind-recent" data-rk="' +
+        esc(k) +
+        '" style="padding:3px 8px;font-size:11px;" title="最近：' +
+        esc(dn) +
+        '">' +
+        av +
+        esc(truncate(dn, 8)) +
+        "</button>";
+    });
+    h +=
+      '<button class="ms-tbtn" id="ms-char-bind-search" style="padding:3px 8px;font-size:11px;"><i class="fa-solid fa-magnifying-glass"></i> 搜索绑定</button>';
+    if (!editCharacter && !curKey && recent.length === 0) {
+      h +=
+        '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);margin-left:4px;">未打开角色卡，仅能搜索绑定</span>';
+    }
+    return h;
+  }
 
-    let editTags = [...promptTags];
-    const stats = countStats(content);
-    function buildTagsUI() {
-      let h = "";
-      data.settings.definedTags.forEach((t) => {
-        const a = editTags.includes(t.id);
-        h += `<span class="ms-tag-toggle ${a ? "active" : ""}" data-tag-id="${t.id}" style="${a ? "background:" + t.color + ";" : ""}">${esc(t.name)}${a ? '<i class="fa-solid fa-xmark ms-tag-x"></i>' : ""}</span>`;
+  let editTags = [...promptTags];
+  const stats = countStats(content);
+  let _editTagTab = "used";
+  let _editTagExpandedMappings = new Set();
+
+  function _getEditUsedTagIds() {
+    var $sel = $p.find("#ms-edit-group");
+    var curGid = $sel.length > 0 ? $sel.val() || null : groupId || null;
+    var used = new Set();
+    editTags.forEach(function (tid) {
+      if (getTag(tid)) used.add(tid);
+    });
+    data.prompts.forEach(function (p) {
+      if (v.promptId && p.id === v.promptId) return;
+      var pgid = p.groupId || null;
+      if (pgid !== curGid) return;
+      (p.tags || []).forEach(function (tid) {
+        if (getTag(tid)) used.add(tid);
       });
-      h += `<span class="ms-add-tag-btn" id="ms-quick-add-tag"><i class="fa-solid fa-plus"></i></span>`;
-      return h;
-    }
-    function markDirty() {
-      const cur = JSON.stringify({
-        title: $p.find("#ms-edit-title").val() || "",
-        content: $p.find("#ms-edit-content").val() || "",
-        groupId: $p.find("#ms-edit-group").val() || "",
-        author: $p.find("#ms-edit-author").val() || "",
-        series: $p.find("#ms-edit-series").val() || "",
-        tags: editTags,
-        character: editCharacter,
+    });
+    return used;
+  }
+
+  function _getEditMappingInfo() {
+    var primaryMap = {},
+      memberMap = {},
+      children = {};
+    (data.settings.tagMappings || []).forEach(function (m) {
+      if (!Array.isArray(m.tagIds) || m.tagIds.length === 0) return;
+      var primary = m.primaryTagId;
+      if (!primary || m.tagIds.indexOf(primary) < 0) primary = m.tagIds[0];
+      if (!primary || !getTag(primary)) return;
+      primaryMap[primary] = m;
+      children[m.id] = [];
+      m.tagIds.forEach(function (tid) {
+        if (tid !== primary && getTag(tid)) {
+          if (!memberMap[tid]) memberMap[tid] = m;
+          children[m.id].push(tid);
+        }
       });
-      editDirty = cur !== editSnapshot;
+    });
+    return { primaryMap: primaryMap, memberMap: memberMap, children: children };
+  }
+
+  function _buildEditTagChip(t, mappingInfo, isChild, ownershipBadge) {
+    var a = editTags.includes(t.id);
+    var mapping = !isChild ? mappingInfo.primaryMap[t.id] : null;
+    var childIds = mapping ? mappingInfo.children[mapping.id] : null;
+    var hasChildren = childIds && childIds.length > 0;
+    var isExpanded = mapping && _editTagExpandedMappings.has(mapping.id);
+
+    var bgStyle = a ? "background:" + t.color + ";" : "";
+    var dashStyle = isChild ? "border-style:dashed;" : "";
+
+    var inner = esc(t.name);
+    if (hasChildren) {
+      inner +=
+        ' <span class="ms-edit-tag-expand" data-toggle-edit-mapping="' +
+        mapping.id +
+        '" style="display:inline-flex;align-items:center;gap:2px;font-size:9px;background:rgba(var(--ms-accent-rgb),0.15);color:var(--ms-accent);padding:1px 5px;border-radius:3px;margin-left:3px;cursor:pointer;">' +
+        '<i class="fa-solid fa-angle-' +
+        (isExpanded ? "down" : "right") +
+        '" style="font-size:8px;"></i>' +
+        childIds.length +
+        "</span>";
     }
-    var _draftBannerH = "";
-    if (v._pendingDraft) {
-      var _d = v._pendingDraft;
-      var _dAge = Math.round((Date.now() - _d.savedAt) / 60000);
-      var _dTimeStr =
-        _dAge < 60 ? _dAge + " 分钟前" : Math.round(_dAge / 60) + " 小时前";
-      var _dMatch = _d.promptId === (v.promptId || null);
-      _draftBannerH =
-        '<div id="ms-draft-banner" style="padding:8px 12px;background:rgba(var(--ms-accent-rgb),0.10);border:1px solid rgba(var(--ms-accent-rgb),0.25);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;"><i class="fa-solid fa-clock-rotate-left" style="color:var(--ms-accent);flex-shrink:0;"></i><span style="flex:1;min-width:0;color:var(--SmartThemeBodyColor,#ccc);">检测到 ' +
-        _dTimeStr +
-        " 的未保存草稿" +
-        (_dMatch
-          ? ""
-          : "（来自另一条剧场「" + esc(truncate(_d.title, 15)) + "」）") +
-        '</span><button class="ms-tbtn" id="ms-draft-restore" style="padding:3px 10px;font-size:11px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-rotate-left" style="margin-right:3px;"></i>恢复</button><button class="ms-tbtn" id="ms-draft-discard" style="padding:3px 10px;font-size:11px;"><i class="fa-solid fa-xmark" style="margin-right:3px;"></i>丢弃</button></div>';
-    }
-    $p.find("#ms-body").html(`<div class="ms-form-edit">${_draftBannerH}
+    if (ownershipBadge) inner += ownershipBadge;
+    if (a) inner += '<i class="fa-solid fa-xmark ms-tag-x"></i>';
+
+    return (
+      '<span class="ms-tag-toggle' +
+      (a ? " active" : "") +
+      '" data-tag-id="' +
+      t.id +
+      '" style="' +
+      bgStyle +
+      dashStyle +
+      '">' +
+      inner +
+      "</span>"
+    );
+  }
+
+  function buildTagsTabsHTML() {
+    var usedIds = _getEditUsedTagIds();
+    var mappingInfo = _getEditMappingInfo();
+    var usedCount = 0,
+      globalCount = 0;
+    data.settings.definedTags.forEach(function (t) {
+      var inGroup = usedIds.has(t.id);
+      if (inGroup) {
+        if (mappingInfo.memberMap[t.id]) return;
+        usedCount++;
+      } else {
+        globalCount++;
+      }
+    });
+    var h = "";
+    h +=
+      '<button class="ms-tbtn ms-edit-tag-tab' +
+      (_editTagTab === "used" ? " active" : "") +
+      '" data-tag-tab="used" style="padding:2px 8px;font-size:10px;"><i class="fa-solid fa-check-circle" style="margin-right:3px;font-size:9px;"></i>本组 (' +
+      usedCount +
+      ")</button>";
+    h +=
+      '<button class="ms-tbtn ms-edit-tag-tab' +
+      (_editTagTab === "global" ? " active" : "") +
+      '" data-tag-tab="global" style="padding:2px 8px;font-size:10px;"><i class="fa-solid fa-tags" style="margin-right:3px;font-size:9px;"></i>全局 (' +
+      globalCount +
+      ")</button>";
+    return h;
+  }
+
+  function buildTagsUI() {
+    var h = "";
+    var usedIds = _getEditUsedTagIds();
+    var mappingInfo = _getEditMappingInfo();
+    data.settings.definedTags.forEach(function (t) {
+      var actualSection = usedIds.has(t.id) ? "used" : "global";
+      if (actualSection !== _editTagTab) return;
+      if (_editTagTab === "used" && mappingInfo.memberMap[t.id]) return;
+
+      h += _buildEditTagChip(t, mappingInfo, false, "");
+
+      if (_editTagTab === "used") {
+        var mapping = mappingInfo.primaryMap[t.id];
+        if (mapping && _editTagExpandedMappings.has(mapping.id)) {
+          mappingInfo.children[mapping.id].forEach(function (childId) {
+            var childTag = getTag(childId);
+            if (!childTag) return;
+            var childActualSection = usedIds.has(childId) ? "used" : "global";
+            var ownershipBadge = "";
+            if (childActualSection !== _editTagTab) {
+              var label = childActualSection === "used" ? "本组" : "全局";
+              var bgC =
+                childActualSection === "used"
+                  ? "background:rgba(var(--ms-accent-rgb),0.22);color:var(--ms-accent);"
+                  : "background:rgba(255,255,255,0.12);color:var(--SmartThemeQuoteColor,#aaa);";
+              ownershipBadge =
+                '<span style="font-size:8px;padding:1px 4px;border-radius:3px;margin-left:3px;' +
+                bgC +
+                '">' +
+                label +
+                "</span>";
+            }
+            h += _buildEditTagChip(childTag, mappingInfo, true, ownershipBadge);
+          });
+        }
+      }
+    });
+
+    h +=
+      '<span class="ms-add-tag-btn" id="ms-quick-add-tag"><i class="fa-solid fa-plus"></i></span>';
+
+    $p.find("#ms-edit-tags-tabs").html(buildTagsTabsHTML());
+    return h;
+  }
+
+  function markDirty() {
+    const cur = JSON.stringify({
+      title: $p.find("#ms-edit-title").val() || "",
+      content: $p.find("#ms-edit-content").val() || "",
+      groupId: $p.find("#ms-edit-group").val() || "",
+      author: $p.find("#ms-edit-author").val() || "",
+      series: $p.find("#ms-edit-series").val() || "",
+      tags: editTags,
+      character: editCharacter,
+    });
+    editDirty = cur !== editSnapshot;
+  }
+  var _draftBannerH = "";
+  if (v._pendingDraft) {
+    var _d = v._pendingDraft;
+    var _dAge = Math.round((Date.now() - _d.savedAt) / 60000);
+    var _dTimeStr =
+      _dAge < 60 ? _dAge + " 分钟前" : Math.round(_dAge / 60) + " 小时前";
+    var _dMatch = _d.promptId === (v.promptId || null);
+    _draftBannerH =
+      '<div id="ms-draft-banner" style="padding:8px 12px;background:rgba(var(--ms-accent-rgb),0.10);border:1px solid rgba(var(--ms-accent-rgb),0.25);border-radius:8px;margin-bottom:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;"><i class="fa-solid fa-clock-rotate-left" style="color:var(--ms-accent);flex-shrink:0;"></i><span style="flex:1;min-width:0;color:var(--SmartThemeBodyColor,#ccc);">检测到 ' +
+      _dTimeStr +
+      " 的未保存草稿" +
+      (_dMatch
+        ? ""
+        : "（来自另一条剧场「" + esc(truncate(_d.title, 15)) + "」）") +
+      '</span><button class="ms-tbtn" id="ms-draft-restore" style="padding:3px 10px;font-size:11px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-rotate-left" style="margin-right:3px;"></i>恢复</button><button class="ms-tbtn" id="ms-draft-discard" style="padding:3px 10px;font-size:11px;"><i class="fa-solid fa-xmark" style="margin-right:3px;"></i>丢弃</button></div>';
+  }
+  $p.find("#ms-body").html(`<div class="ms-form-edit">${_draftBannerH}
       <div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>标题</label><input type="text" id="ms-edit-title" placeholder="小剧场名字" value="${esc(title)}"></div><div class="ms-field" style="flex:1;"><label>系列 <span style="font-weight:350;opacity:0.5;">(同系列自动聚合)</span></label><input type="text" id="ms-edit-series" placeholder="如：「衣柜大公开」" value="${esc(series)}"></div></div>
       <div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>分组</label><select id="ms-edit-group">${groupOpts}</select></div><div class="ms-field" style="flex:1;"><label>作者</label><input type="text" id="ms-edit-author" placeholder="署名" value="${esc(author)}"></div></div>
       <div class="ms-field"><label>绑定角色 <span style="font-weight:350;opacity:0.5;">(可选，绑定后会出现在角色专属页)</span></label><div id="ms-edit-char-wrap" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;"></div></div>
-      <div class="ms-field"><label>标签</label><div class="ms-tag-row" id="ms-edit-tags">${buildTagsUI()}</div></div>
+      <div class="ms-field"><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;"><label style="margin:0;">标签</label><div id="ms-edit-tags-tabs" style="display:flex;gap:4px;">${buildTagsTabsHTML()}</div></div><div class="ms-tag-row" id="ms-edit-tags">${buildTagsUI()}</div></div>
       <div class="ms-field ms-content-field">
         <label>内容</label>
         <div class="ms-md-toolbar">
@@ -10191,1057 +10704,1072 @@ function renderHistoryDiff(v) {
       <div class="ms-char-count" id="ms-char-count">${stats.chars} 字 · ${stats.lines} 行</div>
       <div class="ms-form-btns"><button class="ms-btn" id="ms-edit-cancel">取消</button><button class="ms-btn primary" id="ms-edit-save">保存</button></div>
     </div>`);
-    $p.find("#ms-footer").hide();
-    bindAllEvents();
-    const getTa = () => $p.find("#ms-edit-content")[0];
-    let um = null;
-    if (!v._savedEditState) um = createUndoManager(getTa);
-    const isMobile =
-      /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
-      window.innerWidth < 768;
-    if (isMobile) {
-      $p.find("#ms-body").on("focus.ms", "#ms-edit-content", function () {
-        const ta = this;
-        setTimeout(() => {
-          ta.scrollIntoView({ behavior: "smooth", block: "center" });
-        }, 350);
-      });
-    }
-    $p.find("#ms-body").on("click.ms", "#ms-draft-restore", function () {
-      var draft = v._pendingDraft;
-      if (!draft) return;
-      $p.find("#ms-edit-title").val(draft.title || "");
-      $p.find("#ms-edit-content").val(draft.content || "");
-      $p.find("#ms-edit-group").val(draft.groupId || "");
-      $p.find("#ms-edit-author").val(draft.author || "");
-      $p.find("#ms-edit-series").val(draft.series || "");
-      editTags = draft.tags ? [...draft.tags] : [];
-      editCharacter = draft.character || "";
-      if (editCharacter && !isLocalCharKey(editCharacter)) {
-        editCharacter = "";
-      }
-      $p.find("#ms-edit-tags").html(buildTagsUI());
-      $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
-      var rs = countStats(draft.content || "");
-      $p.find("#ms-char-count").text(rs.chars + " 字 · " + rs.lines + " 行");
-      markDirty();
-      $p.find("#ms-draft-banner").slideUp(200, function () {
-        $(this).remove();
-      });
-      delete v._pendingDraft;
-      clearDraft();
-      toast("success", "草稿已恢复");
+  $p.find("#ms-footer").hide();
+  bindAllEvents();
+  const getTa = () => $p.find("#ms-edit-content")[0];
+  let um = null;
+  if (!v._savedEditState) um = createUndoManager(getTa);
+  const isMobile =
+    /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+    window.innerWidth < 768;
+  if (isMobile) {
+    $p.find("#ms-body").on("focus.ms", "#ms-edit-content", function () {
+      const ta = this;
+      setTimeout(() => {
+        ta.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 350);
     });
-    $p.find("#ms-body").on("click.ms", "#ms-draft-discard", function () {
-      $p.find("#ms-draft-banner").slideUp(200, function () {
-        $(this).remove();
-      });
-      delete v._pendingDraft;
-      clearDraft();
-    });
-
-    $p.find("#ms-body").on(
-      "click.ms",
-      "#ms-edit-tags .ms-tag-toggle",
-      function () {
-        const tid = $(this).data("tag-id"),
-          idx = editTags.indexOf(tid);
-        if (idx >= 0) editTags.splice(idx, 1);
-        else editTags.push(tid);
-        $p.find("#ms-edit-tags").html(buildTagsUI());
-        markDirty();
-      },
-    );
-    $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
-    $p.find("#ms-body").on("click.ms", "#ms-char-unbind", function () {
+  }
+  $p.find("#ms-body").on("click.ms", "#ms-draft-restore", function () {
+    var draft = v._pendingDraft;
+    if (!draft) return;
+    $p.find("#ms-edit-title").val(draft.title || "");
+    $p.find("#ms-edit-content").val(draft.content || "");
+    $p.find("#ms-edit-group").val(draft.groupId || "");
+    $p.find("#ms-edit-author").val(draft.author || "");
+    $p.find("#ms-edit-series").val(draft.series || "");
+    editTags = draft.tags ? [...draft.tags] : [];
+    editCharacter = draft.character || "";
+    if (editCharacter && !isLocalCharKey(editCharacter)) {
       editCharacter = "";
-      $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
-      markDirty();
+    }
+    $p.find("#ms-edit-tags").html(buildTagsUI());
+    $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
+    var rs = countStats(draft.content || "");
+    $p.find("#ms-char-count").text(rs.chars + " 字 · " + rs.lines + " 行");
+    markDirty();
+    $p.find("#ms-draft-banner").slideUp(200, function () {
+      $(this).remove();
     });
-    $p.find("#ms-body").on("click.ms", "#ms-char-bind-current", function () {
-      var curKey = getCurrentCharKeySafe();
-      if (!curKey) {
-        toast("warning", "当前未打开角色卡");
+    delete v._pendingDraft;
+    clearDraft();
+    toast("success", "草稿已恢复");
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-draft-discard", function () {
+    $p.find("#ms-draft-banner").slideUp(200, function () {
+      $(this).remove();
+    });
+    delete v._pendingDraft;
+    clearDraft();
+  });
+
+  $p.find("#ms-body").on(
+    "click.ms",
+    "#ms-edit-tags .ms-tag-toggle",
+    function (e) {
+      if ($(e.target).closest(".ms-edit-tag-expand").length) return;
+      const tid = $(this).data("tag-id"),
+        idx = editTags.indexOf(tid);
+      if (idx >= 0) editTags.splice(idx, 1);
+      else editTags.push(tid);
+      $p.find("#ms-edit-tags").html(buildTagsUI());
+      markDirty();
+    },
+  );
+  $p.find("#ms-body").on(
+    "click.ms",
+    "#ms-edit-tags-tabs .ms-edit-tag-tab",
+    function (e) {
+      e.stopPropagation();
+      e.preventDefault();
+      _editTagTab = $(this).data("tag-tab");
+      $p.find("#ms-edit-tags").html(buildTagsUI());
+    },
+  );
+  $p.find("#ms-body").on(
+    "click.ms",
+    "#ms-edit-tags [data-toggle-edit-mapping]",
+    function (e) {
+      e.stopPropagation();
+      e.preventDefault();
+      var mid = $(this).attr("data-toggle-edit-mapping");
+      if (_editTagExpandedMappings.has(mid))
+        _editTagExpandedMappings.delete(mid);
+      else _editTagExpandedMappings.add(mid);
+      $p.find("#ms-edit-tags").html(buildTagsUI());
+    },
+  );
+  $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
+  $p.find("#ms-body").on("click.ms", "#ms-char-unbind", function () {
+    editCharacter = "";
+    $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
+    markDirty();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-char-bind-current", function () {
+    var curKey = getCurrentCharKeySafe();
+    if (!curKey) {
+      toast("warning", "当前未打开角色卡");
+      return;
+    }
+    editCharacter = curKey;
+    recordRecentBoundChar(curKey);
+    $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
+    markDirty();
+  });
+  $p.find("#ms-body").on("click.ms", ".ms-char-bind-recent", function () {
+    var k = $(this).data("rk");
+    if (!k) return;
+    editCharacter = k;
+    recordRecentBoundChar(k);
+    $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
+    markDirty();
+    toast("success", "已绑定: " + getCharDisplayName(k));
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-char-bind-search", function () {
+    if ($p.find("#ms-char-search-popup").length) {
+      $p.find("#ms-char-search-popup").remove();
+      $p.off("pointerdown.ms-char-search-close");
+      return;
+    }
+    var currentGid = $p.find("#ms-edit-group").val() || "";
+    var currentG = currentGid ? getGroup(currentGid) : null;
+    var ipGroupKeys = [];
+    var ipGroupName = "";
+    if (currentG && isIPGroup(currentG)) {
+      ipGroupKeys = getIPGroupCharKeys(currentG);
+      ipGroupName = currentG.name;
+    }
+    var allKeys = [];
+    try {
+      if (typeof SillyTavern !== "undefined" && SillyTavern.characters) {
+        allKeys = SillyTavern.characters
+          .map(function (c) {
+            return c.avatar;
+          })
+          .filter(Boolean);
+      }
+    } catch (e) {}
+    if (allKeys.length === 0) {
+      var historyKeys = Object.keys(getAllCharactersWithStages());
+      if (historyKeys.length === 0) {
+        toast("warning", "没有可绑定的角色");
         return;
       }
-      editCharacter = curKey;
-      recordRecentBoundChar(curKey);
-      $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
-      markDirty();
+      allKeys = historyKeys;
+    }
+    $p.find("#ms-char-search-popup").remove();
+    var popH =
+      '<div id="ms-char-search-popup" style="position:absolute;z-index:5005;background:var(--ms-popup-bg,var(--SmartThemeBlurTintColor,#2a2a3a));border:1px solid var(--SmartThemeBorderColor,#444);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.4);width:280px;max-width:90vw;padding:8px;display:flex;flex-direction:column;gap:6px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);">';
+    popH +=
+      '<input type="text" id="ms-char-search-input" placeholder="输入角色名搜索..." style="padding:6px 10px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:12px;outline:none;">';
+    popH +=
+      '<div id="ms-char-search-list" style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;"></div>';
+    popH += "</div>";
+    var btnRect = this.getBoundingClientRect();
+    var panelRect = $p[0].getBoundingClientRect();
+    $p.append(popH);
+    var $pop = $p.find("#ms-char-search-popup");
+    var topPos = btnRect.bottom - panelRect.top + 4;
+    var leftPos = btnRect.left - panelRect.left;
+    var maxLeft = panelRect.width - 290;
+    if (leftPos > maxLeft) leftPos = maxLeft;
+    if (leftPos < 8) leftPos = 8;
+    $pop.css({ top: topPos + "px", left: leftPos + "px" });
+
+    function renderCharList(kw) {
+      var lkw = (kw || "").trim().toLowerCase();
+      var matched = allKeys.filter(function (k) {
+        if (!lkw) return true;
+        return getCharDisplayName(k).toLowerCase().indexOf(lkw) >= 0;
+      });
+      var $list = $pop.find("#ms-char-search-list");
+      var validIpKeys = !lkw
+        ? ipGroupKeys.filter(function (k) {
+            return allKeys.indexOf(k) >= 0;
+          })
+        : [];
+      if (matched.length === 0 && validIpKeys.length === 0) {
+        $list.html(
+          '<div style="padding:12px;text-align:center;color:var(--SmartThemeQuoteColor,#666);font-size:12px;">没有匹配的角色</div>',
+        );
+        return;
+      }
+      function renderItem(k, isFromIP) {
+        var dn = getCharDisplayName(k);
+        var ap = getCharAvatarPathSafe(k);
+        var avH = ap
+          ? '<img src="' +
+            esc(ap) +
+            '" loading="lazy" decoding="async" style="width:24px;height:24px;border-radius:4px;object-fit:cover;flex-shrink:0;" onerror="this.style.display=\'none\';this.onerror=null;">'
+          : '<i class="fa-solid fa-user" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:#b48cc8;flex-shrink:0;"></i>';
+        var isCur = editCharacter === k;
+        var bgStyle = isCur
+          ? "background:rgba(var(--ms-accent-rgb),0.15);"
+          : isFromIP
+            ? "background:rgba(var(--ms-accent-rgb),0.05);"
+            : "";
+        return (
+          '<div class="ms-char-search-item" data-key="' +
+          esc(k) +
+          '" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:5px;cursor:pointer;transition:background 0.12s;' +
+          bgStyle +
+          '">' +
+          avH +
+          '<span style="flex:1;font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+          esc(dn) +
+          "</span>" +
+          (isCur
+            ? '<i class="fa-solid fa-check" style="color:var(--ms-accent);font-size:11px;"></i>'
+            : "") +
+          "</div>"
+        );
+      }
+      var listH = "";
+      var renderedKeys = new Set();
+      if (validIpKeys.length > 0) {
+        listH +=
+          '<div style="font-size:10px;color:var(--ms-accent);padding:6px 8px 4px;font-weight:600;display:flex;align-items:center;gap:4px;"><i class="fa-solid fa-layer-group" style="font-size:9px;"></i>本分组成员（' +
+          esc(ipGroupName) +
+          "）</div>";
+        validIpKeys.forEach(function (k) {
+          listH += renderItem(k, true);
+          renderedKeys.add(k);
+        });
+        listH +=
+          '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);padding:8px 8px 4px;font-weight:600;border-top:1px solid rgba(255,255,255,0.04);margin-top:4px;display:flex;align-items:center;gap:4px;"><i class="fa-solid fa-list" style="font-size:9px;"></i>全部角色</div>';
+      }
+      var shownCount = 0;
+      for (var i = 0; i < matched.length && shownCount < 50; i++) {
+        if (renderedKeys.has(matched[i])) continue;
+        listH += renderItem(matched[i], false);
+        shownCount++;
+      }
+      var totalRemaining = matched.length - renderedKeys.size;
+      if (totalRemaining > 50) {
+        listH +=
+          '<div style="padding:6px;text-align:center;font-size:10px;color:var(--SmartThemeQuoteColor,#666);">仅显示前 50 个，请继续输入缩小范围</div>';
+      }
+      $list.html(listH);
+    }
+    renderCharList("");
+    $pop.find("#ms-char-search-input").focus();
+    $pop.on("input", "#ms-char-search-input", function () {
+      renderCharList($(this).val());
     });
-    $p.find("#ms-body").on("click.ms", ".ms-char-bind-recent", function () {
-      var k = $(this).data("rk");
-      if (!k) return;
+    $pop.on("mouseenter", ".ms-char-search-item", function () {
+      $(this).css("background", "rgba(255,255,255,0.08)");
+    });
+    $pop.on("mouseleave", ".ms-char-search-item", function () {
+      var k = $(this).data("key");
+      $(this).css(
+        "background",
+        editCharacter === k ? "rgba(var(--ms-accent-rgb),0.15)" : "",
+      );
+    });
+    $pop.on("click", ".ms-char-search-item", function () {
+      var k = $(this).data("key");
       editCharacter = k;
       recordRecentBoundChar(k);
       $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
       markDirty();
       toast("success", "已绑定: " + getCharDisplayName(k));
+      closeCharSearchPopup();
     });
-    $p.find("#ms-body").on("click.ms", "#ms-char-bind-search", function () {
-      if ($p.find("#ms-char-search-popup").length) {
-        $p.find("#ms-char-search-popup").remove();
-        $p.off("pointerdown.ms-char-search-close");
-        return;
-      }
-      var currentGid = $p.find("#ms-edit-group").val() || "";
-      var currentG = currentGid ? getGroup(currentGid) : null;
-      var ipGroupKeys = [];
-      var ipGroupName = "";
-      if (currentG && isIPGroup(currentG)) {
-        ipGroupKeys = getIPGroupCharKeys(currentG);
-        ipGroupName = currentG.name;
-      }
-      var allKeys = [];
-      try {
-        if (typeof SillyTavern !== "undefined" && SillyTavern.characters) {
-          allKeys = SillyTavern.characters
-            .map(function (c) {
-              return c.avatar;
-            })
-            .filter(Boolean);
-        }
-      } catch (e) {}
-      if (allKeys.length === 0) {
-        var historyKeys = Object.keys(getAllCharactersWithStages());
-        if (historyKeys.length === 0) {
-          toast("warning", "没有可绑定的角色");
-          return;
-        }
-        allKeys = historyKeys;
-      }
+    function closeCharSearchPopup() {
       $p.find("#ms-char-search-popup").remove();
-      var popH =
-        '<div id="ms-char-search-popup" style="position:absolute;z-index:5005;background:var(--ms-popup-bg,var(--SmartThemeBlurTintColor,#2a2a3a));border:1px solid var(--SmartThemeBorderColor,#444);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.4);width:280px;max-width:90vw;padding:8px;display:flex;flex-direction:column;gap:6px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);">';
-      popH +=
-        '<input type="text" id="ms-char-search-input" placeholder="输入角色名搜索..." style="padding:6px 10px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:12px;outline:none;">';
-      popH +=
-        '<div id="ms-char-search-list" style="max-height:280px;overflow-y:auto;display:flex;flex-direction:column;gap:2px;"></div>';
-      popH += "</div>";
-      var btnRect = this.getBoundingClientRect();
-      var panelRect = $p[0].getBoundingClientRect();
-      $p.append(popH);
-      var $pop = $p.find("#ms-char-search-popup");
-      var topPos = btnRect.bottom - panelRect.top + 4;
-      var leftPos = btnRect.left - panelRect.left;
-      var maxLeft = panelRect.width - 290;
-      if (leftPos > maxLeft) leftPos = maxLeft;
-      if (leftPos < 8) leftPos = 8;
-      $pop.css({ top: topPos + "px", left: leftPos + "px" });
-
-      function renderCharList(kw) {
-        var lkw = (kw || "").trim().toLowerCase();
-        var matched = allKeys.filter(function (k) {
-          if (!lkw) return true;
-          return getCharDisplayName(k).toLowerCase().indexOf(lkw) >= 0;
-        });
-        var $list = $pop.find("#ms-char-search-list");
-        var validIpKeys = !lkw
-          ? ipGroupKeys.filter(function (k) {
-              return allKeys.indexOf(k) >= 0;
-            })
-          : [];
-        if (matched.length === 0 && validIpKeys.length === 0) {
-          $list.html(
-            '<div style="padding:12px;text-align:center;color:var(--SmartThemeQuoteColor,#666);font-size:12px;">没有匹配的角色</div>',
-          );
+      $p.off("pointerdown.ms-char-search-close");
+    }
+    setTimeout(function () {
+      $p.on("pointerdown.ms-char-search-close", function (ev) {
+        if (
+          $(ev.target).closest("#ms-char-search-popup, #ms-char-bind-search")
+            .length
+        )
           return;
-        }
-        function renderItem(k, isFromIP) {
-          var dn = getCharDisplayName(k);
-          var ap = getCharAvatarPathSafe(k);
-          var avH = ap
-            ? '<img src="' +
-              esc(ap) +
-              '" loading="lazy" decoding="async" style="width:24px;height:24px;border-radius:4px;object-fit:cover;flex-shrink:0;" onerror="this.style.display=\'none\';this.onerror=null;">'
-            : '<i class="fa-solid fa-user" style="width:24px;height:24px;display:flex;align-items:center;justify-content:center;color:#b48cc8;flex-shrink:0;"></i>';
-          var isCur = editCharacter === k;
-          var bgStyle = isCur
-            ? "background:rgba(var(--ms-accent-rgb),0.15);"
-            : isFromIP
-              ? "background:rgba(var(--ms-accent-rgb),0.05);"
-              : "";
-          return (
-            '<div class="ms-char-search-item" data-key="' +
-            esc(k) +
-            '" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:5px;cursor:pointer;transition:background 0.12s;' +
-            bgStyle +
-            '">' +
-            avH +
-            '<span style="flex:1;font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
-            esc(dn) +
-            "</span>" +
-            (isCur
-              ? '<i class="fa-solid fa-check" style="color:var(--ms-accent);font-size:11px;"></i>'
-              : "") +
-            "</div>"
-          );
-        }
-        var listH = "";
-        var renderedKeys = new Set();
-        if (validIpKeys.length > 0) {
-          listH +=
-            '<div style="font-size:10px;color:var(--ms-accent);padding:6px 8px 4px;font-weight:600;display:flex;align-items:center;gap:4px;"><i class="fa-solid fa-layer-group" style="font-size:9px;"></i>本分组成员（' +
-            esc(ipGroupName) +
-            "）</div>";
-          validIpKeys.forEach(function (k) {
-            listH += renderItem(k, true);
-            renderedKeys.add(k);
-          });
-          listH +=
-            '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);padding:8px 8px 4px;font-weight:600;border-top:1px solid rgba(255,255,255,0.04);margin-top:4px;display:flex;align-items:center;gap:4px;"><i class="fa-solid fa-list" style="font-size:9px;"></i>全部角色</div>';
-        }
-        var shownCount = 0;
-        for (var i = 0; i < matched.length && shownCount < 50; i++) {
-          if (renderedKeys.has(matched[i])) continue;
-          listH += renderItem(matched[i], false);
-          shownCount++;
-        }
-        var totalRemaining = matched.length - renderedKeys.size;
-        if (totalRemaining > 50) {
-          listH +=
-            '<div style="padding:6px;text-align:center;font-size:10px;color:var(--SmartThemeQuoteColor,#666);">仅显示前 50 个，请继续输入缩小范围</div>';
-        }
-        $list.html(listH);
-      }
-      renderCharList("");
-      $pop.find("#ms-char-search-input").focus();
-      $pop.on("input", "#ms-char-search-input", function () {
-        renderCharList($(this).val());
-      });
-      $pop.on("mouseenter", ".ms-char-search-item", function () {
-        $(this).css("background", "rgba(255,255,255,0.08)");
-      });
-      $pop.on("mouseleave", ".ms-char-search-item", function () {
-        var k = $(this).data("key");
-        $(this).css(
-          "background",
-          editCharacter === k ? "rgba(var(--ms-accent-rgb),0.15)" : "",
-        );
-      });
-      $pop.on("click", ".ms-char-search-item", function () {
-        var k = $(this).data("key");
-        editCharacter = k;
-        recordRecentBoundChar(k);
-        $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
-        markDirty();
-        toast("success", "已绑定: " + getCharDisplayName(k));
         closeCharSearchPopup();
       });
-      function closeCharSearchPopup() {
-        $p.find("#ms-char-search-popup").remove();
-        $p.off("pointerdown.ms-char-search-close");
+    }, 50);
+  });
+
+  $p.find("#ms-body").on("click.ms", "#ms-quick-add-tag", function () {
+    msPrompt("", {
+      title: "新建标签",
+      placeholder: "请输入新标签名称",
+      validate: function (v) {
+        if (!v || !v.trim()) return "名称不能为空";
+        return null;
+      },
+    }).then(function (n) {
+      if (!n || !n.trim()) return;
+      const t = createTag(n.trim());
+      editTags.push(t.id);
+      $p.find("#ms-edit-tags").html(buildTagsUI());
+      markDirty();
+    });
+  });
+  function scheduleDraftSave() {
+    if (_editDraftTimer) clearTimeout(_editDraftTimer);
+    _editDraftTimer = setTimeout(function () {
+      _editDraftTimer = null;
+      saveDraft({
+        promptId: v.promptId || null,
+        charKey: getCurrentCharKeySafe() || null,
+        title: $p.find("#ms-edit-title").val() || "",
+        content: $p.find("#ms-edit-content").val() || "",
+        groupId: $p.find("#ms-edit-group").val() || "",
+        author: $p.find("#ms-edit-author").val() || "",
+        series: $p.find("#ms-edit-series").val() || "",
+        tags: editTags,
+        character: editCharacter,
+        savedAt: Date.now(),
+      });
+    }, 2000);
+  }
+  $p.find("#ms-body").on("input.ms", "#ms-edit-content", function () {
+    um.scheduleCapture();
+    const s = countStats(this.value);
+    $p.find("#ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
+    markDirty();
+    scheduleDraftSave();
+  });
+  $p.find("#ms-body").on("input.ms", "#ms-edit-title", function () {
+    var _v = ($(this).val() || "").trim();
+    $p.find("#ms-edit-current-title").text(
+      _v || (isNew ? "新建小剧场" : "未命名"),
+    );
+  });
+  $p.find("#ms-body").on("change.ms", "#ms-edit-group", function () {
+    if (isNew && !$p.find("#ms-edit-author").val().trim()) {
+      const selGid = $(this).val();
+      const selG = selGid ? getGroup(selGid) : null;
+      if (selG && selG.defaultAuthor)
+        $p.find("#ms-edit-author").val(selG.defaultAuthor);
+      else if (data.settings.defaultAuthor)
+        $p.find("#ms-edit-author").val(data.settings.defaultAuthor);
+    }
+    $p.find("#ms-edit-tags").html(buildTagsUI());
+    markDirty();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-edit-content", function () {
+    if (shiftKeyActive) {
+      const ta = this,
+        cur = ta.selectionStart;
+      if (shiftAnchor >= 0 && shiftAnchor !== cur)
+        ta.setSelectionRange(
+          Math.min(shiftAnchor, cur),
+          Math.max(shiftAnchor, cur),
+        );
+      shiftKeyActive = false;
+      shiftAnchor = -1;
+      $p.find("[data-md='shift']").removeClass("active");
+    }
+  });
+  $p.find("#ms-body").on("mousedown.ms", ".ms-md-btn", function (e) {
+    const md = $(this).data("md");
+    if (md !== "shift") {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  });
+  $p.find("#ms-body").on("click.ms", ".ms-md-btn", function (e) {
+    e.preventDefault();
+    const ta = getTa();
+    if (!ta) return;
+    const md = $(this).data("md");
+    if (md === "undo") {
+      um.undo();
+      const s = countStats(ta.value);
+      $p.find("#ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
+      markDirty();
+      return;
+    }
+    if (md === "redo") {
+      um.redo();
+      const s = countStats(ta.value);
+      $p.find("#ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
+      markDirty();
+      return;
+    }
+    if (md === "selectall") {
+      ta.focus();
+      ta.selectionStart = 0;
+      ta.selectionEnd = ta.value.length;
+      return;
+    }
+    if (md === "shift") {
+      if (!shiftKeyActive) {
+        shiftAnchor = ta.selectionStart;
+        shiftKeyActive = true;
+        $(this).addClass("active");
+        toast("info", "Shift激活，点击文本另一位置");
+      } else {
+        shiftKeyActive = false;
+        shiftAnchor = -1;
+        $(this).removeClass("active");
       }
+      return;
+    }
+    if (md === "find") {
+      const $bar = $p.find("#ms-find-bar");
+      if ($bar.is(":visible")) {
+        $bar.hide();
+        $(this).removeClass("active");
+        getTa()?.focus();
+      } else {
+        $bar.show();
+        $(this).addClass("active");
+        $bar.find("#ms-find-input").val("").focus();
+        $p.find("#ms-find-count").text("").removeClass("no-match");
+      }
+      return;
+    }
+    if (md === "preview-toggle") {
+      var $taWrap = $p.find(".ms-content-field");
+      var $ta = $p.find("#ms-edit-content");
+      var taEl = $ta[0];
+      var $existPreview = $taWrap.find("#ms-edit-preview-pane");
+
+      function getScrollRatio(el) {
+        if (!el) return 0;
+        var max = el.scrollHeight - el.clientHeight;
+        if (max <= 0) return 0;
+        return el.scrollTop / max;
+      }
+
+      function setScrollByRatio(el, ratio) {
+        if (!el) return;
+        var max = el.scrollHeight - el.clientHeight;
+        if (max <= 0) {
+          el.scrollTop = 0;
+          return;
+        }
+        el.scrollTop = max * ratio;
+      }
+
+      if ($existPreview.length) {
+        var previewEl = $existPreview[0];
+        var previewRatio = getScrollRatio(previewEl);
+
+        $existPreview.remove();
+        $p.find("#ms-preview-scroll-top").remove();
+        $p.find("#ms-preview-scroll-bottom").remove();
+        $ta.show();
+
+        if ($p.find("[data-md='find']").hasClass("active")) {
+          $p.find(".ms-find-bar").show();
+        }
+
+        requestAnimationFrame(function () {
+          setScrollByRatio(taEl, previewRatio);
+          $ta.trigger("scroll");
+        });
+
+        $(this).removeClass("active");
+        $(this).find("i").attr("class", "fa-solid fa-eye");
+      } else {
+        var taRatio = getScrollRatio(taEl);
+        var previewHtml = renderMd($ta.val());
+
+        $ta.hide();
+        $p.find(".ms-find-bar").hide();
+        $p.find("#ms-edit-scroll-top").removeClass("visible");
+
+        $taWrap.append(
+          '<div id="ms-edit-preview-pane" class="ms-preview-content" style="flex:1;overflow-y:auto;min-height:180px;max-height:60vh;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:0 0 8px 8px;padding:14px;">' +
+            previewHtml +
+            "</div>",
+        );
+        $taWrap.append(
+          '<button class="ms-edit-scroll-top" id="ms-preview-scroll-top" title="回到顶部"><i class="fa-solid fa-angle-up"></i></button>',
+        );
+        $taWrap.append(
+          '<button class="ms-edit-scroll-bottom" id="ms-preview-scroll-bottom" title="回到底部"><i class="fa-solid fa-angle-down"></i></button>',
+        );
+
+        var previewEl2 = $p.find("#ms-edit-preview-pane")[0];
+
+        requestAnimationFrame(function () {
+          setScrollByRatio(previewEl2, taRatio);
+          $(previewEl2).trigger("scroll");
+        });
+
+        $p.find("#ms-edit-preview-pane").on("scroll", function () {
+          var $btnTop = $p.find("#ms-preview-scroll-top");
+          var $btnBottom = $p.find("#ms-preview-scroll-bottom");
+          if (this.scrollTop > 150) $btnTop.addClass("visible");
+          else $btnTop.removeClass("visible");
+          var distToBottom =
+            this.scrollHeight - this.scrollTop - this.clientHeight;
+          if (distToBottom > 150) $btnBottom.addClass("visible");
+          else $btnBottom.removeClass("visible");
+        });
+        $p.find("#ms-preview-scroll-top").on("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          $p.find("#ms-edit-preview-pane").animate({ scrollTop: 0 }, 200);
+        });
+        $p.find("#ms-preview-scroll-bottom").on("click", function (e) {
+          e.preventDefault();
+          e.stopPropagation();
+          var $pane = $p.find("#ms-edit-preview-pane");
+          $pane.animate({ scrollTop: $pane[0].scrollHeight }, 200);
+        });
+        $(this).addClass("active");
+        $(this).find("i").attr("class", "fa-solid fa-eye-slash");
+      }
+      return;
+    }
+    if (md === "focus") {
+      const $panel = $("#" + PANEL_ID);
+      const el = $panel[0];
+      if ($panel.hasClass("ms-focus-mode")) {
+        exitFocusMode();
+        $(this).removeClass("active");
+        $(this).find("i").attr("class", "fa-solid fa-expand");
+        $(this).attr("title", "专注编辑");
+        if (setupKeyboardAdapt.refresh)
+          setTimeout(setupKeyboardAdapt.refresh, 80);
+      } else {
+        $panel.data("ms-focus-saved-pos", {
+          left: el.style.getPropertyValue("left"),
+          top: el.style.getPropertyValue("top"),
+          transform: el.style.getPropertyValue("transform"),
+          panelPos: data.settings.panelPos
+            ? { ...data.settings.panelPos }
+            : null,
+        });
+        el.style.removeProperty("left");
+        el.style.removeProperty("top");
+        el.style.removeProperty("transform");
+        el.style.removeProperty("width");
+        el.style.removeProperty("max-width");
+        el.style.removeProperty("height");
+        el.style.removeProperty("max-height");
+        el.style.removeProperty("zoom");
+        $panel.addClass("ms-focus-mode");
+        $(this).addClass("active");
+        $(this).find("i").attr("class", "fa-solid fa-compress");
+        $(this).attr("title", "退出专注");
+        if (setupKeyboardAdapt.refresh)
+          setTimeout(setupKeyboardAdapt.refresh, 80);
+      }
+      return;
+    }
+    if (md === "quick-phrases") {
+      var $popup = $p.find("#ms-qp-popup");
+      if ($popup.length) {
+        $popup.remove();
+        $(this).removeClass("active");
+        ta.focus();
+        return;
+      }
+      $(this).addClass("active");
+      var popupHtml = '<div id="ms-qp-popup" class="ms-qp-popup">';
+      if (data.quickPhrases.length === 0) {
+        popupHtml +=
+          '<span style="font-size:12px;color:var(--SmartThemeQuoteColor,#666);font-style:italic;">还没有快捷短语～</span>';
+      } else {
+        data.quickPhrases.forEach(function (qp) {
+          var label = qp.content.length <= 100 ? qp.content : qp.title;
+          popupHtml +=
+            '<button class="ms-qp-chip" data-qpid="' +
+            qp.id +
+            '" title="' +
+            esc(truncate(qp.content, 100)) +
+            '">' +
+            esc(truncate(label, 24)) +
+            "</button>";
+        });
+      }
+      popupHtml +=
+        '<a class="ms-qp-popup-manage" id="ms-qp-goto-manage"><i class="fa-solid fa-gear" style="margin-right:3px;"></i>管理</a></div>';
+      $p.find(".ms-md-toolbar").after(popupHtml);
+      $p.find("#ms-qp-popup").on("click", ".ms-qp-chip", function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        var qpId = $(this).data("qpid");
+        var qp = data.quickPhrases.find(function (q) {
+          return q.id === qpId;
+        });
+        if (qp && ta) {
+          ta.focus();
+          insertAtCursor(ta, qp.content);
+          um.capture();
+          var s3 = countStats(ta.value);
+          $p.find("#ms-char-count").text(
+            s3.chars + " 字 · " + s3.lines + " 行",
+          );
+          markDirty();
+        }
+      });
+      var closeQpPopup = function () {
+        var $pop = $p.find("#ms-qp-popup");
+        if ($pop.length) {
+          $pop.remove();
+          $p.find("[data-md='quick-phrases']").removeClass("active");
+        }
+        $p.off("pointerdown.ms-qp-close");
+      };
       setTimeout(function () {
-        $p.on("pointerdown.ms-char-search-close", function (ev) {
+        $p.on("pointerdown.ms-qp-close", function (ev) {
           if (
-            $(ev.target).closest("#ms-char-search-popup, #ms-char-bind-search")
-              .length
+            $(ev.target).closest(
+              "#ms-qp-popup, [data-md='quick-phrases'], .ms-form-edit, .ms-md-toolbar, .ms-find-bar",
+            ).length
           )
             return;
-          closeCharSearchPopup();
+          closeQpPopup();
         });
       }, 50);
-    });
-
-    $p.find("#ms-body").on("click.ms", "#ms-quick-add-tag", function () {
-      msPrompt("", {
-        title: "新建标签",
-        placeholder: "请输入新标签名称",
-        validate: function (v) {
-          if (!v || !v.trim()) return "名称不能为空";
-          return null;
-        },
-      }).then(function (n) {
-        if (!n || !n.trim()) return;
-        const t = createTag(n.trim());
-        editTags.push(t.id);
-        $p.find("#ms-edit-tags").html(buildTagsUI());
-        markDirty();
-      });
-    });
-    function scheduleDraftSave() {
-      if (_editDraftTimer) clearTimeout(_editDraftTimer);
-      _editDraftTimer = setTimeout(function () {
-        _editDraftTimer = null;
-        saveDraft({
-          promptId: v.promptId || null,
-          charKey: getCurrentCharKeySafe() || null,
+      $p.find("#ms-qp-goto-manage").on("click", function (ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        $p.find("#ms-qp-popup").remove();
+        $p.find("[data-md='quick-phrases']").removeClass("active");
+        v._savedEditState = {
           title: $p.find("#ms-edit-title").val() || "",
           content: $p.find("#ms-edit-content").val() || "",
           groupId: $p.find("#ms-edit-group").val() || "",
           author: $p.find("#ms-edit-author").val() || "",
           series: $p.find("#ms-edit-series").val() || "",
-          tags: editTags,
+          tags: [...editTags],
           character: editCharacter,
-          savedAt: Date.now(),
-        });
-      }, 2000);
-    }
-    $p.find("#ms-body").on("input.ms", "#ms-edit-content", function () {
-      um.scheduleCapture();
-      const s = countStats(this.value);
-      $p.find("#ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
-      markDirty();
-      scheduleDraftSave();
-    });
-    $p.find("#ms-body").on(
-      "input.ms",
-      "#ms-edit-title, #ms-edit-author, #ms-edit-series",
-      function () {
-        markDirty();
-        scheduleDraftSave();
-      },
-    );
-    $p.find("#ms-body").on("change.ms", "#ms-edit-group", function () {
-      if (isNew && !$p.find("#ms-edit-author").val().trim()) {
-        const selGid = $(this).val();
-        const selG = selGid ? getGroup(selGid) : null;
-        if (selG && selG.defaultAuthor)
-          $p.find("#ms-edit-author").val(selG.defaultAuthor);
-        else if (data.settings.defaultAuthor)
-          $p.find("#ms-edit-author").val(data.settings.defaultAuthor);
-      }
-      markDirty();
-    });
-    $p.find("#ms-body").on("click.ms", "#ms-edit-content", function () {
-      if (shiftKeyActive) {
-        const ta = this,
-          cur = ta.selectionStart;
-        if (shiftAnchor >= 0 && shiftAnchor !== cur)
-          ta.setSelectionRange(
-            Math.min(shiftAnchor, cur),
-            Math.max(shiftAnchor, cur),
-          );
-        shiftKeyActive = false;
-        shiftAnchor = -1;
-        $p.find("[data-md='shift']").removeClass("active");
-      }
-    });
-    $p.find("#ms-body").on("mousedown.ms", ".ms-md-btn", function (e) {
-      const md = $(this).data("md");
-      if (md !== "shift") {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    });
-    $p.find("#ms-body").on("click.ms", ".ms-md-btn", function (e) {
-      e.preventDefault();
-      const ta = getTa();
-      if (!ta) return;
-      const md = $(this).data("md");
-      if (md === "undo") {
-        um.undo();
-        const s = countStats(ta.value);
-        $p.find("#ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
-        markDirty();
-        return;
-      }
-      if (md === "redo") {
-        um.redo();
-        const s = countStats(ta.value);
-        $p.find("#ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
-        markDirty();
-        return;
-      }
-      if (md === "selectall") {
-        ta.focus();
-        ta.selectionStart = 0;
-        ta.selectionEnd = ta.value.length;
-        return;
-      }
-      if (md === "shift") {
-        if (!shiftKeyActive) {
-          shiftAnchor = ta.selectionStart;
-          shiftKeyActive = true;
-          $(this).addClass("active");
-          toast("info", "Shift激活，点击文本另一位置");
-        } else {
-          shiftKeyActive = false;
-          shiftAnchor = -1;
-          $(this).removeClass("active");
-        }
-        return;
-      }
-      if (md === "find") {
-        const $bar = $p.find("#ms-find-bar");
-        if ($bar.is(":visible")) {
-          $bar.hide();
-          $(this).removeClass("active");
-          getTa()?.focus();
-        } else {
-          $bar.show();
-          $(this).addClass("active");
-          $bar.find("#ms-find-input").val("").focus();
-          $p.find("#ms-find-count").text("").removeClass("no-match");
-        }
-        return;
-      }
-      if (md === "preview-toggle") {
-        var $taWrap = $p.find(".ms-content-field");
-        var $ta = $p.find("#ms-edit-content");
-        var taEl = $ta[0];
-        var $existPreview = $taWrap.find("#ms-edit-preview-pane");
-
-        function getScrollRatio(el) {
-          if (!el) return 0;
-          var max = el.scrollHeight - el.clientHeight;
-          if (max <= 0) return 0;
-          return el.scrollTop / max;
-        }
-
-        function setScrollByRatio(el, ratio) {
-          if (!el) return;
-          var max = el.scrollHeight - el.clientHeight;
-          if (max <= 0) {
-            el.scrollTop = 0;
-            return;
-          }
-          el.scrollTop = max * ratio;
-        }
-
-        if ($existPreview.length) {
-          var previewEl = $existPreview[0];
-          var previewRatio = getScrollRatio(previewEl);
-
-          $existPreview.remove();
-          $p.find("#ms-preview-scroll-top").remove();
-          $p.find("#ms-preview-scroll-bottom").remove();
-          $ta.show();
-
-          if ($p.find("[data-md='find']").hasClass("active")) {
-            $p.find(".ms-find-bar").show();
-          }
-
-          requestAnimationFrame(function () {
-            setScrollByRatio(taEl, previewRatio);
-            $ta.trigger("scroll");
-          });
-
-          $(this).removeClass("active");
-          $(this).find("i").attr("class", "fa-solid fa-eye");
-        } else {
-          var taRatio = getScrollRatio(taEl);
-          var previewHtml = renderMd($ta.val());
-
-          $ta.hide();
-          $p.find(".ms-find-bar").hide();
-          $p.find("#ms-edit-scroll-top").removeClass("visible");
-
-          $taWrap.append(
-            '<div id="ms-edit-preview-pane" class="ms-preview-content" style="flex:1;overflow-y:auto;min-height:180px;max-height:60vh;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:0 0 8px 8px;padding:14px;">' +
-              previewHtml +
-              "</div>",
-          );
-          $taWrap.append(
-            '<button class="ms-edit-scroll-top" id="ms-preview-scroll-top" title="回到顶部"><i class="fa-solid fa-angle-up"></i></button>',
-          );
-          $taWrap.append(
-            '<button class="ms-edit-scroll-bottom" id="ms-preview-scroll-bottom" title="回到底部"><i class="fa-solid fa-angle-down"></i></button>',
-          );
-
-          var previewEl2 = $p.find("#ms-edit-preview-pane")[0];
-
-          requestAnimationFrame(function () {
-            setScrollByRatio(previewEl2, taRatio);
-            $(previewEl2).trigger("scroll");
-          });
-
-          $p.find("#ms-edit-preview-pane").on("scroll", function () {
-            var $btnTop = $p.find("#ms-preview-scroll-top");
-            var $btnBottom = $p.find("#ms-preview-scroll-bottom");
-            if (this.scrollTop > 150) $btnTop.addClass("visible");
-            else $btnTop.removeClass("visible");
-            var distToBottom =
-              this.scrollHeight - this.scrollTop - this.clientHeight;
-            if (distToBottom > 150) $btnBottom.addClass("visible");
-            else $btnBottom.removeClass("visible");
-          });
-          $p.find("#ms-preview-scroll-top").on("click", function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            $p.find("#ms-edit-preview-pane").animate({ scrollTop: 0 }, 200);
-          });
-          $p.find("#ms-preview-scroll-bottom").on("click", function (e) {
-            e.preventDefault();
-            e.stopPropagation();
-            var $pane = $p.find("#ms-edit-preview-pane");
-            $pane.animate({ scrollTop: $pane[0].scrollHeight }, 200);
-          });
-          $(this).addClass("active");
-          $(this).find("i").attr("class", "fa-solid fa-eye-slash");
-        }
-        return;
-      }
-      if (md === "focus") {
-        const $panel = $("#" + PANEL_ID);
-        const el = $panel[0];
-        if ($panel.hasClass("ms-focus-mode")) {
-          exitFocusMode();
-          $(this).removeClass("active");
-          $(this).find("i").attr("class", "fa-solid fa-expand");
-          $(this).attr("title", "专注编辑");
-          if (setupKeyboardAdapt.refresh)
-            setTimeout(setupKeyboardAdapt.refresh, 80);
-        } else {
-          $panel.data("ms-focus-saved-pos", {
-            left: el.style.getPropertyValue("left"),
-            top: el.style.getPropertyValue("top"),
-            transform: el.style.getPropertyValue("transform"),
-            panelPos: data.settings.panelPos
-              ? { ...data.settings.panelPos }
-              : null,
-          });
-          el.style.removeProperty("left");
-          el.style.removeProperty("top");
-          el.style.removeProperty("transform");
-          el.style.removeProperty("width");
-          el.style.removeProperty("max-width");
-          el.style.removeProperty("height");
-          el.style.removeProperty("max-height");
-          el.style.removeProperty("zoom");
-          $panel.addClass("ms-focus-mode");
-          $(this).addClass("active");
-          $(this).find("i").attr("class", "fa-solid fa-compress");
-          $(this).attr("title", "退出专注");
-          if (setupKeyboardAdapt.refresh)
-            setTimeout(setupKeyboardAdapt.refresh, 80);
-        }
-        return;
-      }
-      if (md === "quick-phrases") {
-        var $popup = $p.find("#ms-qp-popup");
-        if ($popup.length) {
-          $popup.remove();
-          $(this).removeClass("active");
-          ta.focus();
-          return;
-        }
-        $(this).addClass("active");
-        var popupHtml = '<div id="ms-qp-popup" class="ms-qp-popup">';
-        if (data.quickPhrases.length === 0) {
-          popupHtml +=
-            '<span style="font-size:12px;color:var(--SmartThemeQuoteColor,#666);font-style:italic;">还没有快捷短语～</span>';
-        } else {
-          data.quickPhrases.forEach(function (qp) {
-            var label = qp.content.length <= 100 ? qp.content : qp.title;
-            popupHtml +=
-              '<button class="ms-qp-chip" data-qpid="' +
-              qp.id +
-              '" title="' +
-              esc(truncate(qp.content, 100)) +
-              '">' +
-              esc(truncate(label, 24)) +
-              "</button>";
-          });
-        }
-        popupHtml +=
-          '<a class="ms-qp-popup-manage" id="ms-qp-goto-manage"><i class="fa-solid fa-gear" style="margin-right:3px;"></i>管理</a></div>';
-        $p.find(".ms-md-toolbar").after(popupHtml);
-        $p.find("#ms-qp-popup").on("click", ".ms-qp-chip", function (ev) {
-          ev.preventDefault();
-          ev.stopPropagation();
-          var qpId = $(this).data("qpid");
-          var qp = data.quickPhrases.find(function (q) {
-            return q.id === qpId;
-          });
-          if (qp && ta) {
-            ta.focus();
-            insertAtCursor(ta, qp.content);
-            um.capture();
-            var s3 = countStats(ta.value);
-            $p.find("#ms-char-count").text(
-              s3.chars + " 字 · " + s3.lines + " 行",
-            );
-            markDirty();
-          }
-        });
-        var closeQpPopup = function () {
-          var $pop = $p.find("#ms-qp-popup");
-          if ($pop.length) {
-            $pop.remove();
-            $p.find("[data-md='quick-phrases']").removeClass("active");
-          }
-          $p.off("pointerdown.ms-qp-close");
+          cursorPos: ta.selectionStart,
+          focusMode: $p.hasClass("ms-focus-mode"),
+          findBarOpen: $p.find("#ms-find-bar").is(":visible"),
+          findQuery: $p.find("#ms-find-input").val() || "",
+          undoState: um ? um.getState() : null,
         };
-        setTimeout(function () {
-          $p.on("pointerdown.ms-qp-close", function (ev) {
-            if (
-              $(ev.target).closest(
-                "#ms-qp-popup, [data-md='quick-phrases'], .ms-form-edit, .ms-md-toolbar, .ms-find-bar",
-              ).length
-            )
-              return;
-            closeQpPopup();
-          });
-        }, 50);
-        $p.find("#ms-qp-goto-manage").on("click", function (ev) {
-          ev.preventDefault();
-          ev.stopPropagation();
-          $p.find("#ms-qp-popup").remove();
-          $p.find("[data-md='quick-phrases']").removeClass("active");
-          v._savedEditState = {
-            title: $p.find("#ms-edit-title").val() || "",
-            content: $p.find("#ms-edit-content").val() || "",
-            groupId: $p.find("#ms-edit-group").val() || "",
-            author: $p.find("#ms-edit-author").val() || "",
-            series: $p.find("#ms-edit-series").val() || "",
-            tags: [...editTags],
-            character: editCharacter,
-            cursorPos: ta.selectionStart,
-            focusMode: $p.hasClass("ms-focus-mode"),
-            findBarOpen: $p.find("#ms-find-bar").is(":visible"),
-            findQuery: $p.find("#ms-find-input").val() || "",
-            undoState: um ? um.getState() : null,
-          };
-          navigateTo({
-            name: "quick-phrases",
-            returnToEdit: v,
-            editTaId: "ms-edit-content",
-          });
+        navigateTo({
+          name: "quick-phrases",
+          returnToEdit: v,
+          editTaId: "ms-edit-content",
         });
-        return;
-      }
-      ta.focus();
-      um.capture();
-      if (md === "bold") wrapSelection(ta, "**", "**");
-      else if (md === "italic") wrapSelection(ta, "*", "*");
-      else if (md === "strike") wrapSelection(ta, "~~", "~~");
-      else if (md === "heading") {
-        var hs = ta.selectionStart,
-          hv = ta.value;
-        var hls = hv.lastIndexOf("\n", hs - 1) + 1;
-        var hle = hv.indexOf("\n", hs);
-        if (hle === -1) hle = hv.length;
-        var hline = hv.substring(hls, hle);
-        var hm = hline.match(/^(#{1,6})\s/);
-        var _hst = ta.scrollTop;
-        if (!hm) {
-          ta.value = hv.substring(0, hls) + "# " + hv.substring(hls);
-          ta.selectionStart = ta.selectionEnd = hs + 2;
-        } else if (hm[1].length < 6) {
-          ta.value = hv.substring(0, hls) + "#" + hv.substring(hls);
-          ta.selectionStart = ta.selectionEnd = hs + 1;
-        } else {
-          var hrl = hm[0].length;
-          ta.value =
-            hv.substring(0, hls) + hline.substring(hrl) + hv.substring(hle);
-          ta.selectionStart = ta.selectionEnd = Math.max(hls, hs - hrl);
-        }
-        ta.scrollTop = _hst;
-        ta.focus();
-      } else if (md === "quote") prependLine(ta, "> ");
-      else if (md === "list") prependLine(ta, "- ");
-      else if (md === "task") prependLine(ta, "- [ ] ");
-      else if (md === "code") wrapSelection(ta, "`", "`");
-      else if (md === "link") {
-        var ls = ta.selectionStart,
-          le = ta.selectionEnd;
-        var lsel = ta.value.substring(ls, le) || "链接文字";
-        var lins = "[" + lsel + "](url)";
-        var _lst = ta.scrollTop;
-        ta.value = ta.value.substring(0, ls) + lins + ta.value.substring(le);
-        ta.selectionStart = ls + lsel.length + 3;
-        ta.selectionEnd = ls + lsel.length + 6;
-        ta.scrollTop = _lst;
-        ta.focus();
-      } else if (md === "image") {
-        var is = ta.selectionStart,
-          ie = ta.selectionEnd;
-        var isel = ta.value.substring(is, ie) || "图片描述";
-        var iins = "![" + isel + "](url)";
-        var _ist = ta.scrollTop;
-        ta.value = ta.value.substring(0, is) + iins + ta.value.substring(ie);
-        ta.selectionStart = is + isel.length + 4;
-        ta.selectionEnd = is + isel.length + 7;
-        ta.scrollTop = _ist;
-        ta.focus();
-      } else if (md === "hr") {
-        insertAtCursor(ta, "\n---\n");
-      } else if (md === "table") {
-        insertAtCursor(
-          ta,
-          "\n| 列1 | 列2 | 列3 |\n|------|------|------|\n| 内容 | 内容 | 内容 |\n",
-        );
-      }
-      um.capture();
-      const s2 = countStats(ta.value);
-      var $pvPane = $p.find("#ms-edit-preview-pane");
-      if ($pvPane.length) {
-        $pvPane.html(renderMd(ta.value));
-      }
-      $p.find("#ms-char-count").text(s2.chars + " 字 · " + s2.lines + " 行");
-      markDirty();
-    });
-    $p.find("#ms-body").on(
-      "keydown.ms",
-      "#ms-edit-title, #ms-edit-author, #ms-edit-series",
-      function (e) {
-        if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-          e.preventDefault();
-          $p.find("#ms-edit-save").trigger("click");
-        }
-      },
-    );
-    $p.find("#ms-body").on("keydown.ms", "#ms-edit-content", function (e) {
-      if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        um.undo();
-        markDirty();
-      } else if (
-        (e.ctrlKey || e.metaKey) &&
-        (e.key === "y" || (e.key === "z" && e.shiftKey))
-      ) {
-        e.preventDefault();
-        um.redo();
-        markDirty();
-      } else if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-        e.preventDefault();
-        $p.find("#ms-edit-save").trigger("click");
-      } else if (e.key === "Tab") {
-        e.preventDefault();
-        insertAtCursor(this, "  ");
-        um.capture();
-        markDirty();
-      } else if ((e.ctrlKey || e.metaKey) && e.key === "f") {
-        e.preventDefault();
-        const $bar = $p.find("#ms-find-bar");
-        $bar.show();
-        $p.find("[data-md='find']").addClass("active");
-        const ta = getTa();
-        if (ta && ta.selectionStart !== ta.selectionEnd) {
-          $bar
-            .find("#ms-find-input")
-            .val(ta.value.substring(ta.selectionStart, ta.selectionEnd));
-          findMatchIdx = 0;
-          updateFindDisplay();
-        }
-        $bar.find("#ms-find-input").focus().select();
-      }
-    });
-    let findMatchIdx = 0;
-
-    function scrollTaToPos(ta, pos) {
-      if (!ta) return;
-      var text = ta.value.substring(0, pos);
-      var lineCount = text.split("\n").length;
-      var style = window.getComputedStyle(ta);
-      var lineHeight = parseFloat(style.lineHeight);
-      if (isNaN(lineHeight)) {
-        lineHeight = parseFloat(style.fontSize) * 1.6;
-      }
-      var targetTop = (lineCount - 1) * lineHeight;
-      var visibleTop = ta.scrollTop;
-      var visibleBottom = ta.scrollTop + ta.clientHeight;
-      if (
-        targetTop < visibleTop + lineHeight ||
-        targetTop > visibleBottom - lineHeight * 2
-      ) {
-        ta.scrollTop = Math.max(0, targetTop - ta.clientHeight / 3);
-      }
+      });
+      return;
     }
-
-    function getFindPositions(query) {
-      const ta = getTa();
-      if (!ta || !query) return [];
-      const text = ta.value.toLowerCase();
-      const q = query.toLowerCase();
-      const positions = [];
-      let pos = 0;
-      while ((pos = text.indexOf(q, pos)) !== -1) {
-        positions.push(pos);
-        pos += 1;
-      }
-      return positions;
-    }
-    function updateFindDisplay() {
-      const query = $p.find("#ms-find-input").val();
-      const positions = getFindPositions(query);
-      const $cnt = $p.find("#ms-find-count");
-      if (!query) {
-        $cnt.text("").removeClass("no-match");
-        findMatchIdx = 0;
-      } else if (positions.length === 0) {
-        $cnt.text("0/0").addClass("no-match");
-        findMatchIdx = 0;
+    ta.focus();
+    um.capture();
+    if (md === "bold") wrapSelection(ta, "**", "**");
+    else if (md === "italic") wrapSelection(ta, "*", "*");
+    else if (md === "strike") wrapSelection(ta, "~~", "~~");
+    else if (md === "heading") {
+      var hs = ta.selectionStart,
+        hv = ta.value;
+      var hls = hv.lastIndexOf("\n", hs - 1) + 1;
+      var hle = hv.indexOf("\n", hs);
+      if (hle === -1) hle = hv.length;
+      var hline = hv.substring(hls, hle);
+      var hm = hline.match(/^(#{1,6})\s/);
+      var _hst = ta.scrollTop;
+      if (!hm) {
+        ta.value = hv.substring(0, hls) + "# " + hv.substring(hls);
+        ta.selectionStart = ta.selectionEnd = hs + 2;
+      } else if (hm[1].length < 6) {
+        ta.value = hv.substring(0, hls) + "#" + hv.substring(hls);
+        ta.selectionStart = ta.selectionEnd = hs + 1;
       } else {
-        if (findMatchIdx >= positions.length) findMatchIdx = 0;
-        $cnt
-          .text(findMatchIdx + 1 + "/" + positions.length)
-          .removeClass("no-match");
+        var hrl = hm[0].length;
+        ta.value =
+          hv.substring(0, hls) + hline.substring(hrl) + hv.substring(hle);
+        ta.selectionStart = ta.selectionEnd = Math.max(hls, hs - hrl);
       }
+      ta.scrollTop = _hst;
+      ta.focus();
+    } else if (md === "quote") prependLine(ta, "> ");
+    else if (md === "list") prependLine(ta, "- ");
+    else if (md === "task") prependLine(ta, "- [ ] ");
+    else if (md === "code") wrapSelection(ta, "`", "`");
+    else if (md === "link") {
+      var ls = ta.selectionStart,
+        le = ta.selectionEnd;
+      var lsel = ta.value.substring(ls, le) || "链接文字";
+      var lins = "[" + lsel + "](url)";
+      var _lst = ta.scrollTop;
+      ta.value = ta.value.substring(0, ls) + lins + ta.value.substring(le);
+      ta.selectionStart = ls + lsel.length + 3;
+      ta.selectionEnd = ls + lsel.length + 6;
+      ta.scrollTop = _lst;
+      ta.focus();
+    } else if (md === "image") {
+      var is = ta.selectionStart,
+        ie = ta.selectionEnd;
+      var isel = ta.value.substring(is, ie) || "图片描述";
+      var iins = "![" + isel + "](url)";
+      var _ist = ta.scrollTop;
+      ta.value = ta.value.substring(0, is) + iins + ta.value.substring(ie);
+      ta.selectionStart = is + isel.length + 4;
+      ta.selectionEnd = is + isel.length + 7;
+      ta.scrollTop = _ist;
+      ta.focus();
+    } else if (md === "hr") {
+      insertAtCursor(ta, "\n---\n");
+    } else if (md === "table") {
+      insertAtCursor(
+        ta,
+        "\n| 列1 | 列2 | 列3 |\n|------|------|------|\n| 内容 | 内容 | 内容 |\n",
+      );
     }
-    function jumpToMatch(dir) {
-      const query = $p.find("#ms-find-input").val();
-      const positions = getFindPositions(query);
-      if (positions.length === 0) return;
-      if (dir === "next") findMatchIdx++;
-      else if (dir === "prev") findMatchIdx--;
-      findMatchIdx =
-        ((findMatchIdx % positions.length) + positions.length) %
-        positions.length;
-      const ta = getTa();
-      if (ta) {
-        ta.focus();
-        ta.setSelectionRange(
-          positions[findMatchIdx],
-          positions[findMatchIdx] + query.length,
-        );
-        scrollTaToPos(ta, positions[findMatchIdx]);
-      }
-      $p.find("#ms-find-count")
-        .text(findMatchIdx + 1 + "/" + positions.length)
-        .removeClass("no-match");
+    um.capture();
+    const s2 = countStats(ta.value);
+    var $pvPane = $p.find("#ms-edit-preview-pane");
+    if ($pvPane.length) {
+      $pvPane.html(renderMd(ta.value));
     }
-    $p.find("#ms-body").on(
-      "compositionstart.ms",
-      "#ms-find-input",
-      function () {
-        this._composing = true;
-      },
-    );
-    $p.find("#ms-body").on("compositionend.ms", "#ms-find-input", function () {
-      this._composing = false;
-      findMatchIdx = 0;
-      updateFindDisplay();
-    });
-    $p.find("#ms-body").on("input.ms", "#ms-find-input", function () {
-      if (this._composing) return;
-      findMatchIdx = 0;
-      updateFindDisplay();
-    });
-    $p.find("#ms-body").on("keydown.ms", "#ms-find-input", function (e) {
+    $p.find("#ms-char-count").text(s2.chars + " 字 · " + s2.lines + " 行");
+    markDirty();
+  });
+  $p.find("#ms-body").on(
+    "keydown.ms",
+    "#ms-edit-title, #ms-edit-author, #ms-edit-series",
+    function (e) {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
         $p.find("#ms-edit-save").trigger("click");
-        return;
       }
-      if (e.key === "Enter") {
-        e.preventDefault();
-        jumpToMatch(e.shiftKey ? "prev" : "next");
+    },
+  );
+  $p.find("#ms-body").on("keydown.ms", "#ms-edit-content", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
+      e.preventDefault();
+      um.undo();
+      markDirty();
+    } else if (
+      (e.ctrlKey || e.metaKey) &&
+      (e.key === "y" || (e.key === "z" && e.shiftKey))
+    ) {
+      e.preventDefault();
+      um.redo();
+      markDirty();
+    } else if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      e.preventDefault();
+      $p.find("#ms-edit-save").trigger("click");
+    } else if (e.key === "Tab") {
+      e.preventDefault();
+      insertAtCursor(this, "  ");
+      um.capture();
+      markDirty();
+    } else if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+      e.preventDefault();
+      const $bar = $p.find("#ms-find-bar");
+      $bar.show();
+      $p.find("[data-md='find']").addClass("active");
+      const ta = getTa();
+      if (ta && ta.selectionStart !== ta.selectionEnd) {
+        $bar
+          .find("#ms-find-input")
+          .val(ta.value.substring(ta.selectionStart, ta.selectionEnd));
+        findMatchIdx = 0;
+        updateFindDisplay();
       }
-      if (e.key === "Escape") {
-        $p.find("#ms-find-bar").hide();
-        $p.find("[data-md='find']").removeClass("active");
-        getTa()?.focus();
-      }
-    });
-    $p.find("#ms-body").on(
-      "mousedown.ms",
-      "#ms-find-prev, #ms-find-next, #ms-replace-one, #ms-replace-all",
-      function (e) {
-        e.preventDefault();
-      },
-    );
-    $p.find("#ms-body").on("click.ms", "#ms-find-prev", function () {
-      jumpToMatch("prev");
-    });
-    $p.find("#ms-body").on("click.ms", "#ms-find-next", function () {
-      jumpToMatch("next");
-    });
-    $p.find("#ms-body").on("click.ms", "#ms-find-close", function () {
+      $bar.find("#ms-find-input").focus().select();
+    }
+  });
+  let findMatchIdx = 0;
+
+  function scrollTaToPos(ta, pos) {
+    if (!ta) return;
+    var text = ta.value.substring(0, pos);
+    var lineCount = text.split("\n").length;
+    var style = window.getComputedStyle(ta);
+    var lineHeight = parseFloat(style.lineHeight);
+    if (isNaN(lineHeight)) {
+      lineHeight = parseFloat(style.fontSize) * 1.6;
+    }
+    var targetTop = (lineCount - 1) * lineHeight;
+    var visibleTop = ta.scrollTop;
+    var visibleBottom = ta.scrollTop + ta.clientHeight;
+    if (
+      targetTop < visibleTop + lineHeight ||
+      targetTop > visibleBottom - lineHeight * 2
+    ) {
+      ta.scrollTop = Math.max(0, targetTop - ta.clientHeight / 3);
+    }
+  }
+
+  function getFindPositions(query) {
+    const ta = getTa();
+    if (!ta || !query) return [];
+    const text = ta.value.toLowerCase();
+    const q = query.toLowerCase();
+    const positions = [];
+    let pos = 0;
+    while ((pos = text.indexOf(q, pos)) !== -1) {
+      positions.push(pos);
+      pos += 1;
+    }
+    return positions;
+  }
+  function updateFindDisplay() {
+    const query = $p.find("#ms-find-input").val();
+    const positions = getFindPositions(query);
+    const $cnt = $p.find("#ms-find-count");
+    if (!query) {
+      $cnt.text("").removeClass("no-match");
+      findMatchIdx = 0;
+    } else if (positions.length === 0) {
+      $cnt.text("0/0").addClass("no-match");
+      findMatchIdx = 0;
+    } else {
+      if (findMatchIdx >= positions.length) findMatchIdx = 0;
+      $cnt
+        .text(findMatchIdx + 1 + "/" + positions.length)
+        .removeClass("no-match");
+    }
+  }
+  function jumpToMatch(dir) {
+    const query = $p.find("#ms-find-input").val();
+    const positions = getFindPositions(query);
+    if (positions.length === 0) return;
+    if (dir === "next") findMatchIdx++;
+    else if (dir === "prev") findMatchIdx--;
+    findMatchIdx =
+      ((findMatchIdx % positions.length) + positions.length) % positions.length;
+    const ta = getTa();
+    if (ta) {
+      ta.focus();
+      ta.setSelectionRange(
+        positions[findMatchIdx],
+        positions[findMatchIdx] + query.length,
+      );
+      scrollTaToPos(ta, positions[findMatchIdx]);
+    }
+    $p.find("#ms-find-count")
+      .text(findMatchIdx + 1 + "/" + positions.length)
+      .removeClass("no-match");
+  }
+  $p.find("#ms-body").on("compositionstart.ms", "#ms-find-input", function () {
+    this._composing = true;
+  });
+  $p.find("#ms-body").on("compositionend.ms", "#ms-find-input", function () {
+    this._composing = false;
+    findMatchIdx = 0;
+    updateFindDisplay();
+  });
+  $p.find("#ms-body").on("input.ms", "#ms-find-input", function () {
+    if (this._composing) return;
+    findMatchIdx = 0;
+    updateFindDisplay();
+  });
+  $p.find("#ms-body").on("keydown.ms", "#ms-find-input", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      e.preventDefault();
+      $p.find("#ms-edit-save").trigger("click");
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      jumpToMatch(e.shiftKey ? "prev" : "next");
+    }
+    if (e.key === "Escape") {
       $p.find("#ms-find-bar").hide();
       $p.find("[data-md='find']").removeClass("active");
       getTa()?.focus();
+    }
+  });
+  $p.find("#ms-body").on(
+    "mousedown.ms",
+    "#ms-find-prev, #ms-find-next, #ms-replace-one, #ms-replace-all",
+    function (e) {
+      e.preventDefault();
+    },
+  );
+  $p.find("#ms-body").on("click.ms", "#ms-find-prev", function () {
+    jumpToMatch("prev");
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-find-next", function () {
+    jumpToMatch("next");
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-find-close", function () {
+    $p.find("#ms-find-bar").hide();
+    $p.find("[data-md='find']").removeClass("active");
+    getTa()?.focus();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-replace-one", function () {
+    var query = $p.find("#ms-find-input").val();
+    var replaceText = $p.find("#ms-replace-input").val() || "";
+    var positions = getFindPositions(query);
+    if (positions.length === 0 || !query) return;
+    if (findMatchIdx >= positions.length) findMatchIdx = 0;
+    var ta = getTa();
+    if (!ta) return;
+    var pos = positions[findMatchIdx];
+    var _rst = ta.scrollTop;
+    ta.value =
+      ta.value.substring(0, pos) +
+      replaceText +
+      ta.value.substring(pos + query.length);
+    ta.scrollTop = _rst;
+    um.capture();
+    var s = countStats(ta.value);
+    $p.find("#ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
+    markDirty();
+    var newPositions = getFindPositions(query);
+    if (newPositions.length > 0) {
+      if (findMatchIdx >= newPositions.length) findMatchIdx = 0;
+      ta.focus();
+      ta.setSelectionRange(
+        newPositions[findMatchIdx],
+        newPositions[findMatchIdx] + query.length,
+      );
+      scrollTaToPos(ta, newPositions[findMatchIdx]);
+    }
+    updateFindDisplay();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-replace-all", function () {
+    var query = $p.find("#ms-find-input").val();
+    var replaceText = $p.find("#ms-replace-input").val() || "";
+    if (!query) return;
+    var ta = getTa();
+    if (!ta) return;
+    var before = ta.value;
+    var escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    var _rast = ta.scrollTop;
+    ta.value = ta.value.replace(new RegExp(escaped, "gi"), function () {
+      return replaceText;
     });
-    $p.find("#ms-body").on("click.ms", "#ms-replace-one", function () {
-      var query = $p.find("#ms-find-input").val();
-      var replaceText = $p.find("#ms-replace-input").val() || "";
-      var positions = getFindPositions(query);
-      if (positions.length === 0 || !query) return;
-      if (findMatchIdx >= positions.length) findMatchIdx = 0;
-      var ta = getTa();
-      if (!ta) return;
-      var pos = positions[findMatchIdx];
-      var _rst = ta.scrollTop;
-      ta.value =
-        ta.value.substring(0, pos) +
-        replaceText +
-        ta.value.substring(pos + query.length);
-      ta.scrollTop = _rst;
+    ta.scrollTop = _rast;
+    if (ta.value !== before) {
       um.capture();
       var s = countStats(ta.value);
       $p.find("#ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
       markDirty();
-      var newPositions = getFindPositions(query);
-      if (newPositions.length > 0) {
-        if (findMatchIdx >= newPositions.length) findMatchIdx = 0;
-        ta.focus();
-        ta.setSelectionRange(
-          newPositions[findMatchIdx],
-          newPositions[findMatchIdx] + query.length,
-        );
-        scrollTaToPos(ta, newPositions[findMatchIdx]);
+      var cnt = (before.match(new RegExp(escaped, "gi")) || []).length;
+      toast("success", "已替换 " + cnt + " 处");
+    } else {
+      toast("info", "没有找到匹配内容");
+    }
+    findMatchIdx = 0;
+    updateFindDisplay();
+  });
+  $p.find("#ms-body").on("keydown.ms", "#ms-replace-input", function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      e.preventDefault();
+      $p.find("#ms-edit-save").trigger("click");
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      $p.find("#ms-replace-one").trigger("click");
+    }
+    if (e.key === "Escape") {
+      $p.find("#ms-find-bar").hide();
+      $p.find("[data-md='find']").removeClass("active");
+      getTa()?.focus();
+    }
+  });
+  $p.find("#ms-edit-content").on("scroll.ms-edit-st", function () {
+    var $btnTop = $p.find("#ms-edit-scroll-top");
+    var $btnBottom = $p.find("#ms-edit-scroll-bottom");
+    if (this.scrollTop > 150) $btnTop.addClass("visible");
+    else $btnTop.removeClass("visible");
+    var distToBottom = this.scrollHeight - this.scrollTop - this.clientHeight;
+    if (distToBottom > 150) $btnBottom.addClass("visible");
+    else $btnBottom.removeClass("visible");
+  });
+  $p.find("#ms-edit-scroll-top").on("click.ms", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    $p.find("#ms-edit-content").animate({ scrollTop: 0 }, 200);
+  });
+  $p.find("#ms-edit-scroll-bottom").on("click.ms", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    var $ta = $p.find("#ms-edit-content");
+    $ta.animate({ scrollTop: $ta[0].scrollHeight }, 200);
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-edit-cancel", function () {
+    clearDraft();
+    navigateBack();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-edit-save", () => {
+    const t = $p.find("#ms-edit-title").val().trim(),
+      c = $p.find("#ms-edit-content").val().trim(),
+      g2 = $p.find("#ms-edit-group").val() || null,
+      a = $p.find("#ms-edit-author").val().trim(),
+      sr = $p.find("#ms-edit-series").val().trim();
+    if (!t && !c) {
+      toast("warning", "标题和内容不能都为空");
+      return;
+    }
+    editDirty = false;
+    clearDraft();
+    if (v.promptId) {
+      const existingP = getPrompt(v.promptId);
+      if (
+        existingP &&
+        (existingP.title !== (t || "未命名") || existingP.content !== c)
+      ) {
+        pushHistory(existingP);
       }
-      updateFindDisplay();
-    });
-    $p.find("#ms-body").on("click.ms", "#ms-replace-all", function () {
-      var query = $p.find("#ms-find-input").val();
-      var replaceText = $p.find("#ms-replace-input").val() || "";
-      if (!query) return;
-      var ta = getTa();
-      if (!ta) return;
-      var before = ta.value;
-      var escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      var _rast = ta.scrollTop;
-      ta.value = ta.value.replace(new RegExp(escaped, "gi"), function () {
-        return replaceText;
+      updatePrompt(v.promptId, {
+        title: t || "未命名",
+        content: c,
+        groupId: g2,
+        author: a,
+        series: sr,
+        tags: editTags,
+        character: editCharacter,
       });
-      ta.scrollTop = _rast;
-      if (ta.value !== before) {
+    } else {
+      var newPr = createPrompt({
+        title: t || "未命名",
+        content: c,
+        groupId: g2,
+        author: a,
+        series: sr,
+        tags: editTags,
+        character: editCharacter,
+      });
+      v.promptId = newPr.id;
+    }
+    if (editCharacter) recordRecentBoundChar(editCharacter);
+    navigateBack();
+  });
+  if (v._savedEditState) {
+    var ss = v._savedEditState;
+    $p.find("#ms-edit-title").val(ss.title);
+    $p.find("#ms-edit-content").val(ss.content);
+    $p.find("#ms-edit-group").val(ss.groupId);
+    $p.find("#ms-edit-author").val(ss.author);
+    $p.find("#ms-edit-series").val(ss.series || "");
+    editTags = ss.tags ? [...ss.tags] : [];
+    if (ss.character !== undefined) editCharacter = ss.character;
+    $p.find("#ms-edit-tags").html(buildTagsUI());
+    $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
+    var rs = countStats(ss.content);
+    $p.find("#ms-char-count").text(rs.chars + " 字 · " + rs.lines + " 行");
+    um = createUndoManager(getTa);
+    if (ss.undoState) um.setState(ss.undoState);
+    if (v._pendingInsert) {
+      var ta2 = getTa();
+      if (ta2) {
+        var pos = ss.cursorPos !== undefined ? ss.cursorPos : ta2.value.length;
+        ta2.selectionStart = ta2.selectionEnd = pos;
+        insertAtCursor(ta2, v._pendingInsert);
         um.capture();
-        var s = countStats(ta.value);
-        $p.find("#ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
-        markDirty();
-        var cnt = (before.match(new RegExp(escaped, "gi")) || []).length;
-        toast("success", "已替换 " + cnt + " 处");
-      } else {
-        toast("info", "没有找到匹配内容");
+        var rs2 = countStats(ta2.value);
+        $p.find("#ms-char-count").text(
+          rs2.chars + " 字 · " + rs2.lines + " 行",
+        );
       }
-      findMatchIdx = 0;
-      updateFindDisplay();
-    });
-    $p.find("#ms-body").on("keydown.ms", "#ms-replace-input", function (e) {
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
-        e.preventDefault();
-        $p.find("#ms-edit-save").trigger("click");
-        return;
-      }
-      if (e.key === "Enter") {
-        e.preventDefault();
-        $p.find("#ms-replace-one").trigger("click");
-      }
-      if (e.key === "Escape") {
-        $p.find("#ms-find-bar").hide();
-        $p.find("[data-md='find']").removeClass("active");
-        getTa()?.focus();
-      }
-    });
-    $p.find("#ms-edit-content").on("scroll.ms-edit-st", function () {
-      var $btnTop = $p.find("#ms-edit-scroll-top");
-      var $btnBottom = $p.find("#ms-edit-scroll-bottom");
-      if (this.scrollTop > 150) $btnTop.addClass("visible");
-      else $btnTop.removeClass("visible");
-      var distToBottom = this.scrollHeight - this.scrollTop - this.clientHeight;
-      if (distToBottom > 150) $btnBottom.addClass("visible");
-      else $btnBottom.removeClass("visible");
-    });
-    $p.find("#ms-edit-scroll-top").on("click.ms", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      $p.find("#ms-edit-content").animate({ scrollTop: 0 }, 200);
-    });
-    $p.find("#ms-edit-scroll-bottom").on("click.ms", function (e) {
-      e.preventDefault();
-      e.stopPropagation();
-      var $ta = $p.find("#ms-edit-content");
-      $ta.animate({ scrollTop: $ta[0].scrollHeight }, 200);
-    });
-    $p.find("#ms-body").on("click.ms", "#ms-edit-cancel", function () {
-      clearDraft();
-      navigateBack();
-    });
-    $p.find("#ms-body").on("click.ms", "#ms-edit-save", () => {
-      const t = $p.find("#ms-edit-title").val().trim(),
-        c = $p.find("#ms-edit-content").val().trim(),
-        g2 = $p.find("#ms-edit-group").val() || null,
-        a = $p.find("#ms-edit-author").val().trim(),
-        sr = $p.find("#ms-edit-series").val().trim();
-      if (!t && !c) {
-        toast("warning", "标题和内容不能都为空");
-        return;
-      }
-      editDirty = false;
-      clearDraft();
-      if (v.promptId) {
-        const existingP = getPrompt(v.promptId);
-        if (
-          existingP &&
-          (existingP.title !== (t || "未命名") || existingP.content !== c)
-        ) {
-          pushHistory(existingP);
-        }
-        updatePrompt(v.promptId, {
-          title: t || "未命名",
-          content: c,
-          groupId: g2,
-          author: a,
-          series: sr,
-          tags: editTags,
-          character: editCharacter,
-        });
-      } else {
-        var newPr = createPrompt({
-          title: t || "未命名",
-          content: c,
-          groupId: g2,
-          author: a,
-          series: sr,
-          tags: editTags,
-          character: editCharacter,
-        });
-        v.promptId = newPr.id;
-      }
-      if (editCharacter) recordRecentBoundChar(editCharacter);
-      navigateBack();
-    });
-    if (v._savedEditState) {
-      var ss = v._savedEditState;
-      $p.find("#ms-edit-title").val(ss.title);
-      $p.find("#ms-edit-content").val(ss.content);
-      $p.find("#ms-edit-group").val(ss.groupId);
-      $p.find("#ms-edit-author").val(ss.author);
-      $p.find("#ms-edit-series").val(ss.series || "");
-      editTags = ss.tags ? [...ss.tags] : [];
-      if (ss.character !== undefined) editCharacter = ss.character;
-      $p.find("#ms-edit-tags").html(buildTagsUI());
-      $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
-      var rs = countStats(ss.content);
-      $p.find("#ms-char-count").text(rs.chars + " 字 · " + rs.lines + " 行");
-      um = createUndoManager(getTa);
-      if (ss.undoState) um.setState(ss.undoState);
-      if (v._pendingInsert) {
-        var ta2 = getTa();
-        if (ta2) {
-          var pos =
-            ss.cursorPos !== undefined ? ss.cursorPos : ta2.value.length;
-          ta2.selectionStart = ta2.selectionEnd = pos;
-          insertAtCursor(ta2, v._pendingInsert);
-          um.capture();
-          var rs2 = countStats(ta2.value);
-          $p.find("#ms-char-count").text(
-            rs2.chars + " 字 · " + rs2.lines + " 行",
-          );
-        }
-        delete v._pendingInsert;
-      }
-      delete v._savedEditState;
-      markDirty();
-      if (ss.findBarOpen) {
-        $p.find("#ms-find-bar").show();
-        $p.find("[data-md='find']").addClass("active");
-        if (ss.findQuery) $p.find("#ms-find-input").val(ss.findQuery);
-      }
-      if (ss.focusMode) {
-        var el2 = $p[0];
-        $p.data("ms-focus-saved-pos", {
-          left: el2.style.getPropertyValue("left"),
-          top: el2.style.getPropertyValue("top"),
-          transform: el2.style.getPropertyValue("transform"),
-          panelPos: data.settings.panelPos
-            ? { ...data.settings.panelPos }
-            : null,
-        });
-        el2.style.removeProperty("left");
-        el2.style.removeProperty("top");
-        el2.style.removeProperty("transform");
-        $p.addClass("ms-focus-mode");
-        var $focusBtn = $p.find("[data-md='focus']");
-        $focusBtn.addClass("active").attr("title", "退出专注");
-        $focusBtn.find("i").attr("class", "fa-solid fa-compress");
-      }
+      delete v._pendingInsert;
+    }
+    delete v._savedEditState;
+    markDirty();
+    if (ss.findBarOpen) {
+      $p.find("#ms-find-bar").show();
+      $p.find("[data-md='find']").addClass("active");
+      if (ss.findQuery) $p.find("#ms-find-input").val(ss.findQuery);
+    }
+    if (ss.focusMode) {
+      var el2 = $p[0];
+      $p.data("ms-focus-saved-pos", {
+        left: el2.style.getPropertyValue("left"),
+        top: el2.style.getPropertyValue("top"),
+        transform: el2.style.getPropertyValue("transform"),
+        panelPos: data.settings.panelPos ? { ...data.settings.panelPos } : null,
+      });
+      el2.style.removeProperty("left");
+      el2.style.removeProperty("top");
+      el2.style.removeProperty("transform");
+      $p.addClass("ms-focus-mode");
+      var $focusBtn = $p.find("[data-md='focus']");
+      $focusBtn.addClass("active").attr("title", "退出专注");
+      $focusBtn.find("i").attr("class", "fa-solid fa-compress");
     }
   }
+}
 
   function renderQuickPhrases(v) {
     const $p = $("#" + PANEL_ID);
@@ -11357,7 +11885,7 @@ function renderGroups() {
   const $p = $("#" + PANEL_ID);
   $p.find("#ms-title").text("分组管理");
   $p.find("#ms-toolbar").html(
-    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">分组管理</span><div class="ms-toolbar-actions"><button class="ms-tbtn ${groupSelectMode ? "active" : ""}" id="ms-group-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-group-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-group-add"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
+    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><div class="ms-toolbar-actions"><button class="ms-tbtn ${groupSelectMode ? "active" : ""}" id="ms-group-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-group-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-group-add"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
   );
   let expandedColorId = null;
   function buildGroupsBody() {
@@ -11892,9 +12420,9 @@ function renderGroupEdit(v) {
       '"></div>' +
       iconSectionH +
       colorH +
-      '<div class="ms-field"><label>备注</label><input type="text" id="ms-gedit-note" placeholder="可选的简短说明" value="' +
+      '<div class="ms-field"><label>备注 <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-gedit-note" data-fs-title="编辑分组备注" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-gedit-note" placeholder="可选的简短说明，支持多行和链接" style="min-height:60px;resize:vertical;">' +
       esc(g ? g.note : "") +
-      '"></div>' +
+      "</textarea></div>" +
       '<div class="ms-field"><label>默认作者</label><input type="text" id="ms-gedit-author" placeholder="该分组下新建时自动填入" value="' +
       esc(g ? g.defaultAuthor || "" : "") +
       '"></div>' +
@@ -12599,11 +13127,533 @@ function renderGroupEdit(v) {
   });
 }
 
+function renderTagMappings() {
+  const $p = setupPage("标签映射组", "标签映射组管理");
+  if (!Array.isArray(data.settings.tagMappings)) data.settings.tagMappings = [];
+  var _tmExplainText =
+    "不同作者的同义标签（如BE、虐向）可归入同一映射组。筛选时默认「映射」模式，勾选任一标签即联动筛选全组；切换「独立」模式则仅筛选所选标签。";
+  var $tmInfoBtn = $p.find("#ms-title-info");
+  var $tmNotePanel = $p.find("#ms-title-note-panel");
+  $tmNotePanel.html(
+    '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#999);line-height:1.7;padding:0;background:transparent;border:none;">' +
+      esc(_tmExplainText) +
+      "</div>",
+  );
+  $tmInfoBtn
+    .css("display", "flex")
+    .off("click.ms-note")
+    .on("click.ms-note", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      $tmInfoBtn.toggleClass("open");
+      $tmNotePanel.toggleClass("open");
+    });
+
+  $p.find("#ms-toolbar").html(
+    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><div class="ms-toolbar-actions"><button class="ms-tbtn" id="ms-tm-add"><i class="fa-solid fa-plus"></i> 新建映射组</button></div>`,
+  );
+
+  function buildBody() {
+    var html = "";
+    if (data.settings.tagMappings.length === 0) {
+      html +=
+        '<div class="ms-empty"><i class="fa-solid fa-link"></i>还没有映射组<br><span style="font-size:11px;opacity:0.6;margin-top:6px;display:block;">点右上角 + 新建映射组</span></div>';
+      return html;
+    }
+    data.settings.tagMappings.forEach(function (m) {
+      var tagsH = "";
+      (m.tagIds || []).forEach(function (tid) {
+        var t = getTag(tid);
+        if (t) {
+          var isPrimary = m.primaryTagId === tid;
+          tagsH +=
+            '<span class="ms-tag-chip" style="background:' +
+            t.color +
+            ";margin:2px 3px 2px 0;font-size:10px;" +
+            (isPrimary ? "box-shadow:0 0 0 1.5px var(--ms-accent);" : "") +
+            '">' +
+            (isPrimary
+              ? '<i class="fa-solid fa-crown" style="font-size:8px;margin-right:3px;color:var(--ms-accent);"></i>'
+              : "") +
+            esc(t.name) +
+            "</span>";
+        }
+      });
+      if (!tagsH)
+        tagsH =
+          '<span style="font-size:11px;color:var(--SmartThemeQuoteColor,#666);font-style:italic;">还没加入任何标签</span>';
+      html +=
+        '<div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.04);">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
+        '<i class="fa-solid fa-link" style="color:var(--ms-accent);font-size:12px;"></i>' +
+        '<span style="flex:1;font-size:13px;font-weight:500;color:var(--SmartThemeBodyColor,#ddd);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+        esc(m.name) +
+        "</span>" +
+        '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);flex-shrink:0;">' +
+        (m.tagIds || []).length +
+        " 个标签</span>" +
+        '<button class="ms-gitem-btn" data-tm-action="edit" data-mid="' +
+        m.id +
+        '" title="编辑成员"><i class="fa-solid fa-pen"></i></button>' +
+        '<button class="ms-gitem-btn" data-tm-action="rename" data-mid="' +
+        m.id +
+        '" title="改名"><i class="fa-solid fa-i-cursor"></i></button>' +
+        '<button class="ms-gitem-btn danger" data-tm-action="delete" data-mid="' +
+        m.id +
+        '" title="删除"><i class="fa-solid fa-trash"></i></button>' +
+        "</div>" +
+        '<div style="padding-left:20px;display:flex;flex-wrap:wrap;align-items:center;">' +
+        tagsH +
+        "</div>" +
+        "</div>";
+    });
+    return html;
+  }
+
+  function refresh() {
+    $p.find("#ms-body").html(buildBody());
+  }
+
+  refresh();
+  $p.find("#ms-footer")
+    .html("<span>" + data.settings.tagMappings.length + " 个映射组</span>")
+    .show();
+  bindAllEvents();
+
+  $p.find("#ms-toolbar").on("click.ms", "#ms-tm-add", function () {
+    msPrompt("", {
+      title: "新建映射组",
+      placeholder: "例如：性格-温柔系 / 场景-亲密互动",
+      validate: function (v) {
+        if (!v || !v.trim()) return "名称不能为空";
+        return null;
+      },
+    }).then(function (name) {
+      if (!name || !name.trim()) return;
+      var newMapping = { id: uid(), name: name.trim(), tagIds: [] };
+      data.settings.tagMappings.push(newMapping);
+      saveData();
+      refresh();
+      $p.find("#ms-footer span:first").text(
+        data.settings.tagMappings.length + " 个映射组",
+      );
+      setTimeout(function () {
+        showMappingMembersEditor(newMapping.id, refresh);
+      }, 100);
+    });
+  });
+
+  $p.find("#ms-body").on("click.ms", "[data-tm-action='edit']", function () {
+    showMappingMembersEditor($(this).data("mid"), refresh);
+  });
+
+  $p.find("#ms-body").on("click.ms", "[data-tm-action='rename']", function () {
+    var mid = $(this).data("mid");
+    var m = data.settings.tagMappings.find(function (x) {
+      return x.id === mid;
+    });
+    if (!m) return;
+    msPrompt("", {
+      title: "重命名映射组",
+      defaultValue: m.name,
+      validate: function (v) {
+        if (!v || !v.trim()) return "名称不能为空";
+        return null;
+      },
+    }).then(function (newName) {
+      if (!newName || !newName.trim()) return;
+      m.name = newName.trim();
+      saveData();
+      refresh();
+    });
+  });
+
+  $p.find("#ms-body").on("click.ms", "[data-tm-action='delete']", function () {
+    var mid = $(this).data("mid");
+    var m = data.settings.tagMappings.find(function (x) {
+      return x.id === mid;
+    });
+    if (!m) return;
+    msConfirm(
+      "确定删除映射组「" +
+        m.name +
+        "」吗？\n\n标签本身不会被删除，只是不再参与联动筛选。",
+      {
+        title: "删除映射组",
+        dangerous: true,
+        okText: "删除",
+      },
+    ).then(function (ok) {
+      if (!ok) return;
+      data.settings.tagMappings = data.settings.tagMappings.filter(
+        function (x) {
+          return x.id !== mid;
+        },
+      );
+      saveData();
+      refresh();
+      $p.find("#ms-footer span:first").text(
+        data.settings.tagMappings.length + " 个映射组",
+      );
+    });
+  });
+}
+
+function showMappingMembersEditor(mid, onDone) {
+  var m = (data.settings.tagMappings || []).find(function (x) {
+    return x.id === mid;
+  });
+  if (!m) return;
+  enterBirthdayPanelMode();
+  var workingIds = (m.tagIds || []).slice();
+  var workingPrimaryId =
+    m.primaryTagId && workingIds.indexOf(m.primaryTagId) >= 0
+      ? m.primaryTagId
+      : workingIds.length > 0
+        ? workingIds[0]
+        : null;
+  var kw = "";
+  var expandedGroups = new Set();
+
+  function renderTagRow(t) {
+    var inGroup = workingIds.indexOf(t.id) >= 0;
+    var isPrimary = inGroup && t.id === workingPrimaryId;
+    var checkBg = inGroup
+      ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
+      : "";
+    var rowBg = isPrimary
+      ? "background:rgba(var(--ms-accent-rgb),0.15);border:1px solid rgba(var(--ms-accent-rgb),0.45);"
+      : inGroup
+        ? "background:rgba(var(--ms-accent-rgb),0.08);border:1px solid transparent;"
+        : "border:1px solid transparent;";
+    var inOtherMapping = (data.settings.tagMappings || []).find(function (mm) {
+      return (
+        mm.id !== mid &&
+        Array.isArray(mm.tagIds) &&
+        mm.tagIds.indexOf(t.id) >= 0
+      );
+    });
+    var hintH = inOtherMapping
+      ? '<span style="font-size:9px;color:var(--SmartThemeQuoteColor,#888);background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;flex-shrink:0;">也在「' +
+        esc(truncate(inOtherMapping.name, 8)) +
+        "」</span>"
+      : "";
+    var crownH = inGroup
+      ? '<button class="ms-tm-primary-btn" data-tid="' +
+        t.id +
+        '" title="' +
+        (isPrimary ? "当前主标签（筛选时只显示它）" : "设为主标签") +
+        '" style="background:none;border:none;cursor:pointer;padding:3px 5px;border-radius:4px;flex-shrink:0;color:' +
+        (isPrimary ? "var(--ms-accent)" : "rgba(255,255,255,0.18)") +
+        ';font-size:13px;line-height:1;transition:color 0.15s;"><i class="fa-solid fa-crown"></i></button>'
+      : '<span style="width:24px;flex-shrink:0;"></span>';
+    return (
+      '<div class="ms-tm-row" data-tid="' +
+      t.id +
+      '" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:5px;cursor:pointer;transition:background 0.12s;' +
+      rowBg +
+      '">' +
+      '<div class="ms-gitem-check" style="' +
+      checkBg +
+      '"><i class="fa-solid fa-check"></i></div>' +
+      '<span class="ms-gitem-color" style="background:' +
+      t.color +
+      ';width:14px;height:14px;cursor:default;"></span>' +
+      '<span style="flex:1;font-size:13px;color:var(--SmartThemeBodyColor,#ddd);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+      esc(t.name) +
+      (isPrimary
+        ? ' <span style="font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.18);padding:1px 5px;border-radius:3px;margin-left:3px;font-weight:600;">主</span>'
+        : "") +
+      "</span>" +
+      hintH +
+      crownH +
+      "</div>"
+    );
+  }
+
+  function buildList() {
+    var lkw = kw.toLowerCase();
+    function matchTag(t) {
+      if (!lkw) return true;
+      return t.name.toLowerCase().indexOf(lkw) >= 0;
+    }
+
+    var tagsByGroup = {};
+    data.groups.forEach(function (g) {
+      tagsByGroup[g.id] = new Set();
+    });
+    tagsByGroup["_ungrouped"] = new Set();
+
+    data.prompts.forEach(function (p) {
+      if (!p.tags || p.tags.length === 0) return;
+      var gid = p.groupId && getGroup(p.groupId) ? p.groupId : "_ungrouped";
+      p.tags.forEach(function (tid) {
+        if (getTag(tid)) tagsByGroup[gid].add(tid);
+      });
+    });
+
+    var usedTagIds = new Set();
+    Object.keys(tagsByGroup).forEach(function (gid) {
+      tagsByGroup[gid].forEach(function (tid) {
+        usedTagIds.add(tid);
+      });
+    });
+    var unusedTagsAll = data.settings.definedTags.filter(function (t) {
+      return !usedTagIds.has(t.id);
+    });
+
+    function renderGroupSection(gid, gName, tagIdSet, gIconHtml, headerBg) {
+      var filteredTags = Array.from(tagIdSet)
+        .map(function (tid) {
+          return getTag(tid);
+        })
+        .filter(function (t) {
+          return t && matchTag(t);
+        });
+      if (filteredTags.length === 0) return "";
+
+      var isOpen = expandedGroups.has(gid) || !!lkw;
+      var inGroupCount = filteredTags.filter(function (t) {
+        return workingIds.indexOf(t.id) >= 0;
+      }).length;
+
+      // 折叠头样式：背景色由调用方传入；6px 内边距让头部更紧凑
+      var html = '<div style="margin-bottom:4px;">';
+      html +=
+        '<div class="ms-mm-group-header" data-mm-gid="' +
+        gid +
+        '" style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:' +
+        headerBg +
+        ';border-radius:5px;cursor:pointer;user-select:none;">';
+      html +=
+        '<i class="fa-solid fa-angle-' +
+        (isOpen ? "down" : "right") +
+        '" style="font-size:11px;color:var(--ms-accent);width:10px;transition:transform 0.15s;"></i>';
+      html += gIconHtml;
+      html +=
+        '<span style="flex:1;font-size:12px;color:var(--SmartThemeBodyColor,#ddd);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+        esc(gName) +
+        "</span>";
+      html +=
+        '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">' +
+        filteredTags.length +
+        " 标签" +
+        (inGroupCount > 0
+          ? ' · <span style="color:var(--ms-accent);">选中 ' +
+            inGroupCount +
+            "</span>"
+          : "") +
+        "</span>";
+      html += "</div>";
+      if (isOpen) {
+        // 左侧 14px 缩进，让标签行视觉上属于该分组
+        html += '<div style="padding:4px 0 0 14px;">';
+        filteredTags.forEach(function (t) {
+          html += renderTagRow(t);
+        });
+        html += "</div>";
+      }
+      html += "</div>";
+      return html;
+    }
+
+    var html =
+      '<div class="ms-modal-list" style="min-height:50vh;max-height:60vh;overflow-y:auto;">';
+    var anyVisible = false;
+
+    data.groups.forEach(function (g) {
+      var useAvatar =
+        isIPGroup(g) ||
+        (g.iconMode === "custom" && g.iconUrl) ||
+        (g.iconMode === "char" && g.iconCharKey);
+      var iconH = useAvatar
+        ? buildGroupAvatarHTML(g, 18)
+        : '<i class="fa-solid fa-folder" style="color:' +
+          g.color +
+          ';font-size:11px;"></i>';
+      var section = renderGroupSection(
+        g.id,
+        g.name,
+        tagsByGroup[g.id],
+        iconH,
+        "rgba(var(--ms-accent-rgb),0.06)",
+      );
+      if (section) {
+        html += section;
+        anyVisible = true;
+      }
+    });
+
+    if (tagsByGroup["_ungrouped"].size > 0) {
+      var section = renderGroupSection(
+        "_ungrouped",
+        "未分组",
+        tagsByGroup["_ungrouped"],
+        '<i class="fa-solid fa-inbox" style="color:#888;font-size:11px;"></i>',
+        "rgba(255,255,255,0.03)",
+      );
+      if (section) {
+        html += section;
+        anyVisible = true;
+      }
+    }
+
+    if (unusedTagsAll.length > 0) {
+      var filteredUnused = unusedTagsAll.filter(matchTag);
+      if (filteredUnused.length > 0) {
+        var isOpen = expandedGroups.has("_unused") || !!lkw;
+        var inGroupCount = filteredUnused.filter(function (t) {
+          return workingIds.indexOf(t.id) >= 0;
+        }).length;
+        html += '<div style="margin-bottom:4px;">';
+        html +=
+          '<div class="ms-mm-group-header" data-mm-gid="_unused" style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:rgba(255,255,255,0.03);border-radius:5px;cursor:pointer;user-select:none;">';
+        html +=
+          '<i class="fa-solid fa-angle-' +
+          (isOpen ? "down" : "right") +
+          '" style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);width:10px;transition:transform 0.15s;"></i>';
+        html +=
+          '<i class="fa-solid fa-ghost" style="color:var(--SmartThemeQuoteColor,#888);font-size:11px;"></i>';
+        html +=
+          '<span style="flex:1;font-size:12px;color:var(--SmartThemeBodyColor,#bbb);font-weight:600;">未被使用过</span>';
+        html +=
+          '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">' +
+          filteredUnused.length +
+          " 标签" +
+          (inGroupCount > 0
+            ? ' · <span style="color:var(--ms-accent);">选中 ' +
+              inGroupCount +
+              "</span>"
+            : "") +
+          "</span>";
+        html += "</div>";
+        if (isOpen) {
+          html += '<div style="padding:4px 0 0 14px;">';
+          filteredUnused.forEach(function (t) {
+            html += renderTagRow(t);
+          });
+          html += "</div>";
+        }
+        html += "</div>";
+        anyVisible = true;
+      }
+    }
+
+    if (!anyVisible) {
+      html +=
+        '<div style="min-height:30vh;display:flex;align-items:center;justify-content:center;color:var(--SmartThemeQuoteColor,#666);font-size:12px;">没有匹配的标签</div>';
+    }
+
+    html += "</div>";
+    return html;
+  }
+
+  function buildModalBody() {
+    return (
+      '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;line-height:1.6;">勾选标签加入「<strong style="color:var(--ms-accent);">' +
+      esc(m.name) +
+      '</strong>」组，点击 <i class="fa-solid fa-crown" style="color:#ffc857;"></i> 设为<strong style="color:#ffc857;">主标签</strong>。映射模式下筛选面板仅显示主标签并自动联动从标签，独立模式则全部展示。</div>' +
+      '<input type="text" class="ms-modal-search" id="ms-tm-search" placeholder="搜索标签..." value="' +
+      esc(kw) +
+      '">' +
+      '<div id="ms-tm-list">' +
+      buildList() +
+      "</div>"
+    );
+  }
+
+  function refreshList($overlay) {
+    var savedScroll = 0;
+    var $oldList = $overlay.find("#ms-tm-list .ms-modal-list");
+    if ($oldList.length) savedScroll = $oldList[0].scrollTop;
+    var caretPos = -1;
+    var $oldInput = $overlay.find("#ms-tm-search");
+    if ($oldInput.is(":focus") && $oldInput[0])
+      caretPos = $oldInput[0].selectionStart || 0;
+    $overlay.find("#ms-tm-list").html(buildList());
+    var $newList = $overlay.find("#ms-tm-list .ms-modal-list");
+    if ($newList.length && savedScroll > 0) $newList[0].scrollTop = savedScroll;
+    if (caretPos >= 0) {
+      var $newInput = $overlay.find("#ms-tm-search");
+      if ($newInput.length) {
+        $newInput.focus();
+        try {
+          $newInput[0].setSelectionRange(caretPos, caretPos);
+        } catch (e) {}
+      }
+    }
+  }
+
+  showModal({
+    title: "配置「" + truncate(m.name, 18) + "」的成员",
+    iconType: "info",
+    icon: "fa-link",
+    modalStyle: "min-width:380px;max-width:94vw;width:480px;",
+    body: buildModalBody(),
+    buttons: [
+      { text: "取消", value: null },
+      {
+        text: "保存",
+        cls: "primary",
+        primary: true,
+        action: function () {
+          m.tagIds = workingIds.slice();
+          m.primaryTagId = workingPrimaryId;
+          saveData();
+          if (typeof onDone === "function") onDone();
+          return true;
+        },
+      },
+    ],
+    cancelValue: null,
+    onShow: function ($overlay) {
+      $overlay.on("input", "#ms-tm-search", function () {
+        kw = $(this).val();
+        refreshList($overlay);
+      });
+      $overlay.on("click", ".ms-mm-group-header", function (e) {
+        e.stopPropagation();
+        var gid = $(this).attr("data-mm-gid");
+        if (!gid) return;
+        if (expandedGroups.has(gid)) expandedGroups.delete(gid);
+        else expandedGroups.add(gid);
+        refreshList($overlay);
+      });
+      $overlay.on("click", ".ms-tm-primary-btn", function (e) {
+        e.stopPropagation();
+        var tid = $(this).attr("data-tid");
+        if (!tid) return;
+        if (workingIds.indexOf(tid) < 0) return;
+        workingPrimaryId = tid;
+        refreshList($overlay);
+      });
+      $overlay.on("click", ".ms-tm-row", function (e) {
+        if ($(e.target).closest(".ms-tm-primary-btn").length) return;
+        var tid = $(this).attr("data-tid");
+        if (!tid) return;
+        var i = workingIds.indexOf(tid);
+        if (i >= 0) {
+          workingIds.splice(i, 1);
+          if (workingPrimaryId === tid) {
+            workingPrimaryId = workingIds.length > 0 ? workingIds[0] : null;
+          }
+        } else {
+          workingIds.push(tid);
+          if (!workingPrimaryId) workingPrimaryId = tid;
+        }
+        refreshList($overlay);
+      });
+    },
+  }).then(function () {
+    exitBirthdayPanelMode();
+  });
+}
+
 function renderTagManage() {
   const $p = $("#" + PANEL_ID);
   $p.find("#ms-title").text("标签管理");
   $p.find("#ms-toolbar").html(
-    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">标签管理</span><div class="ms-toolbar-actions"><button class="ms-tbtn ${tagSelectMode ? "active" : ""}" id="ms-tag-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-tag-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-tag-add-btn"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
+    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><div class="ms-toolbar-actions"><button class="ms-tbtn" id="ms-tag-mapping-mgr" title="管理标签映射组"><i class="fa-solid fa-link"></i></button><button class="ms-tbtn ${tagSelectMode ? "active" : ""}" id="ms-tag-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-tag-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-tag-add-btn"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
   );
   let expandedColorId = null;
   function buildTagsBody() {
@@ -12616,10 +13666,23 @@ function renderTagManage() {
           (p) => p.tags && p.tags.includes(t.id),
         ).length;
         const isSel = selectedTagIds.has(t.id);
+        const sources = getTagSourceGroups(t.id);
+        let sourceH = "";
+        if (sources.length === 1) {
+          const s = sources[0];
+          sourceH = `<span class="ms-tag-source" data-tid="${t.id}" title="${esc(s.group.name)}（${s.count} 条）" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;color:${s.group.color};background:${s.group.color}1a;padding:1px 6px;border-radius:8px;margin-left:6px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default;"><i class="fa-solid fa-folder" style="font-size:8px;opacity:0.7;"></i>${esc(truncate(s.group.name, 8))}</span>`;
+        } else if (sources.length > 1) {
+          sourceH = `<span class="ms-tag-source" data-tid="${t.id}" title="点击查看 ${sources.length} 个来源分组" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.10);padding:1px 6px;border-radius:8px;margin-left:6px;cursor:pointer;border:1px solid rgba(var(--ms-accent-rgb),0.25);"><i class="fa-solid fa-folder-tree" style="font-size:8px;"></i>${sources.length} 个分组</span>`;
+        }
+        const mappingGroups = getTagMappingGroups(t.id);
+        let mappingBadge = "";
+        if (mappingGroups.length > 0) {
+          mappingBadge = `<span title="属于映射组：${esc(mappingGroups.map((m) => m.name).join("、"))}" style="display:inline-flex;align-items:center;font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.08);padding:1px 5px;border-radius:6px;margin-left:4px;"><i class="fa-solid fa-link" style="font-size:8px;"></i></span>`;
+        }
         if (tagSelectMode) {
-          html += `<div class="ms-gitem ${isSel ? "ms-gitem-selected" : ""}" data-tid="${t.id}"><div class="ms-gitem-check"><i class="fa-solid fa-check"></i></div><span class="ms-gitem-color" style="background:${t.color};cursor:default;"></span><span class="ms-gitem-name">${esc(t.name)}</span><span class="ms-gitem-cnt">${cnt}</span></div>`;
+          html += `<div class="ms-gitem ${isSel ? "ms-gitem-selected" : ""}" data-tid="${t.id}"><div class="ms-gitem-check"><i class="fa-solid fa-check"></i></div><span class="ms-gitem-color" style="background:${t.color};cursor:default;"></span><span class="ms-gitem-name" style="display:flex;align-items:center;flex-wrap:wrap;gap:0;">${esc(t.name)}${mappingBadge}${sourceH}</span><span class="ms-gitem-cnt">${cnt}</span></div>`;
         } else {
-          html += `<div class="ms-gitem"><span class="ms-gitem-color" style="background:${t.color}" data-tid="${t.id}"></span><span class="ms-gitem-name">${esc(t.name)}</span><span class="ms-gitem-cnt">${cnt}</span><button class="ms-gitem-btn" data-action="rename-tag" data-tid="${t.id}"><i class="fa-solid fa-pen"></i></button><button class="ms-gitem-btn danger" data-action="delete-tag" data-tid="${t.id}"><i class="fa-solid fa-trash"></i></button></div>`;
+          html += `<div class="ms-gitem"><span class="ms-gitem-color" style="background:${t.color}" data-tid="${t.id}"></span><span class="ms-gitem-name" style="display:flex;align-items:center;flex-wrap:wrap;gap:0;">${esc(t.name)}${mappingBadge}${sourceH}</span><span class="ms-gitem-cnt">${cnt}</span><button class="ms-gitem-btn" data-action="rename-tag" data-tid="${t.id}"><i class="fa-solid fa-pen"></i></button><button class="ms-gitem-btn danger" data-action="delete-tag" data-tid="${t.id}"><i class="fa-solid fa-trash"></i></button></div>`;
           if (expandedColorId === t.id) {
             html += buildColorPickerHTML(t.color, "data-tid", t.id);
           }
@@ -12659,6 +13722,79 @@ function renderTagManage() {
     if (data.settings.definedTags.length > 1)
       navigateTo({ name: "reorder-tags" });
     else toast("info", "至少需要2个标签才能排序");
+  });
+  $p.find("#ms-toolbar").on("click.ms", "#ms-tag-mapping-mgr", function () {
+    navigateTo({ name: "tag-mappings" });
+  });
+  $p.find("#ms-body").on("click.ms", ".ms-tag-source", function (e) {
+    e.stopPropagation();
+    var tid = $(this).data("tid");
+    var sources = getTagSourceGroups(tid);
+    if (sources.length <= 1) return;
+    var t = getTag(tid);
+    var listH =
+      '<div class="ms-modal-list" style="max-height:60vh;overflow-y:auto;">';
+    sources.forEach(function (s) {
+      var g = s.group;
+      var iconH;
+      if (g.id === "_ungrouped") {
+        iconH =
+          '<div class="ms-modal-list-icon" style="background:rgba(255,255,255,0.08);color:#888;"><i class="fa-solid fa-inbox"></i></div>';
+      } else {
+        var gObj = getGroup(g.id);
+        var useAvatar =
+          gObj &&
+          (isIPGroup(gObj) ||
+            (gObj.iconMode === "custom" && gObj.iconUrl) ||
+            (gObj.iconMode === "char" && gObj.iconCharKey));
+        if (useAvatar) {
+          iconH =
+            '<div class="ms-modal-list-icon" style="padding:0;">' +
+            buildGroupAvatarHTML(gObj, 28) +
+            "</div>";
+        } else {
+          iconH =
+            '<div class="ms-modal-list-icon" style="background:' +
+            g.color +
+            "22;color:" +
+            g.color +
+            ';"><i class="fa-solid fa-folder"></i></div>';
+        }
+      }
+      listH +=
+        '<div class="ms-modal-list-item" data-source-gid="' +
+        g.id +
+        '">' +
+        iconH +
+        '<div class="ms-modal-list-info"><div class="ms-modal-list-name">' +
+        esc(g.name) +
+        '</div><div class="ms-modal-list-desc">' +
+        s.count +
+        " 条剧场使用此标签</div></div></div>";
+    });
+    listH += "</div>";
+    showModal({
+      title: "「" + (t ? t.name : "") + "」的来源分组",
+      iconType: "info",
+      icon: "fa-folder-tree",
+      modalStyle: "min-width:340px;max-width:90vw;width:400px;",
+      body: listH,
+      buttons: [{ text: "关闭", value: null }],
+      onShow: function ($overlay, close) {
+        $overlay.on("click", ".ms-modal-list-item", function () {
+          var gid = $(this).attr("data-source-gid");
+          if (!gid) return;
+          close("done");
+          setTimeout(function () {
+            if (gid === "_ungrouped") {
+              navigateTo({ name: "group", groupId: "_ungrouped" });
+            } else {
+              navigateTo({ name: "group", groupId: gid });
+            }
+          }, 200);
+        });
+      },
+    });
   });
   $p.find("#ms-toolbar").on("click.ms", "#ms-tag-add-btn", () => {
     msPrompt("", {
@@ -14759,57 +15895,57 @@ function renderSettings() {
     };
   }
 
-  function renderReorderList(opts) {
-    const $p = setupPage(opts.title);
-    let multiMode = false;
-    const multiSelected = new Set();
-    let rangeMode = false;
-    let rangeAnchor = null;
+function renderReorderList(opts) {
+  const $p = setupPage(opts.title);
+  let multiMode = false;
+  const multiSelected = new Set();
+  let rangeMode = false;
+  let rangeAnchor = null;
 
-    $p.find("#ms-toolbar").append(
-      '<div class="ms-toolbar-actions">' +
-        '<button class="ms-tbtn" id="ms-reorder-range" title="范围选择模式" style="display:none;"><i class="fa-solid fa-arrows-left-right-to-line"></i></button>' +
-        '<button class="ms-tbtn" id="ms-reorder-multi" title="多选批量调序"><i class="fa-solid fa-check-double"></i></button>' +
-        "</div>",
-    );
+  $p.find("#ms-toolbar").append(
+    '<div class="ms-toolbar-actions">' +
+      '<button class="ms-tbtn" id="ms-reorder-range" title="范围选择模式" style="display:none;"><i class="fa-solid fa-arrows-left-right-to-line"></i></button>' +
+      '<button class="ms-tbtn" id="ms-reorder-multi" title="多选批量调序"><i class="fa-solid fa-check-double"></i></button>' +
+      "</div>",
+  );
 
-    function getItemId(item, i) {
-      return item.id !== undefined ? String(item.id) : "idx_" + i;
+  function getItemId(item, i) {
+    return item.id !== undefined ? String(item.id) : "idx_" + i;
+  }
+
+  function buildReorderBody() {
+    let html = "";
+    const list = opts.getList();
+    if (multiMode && rangeMode) {
+      html +=
+        '<div style="padding:8px 14px;background:rgba(var(--ms-accent-rgb),0.06);border-bottom:1px solid var(--SmartThemeBorderColor,#333);font-size:11px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;"><i class="fa-solid fa-arrows-left-right-to-line" style="color:var(--ms-accent);margin-right:4px;"></i>范围模式：' +
+        (rangeAnchor === null
+          ? "点选第一项确定锚点"
+          : "已锚定，再次点选可扩展或收缩范围") +
+        ' · <span style="opacity:0.75;">长按某条目可改锚点到该处</span>' +
+        "</div>";
     }
-
-    function buildReorderBody() {
-      let html = "";
-      const list = opts.getList();
-      if (multiMode && rangeMode) {
-        html +=
-          '<div style="padding:8px 14px;background:rgba(var(--ms-accent-rgb),0.06);border-bottom:1px solid var(--SmartThemeBorderColor,#333);font-size:11px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;"><i class="fa-solid fa-arrows-left-right-to-line" style="color:var(--ms-accent);margin-right:4px;"></i>范围模式：' +
-          (rangeAnchor === null
-            ? "点选第一项确定锚点"
-            : "已锚定，再次点选可扩展或收缩范围") +
-          ' · <span style="opacity:0.75;">长按某条目可改锚点到该处</span>' +
-          "</div>";
-      }
-      list.forEach((item, i) => {
-        const itemId = getItemId(item, i);
-        const isAnchor = rangeMode && rangeAnchor === itemId;
-        if (multiMode) {
-          const isSelected = multiSelected.has(itemId);
-          const checkBg = isSelected
-            ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
-            : "";
-          const rowBg = isSelected
-            ? "background:rgba(var(--ms-accent-rgb),0.10);"
-            : "";
-          const anchorBadge = isAnchor
-            ? '<i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;margin-left:4px;" title="锚点"></i>'
-            : "";
-          html += `<div class="ms-reorder-item" data-ridx="${i}" data-rid="${itemId}" style="cursor:pointer;${rowBg}">
+    list.forEach((item, i) => {
+      const itemId = getItemId(item, i);
+      const isAnchor = rangeMode && rangeAnchor === itemId;
+      if (multiMode) {
+        const isSelected = multiSelected.has(itemId);
+        const checkBg = isSelected
+          ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
+          : "";
+        const rowBg = isSelected
+          ? "background:rgba(var(--ms-accent-rgb),0.10);"
+          : "";
+        const anchorBadge = isAnchor
+          ? '<i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;margin-left:4px;" title="锚点"></i>'
+          : "";
+        html += `<div class="ms-reorder-item" data-ridx="${i}" data-rid="${itemId}" style="cursor:pointer;${rowBg}">
             <div class="ms-gitem-check" style="${checkBg}"><i class="fa-solid fa-check"></i></div>
             ${opts.renderIcon(item)}
             <span class="ms-reorder-name">${esc(item.name)}${anchorBadge}</span>
           </div>`;
-        } else {
-          html += `<div class="ms-reorder-item" data-ridx="${i}">
+      } else {
+        html += `<div class="ms-reorder-item" data-ridx="${i}">
             <i class="fa-solid fa-grip-vertical ms-reorder-grip" data-ridx="${i}"></i>
             ${opts.renderIcon(item)}
             <span class="ms-reorder-name">${esc(item.name)}</span>
@@ -14818,27 +15954,27 @@ function renderSettings() {
               <button data-dir="down" data-ridx="${i}" ${i === list.length - 1 ? "disabled style='opacity:0.3;'" : ""}><i class="fa-solid fa-angle-down"></i></button>
             </div>
           </div>`;
-        }
-      });
-      return html;
-    }
+      }
+    });
+    return html;
+  }
 
-    var $body = $p.find("#ms-body");
+  var $body = $p.find("#ms-body");
 
-    function buildFooter() {
-      if (multiMode) {
-        const cnt = multiSelected.size;
-        const list = opts.getList();
-        const allSel =
-          list.length > 0 &&
-          list.every((item, i) => multiSelected.has(getItemId(item, i)));
-        const selIcon = allSel
-          ? "fa-solid fa-square-check"
-          : cnt === 0
-            ? "fa-regular fa-square"
-            : "fa-solid fa-square-minus";
-        const selLabel = allSel ? "取消全选" : "全选";
-        return `<div class="ms-batch-bar">
+  function buildFooter() {
+    if (multiMode) {
+      const cnt = multiSelected.size;
+      const list = opts.getList();
+      const allSel =
+        list.length > 0 &&
+        list.every((item, i) => multiSelected.has(getItemId(item, i)));
+      const selIcon = allSel
+        ? "fa-solid fa-square-check"
+        : cnt === 0
+          ? "fa-regular fa-square"
+          : "fa-solid fa-square-minus";
+      const selLabel = allSel ? "取消全选" : "全选";
+      return `<div class="ms-batch-bar">
           <span class="ms-batch-count"><i class="fa-solid fa-list-check"></i> ${cnt}</span>
           <button class="ms-batch-btn" data-mbatch="selectall"><i class="${selIcon}"></i><span class="ms-btn-label"> ${selLabel}</span></button>
           <button class="ms-batch-btn" data-mbatch="top"${cnt === 0 ? " disabled" : ""}><i class="fa-solid fa-angles-up"></i><span class="ms-btn-label"> 置顶</span></button>
@@ -14847,124 +15983,1544 @@ function renderSettings() {
           <button class="ms-batch-btn" data-mbatch="bottom"${cnt === 0 ? " disabled" : ""}><i class="fa-solid fa-angles-down"></i><span class="ms-btn-label"> 置底</span></button>
           <button class="ms-batch-btn" data-mbatch="insert"${cnt === 0 ? " disabled" : ""}><i class="fa-solid fa-arrow-right-to-bracket"></i><span class="ms-btn-label"> 插入到</span></button>
         </div>`;
+    }
+    return `<span>拖拽或点击箭头调整顺序，右上角 <i class="fa-solid fa-check-double"></i> 进入批量模式</span>`;
+  }
+
+  function refresh() {
+    $body.html(buildReorderBody());
+    $p.find("#ms-footer").html(buildFooter()).show();
+    $p.find("#ms-reorder-multi").toggleClass("active", multiMode);
+    $p.find("#ms-reorder-range")
+      .toggleClass("active", rangeMode)
+      .toggle(multiMode);
+    if (!multiMode) {
+      bindReorderDrag($body, function (fromEl, targetEl) {
+        var fromIdx = parseInt(fromEl.getAttribute("data-ridx"));
+        var targetIdx = parseInt(targetEl.getAttribute("data-ridx"));
+        if (isNaN(fromIdx) || isNaN(targetIdx)) return;
+        var list = opts.getList();
+        var moved = list.splice(fromIdx, 1)[0];
+        var insertIdx = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
+        list.splice(insertIdx, 0, moved);
+        if (opts.afterChange) opts.afterChange();
+        saveData();
+        refresh();
+      });
+    } else {
+      if (bindReorderDrag._cleanup) {
+        bindReorderDrag._cleanup();
+        bindReorderDrag._cleanup = null;
       }
-      return `<span>拖拽或点击箭头调整顺序，右上角 <i class="fa-solid fa-check-double"></i> 进入批量模式</span>`;
+    }
+  }
+
+  bindAllEvents();
+
+  $p.find("#ms-toolbar").on("click.ms", "#ms-reorder-multi", function () {
+    multiMode = !multiMode;
+    multiSelected.clear();
+    rangeMode = false;
+    rangeAnchor = null;
+    refresh();
+  });
+
+  $p.find("#ms-toolbar").on("click.ms", "#ms-reorder-range", function () {
+    rangeMode = !rangeMode;
+    if (rangeMode && multiSelected.size > 0) {
+      var list = opts.getList();
+      for (var i = 0; i < list.length; i++) {
+        var rid = getItemId(list[i], i);
+        if (multiSelected.has(rid)) {
+          rangeAnchor = rid;
+          break;
+        }
+      }
+    } else {
+      rangeAnchor = null;
+    }
+    refresh();
+  });
+
+  $p.find("#ms-body").on("pointerdown.ms", ".ms-reorder-item", function (e) {
+    if (!multiMode || !rangeMode) return;
+    if ($(e.target).closest(".ms-reorder-arrows, .ms-reorder-grip").length)
+      return;
+    var $el = $(this);
+    var rid = $el.attr("data-rid");
+    if (rid === undefined) return;
+    var sx = e.clientX || 0,
+      sy = e.clientY || 0;
+    var lpTimer = setTimeout(function () {
+      lpTimer = null;
+      $el.data("ms-ro-lp-fired", true);
+      if (navigator.vibrate) navigator.vibrate(30);
+      var list = opts.getList();
+      var newAnchorIdx = -1;
+      for (var idx = 0; idx < list.length; idx++) {
+        if (getItemId(list[idx], idx) === rid) {
+          newAnchorIdx = idx;
+          break;
+        }
+      }
+      var farEndIdx = -1;
+      if (newAnchorIdx >= 0 && rangeAnchor !== null && multiSelected.size > 0) {
+        var oldAnchorIdx = -1;
+        for (var idx2 = 0; idx2 < list.length; idx2++) {
+          if (getItemId(list[idx2], idx2) === rangeAnchor) {
+            oldAnchorIdx = idx2;
+            break;
+          }
+        }
+        if (oldAnchorIdx >= 0) {
+          var selIdxArr = [];
+          for (var idx3 = 0; idx3 < list.length; idx3++) {
+            if (multiSelected.has(getItemId(list[idx3], idx3)))
+              selIdxArr.push(idx3);
+          }
+          if (selIdxArr.length > 0) {
+            var selMin = Math.min.apply(null, selIdxArr);
+            var selMax = Math.max.apply(null, selIdxArr);
+            if (selMin < oldAnchorIdx) farEndIdx = selMin;
+            else if (selMax > oldAnchorIdx) farEndIdx = selMax;
+          }
+        }
+      }
+      rangeAnchor = rid;
+      multiSelected.clear();
+      if (farEndIdx >= 0 && newAnchorIdx >= 0) {
+        var lo = Math.min(newAnchorIdx, farEndIdx);
+        var hi = Math.max(newAnchorIdx, farEndIdx);
+        for (var ii = lo; ii <= hi; ii++)
+          multiSelected.add(getItemId(list[ii], ii));
+      } else {
+        multiSelected.add(rid);
+      }
+      refresh();
+      toast("info", "已设为新锚点");
+    }, 600);
+    var onMove = function (ev) {
+      if (!lpTimer) return;
+      var dx = (ev.clientX || 0) - sx,
+        dy = (ev.clientY || 0) - sy;
+      if (dx * dx + dy * dy > 100) {
+        clearTimeout(lpTimer);
+        lpTimer = null;
+      }
+    };
+    var onUp = function () {
+      if (lpTimer) {
+        clearTimeout(lpTimer);
+        lpTimer = null;
+      }
+      $p.off("pointermove.ms-rolp pointerup.ms-rolp pointercancel.ms-rolp");
+    };
+    $p.off("pointermove.ms-rolp pointerup.ms-rolp pointercancel.ms-rolp")
+      .on("pointermove.ms-rolp", onMove)
+      .on("pointerup.ms-rolp pointercancel.ms-rolp", onUp);
+  });
+
+  $p.find("#ms-body").on("click.ms", ".ms-reorder-item", function (e) {
+    if (!multiMode) return;
+    if ($(this).data("ms-ro-lp-fired")) {
+      $(this).removeData("ms-ro-lp-fired");
+      return;
+    }
+    if ($(e.target).closest(".ms-reorder-arrows, .ms-reorder-grip").length)
+      return;
+    const rid = $(this).attr("data-rid");
+    if (rid === undefined) return;
+    const list = opts.getList();
+    if (rangeMode) {
+      if (
+        rangeAnchor === null ||
+        !list.some((it, i) => getItemId(it, i) === rangeAnchor)
+      ) {
+        rangeAnchor = rid;
+        multiSelected.clear();
+        multiSelected.add(rid);
+      } else if (rangeAnchor === rid) {
+        rangeAnchor = null;
+        multiSelected.clear();
+      } else {
+        const ai = list.findIndex((it, i) => getItemId(it, i) === rangeAnchor);
+        const yi = list.findIndex((it, i) => getItemId(it, i) === rid);
+        if (ai < 0 || yi < 0) return;
+        const lo = Math.min(ai, yi),
+          hi = Math.max(ai, yi);
+        multiSelected.clear();
+        for (let i = lo; i <= hi; i++) multiSelected.add(getItemId(list[i], i));
+      }
+    } else {
+      if (multiSelected.has(rid)) multiSelected.delete(rid);
+      else multiSelected.add(rid);
+    }
+    refresh();
+  });
+
+  $p.find("#ms-body").on("click.ms", ".ms-reorder-arrows button", function () {
+    const idx = parseInt($(this).data("ridx")),
+      dir = $(this).data("dir");
+    var list = opts.getList();
+    if (dir === "up" && idx > 0) {
+      [list[idx - 1], list[idx]] = [list[idx], list[idx - 1]];
+    } else if (dir === "down" && idx < list.length - 1) {
+      [list[idx], list[idx + 1]] = [list[idx + 1], list[idx]];
+    }
+    if (opts.afterChange) opts.afterChange();
+    saveData();
+    refresh();
+  });
+
+  $p.find("#ms-footer").on("click.ms", "[data-mbatch]", function () {
+    const action = $(this).data("mbatch");
+    var list = opts.getList();
+
+    if (action === "selectall") {
+      const allSel =
+        list.length > 0 &&
+        list.every((item, i) => multiSelected.has(getItemId(item, i)));
+      if (allSel) {
+        multiSelected.clear();
+        rangeAnchor = null;
+      } else {
+        multiSelected.clear();
+        list.forEach((item, i) => multiSelected.add(getItemId(item, i)));
+      }
+      refresh();
+      return;
     }
 
-    function refresh() {
-      $body.html(buildReorderBody());
-      $p.find("#ms-footer").html(buildFooter()).show();
-      $p.find("#ms-reorder-multi").toggleClass("active", multiMode);
-      $p.find("#ms-reorder-range")
-        .toggleClass("active", rangeMode)
-        .toggle(multiMode);
-      if (!multiMode) {
-        bindReorderDrag($body, function (fromEl, targetEl) {
-          var fromIdx = parseInt(fromEl.getAttribute("data-ridx"));
-          var targetIdx = parseInt(targetEl.getAttribute("data-ridx"));
-          if (isNaN(fromIdx) || isNaN(targetIdx)) return;
-          var list = opts.getList();
-          var moved = list.splice(fromIdx, 1)[0];
-          var insertIdx = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
-          list.splice(insertIdx, 0, moved);
+    if (multiSelected.size === 0) return;
+
+    if (action === "up") {
+      for (let i = 1; i < list.length; i++) {
+        if (
+          multiSelected.has(getItemId(list[i], i)) &&
+          !multiSelected.has(getItemId(list[i - 1], i - 1))
+        ) {
+          [list[i - 1], list[i]] = [list[i], list[i - 1]];
+        }
+      }
+    } else if (action === "down") {
+      for (let i = list.length - 2; i >= 0; i--) {
+        if (
+          multiSelected.has(getItemId(list[i], i)) &&
+          !multiSelected.has(getItemId(list[i + 1], i + 1))
+        ) {
+          [list[i], list[i + 1]] = [list[i + 1], list[i]];
+        }
+      }
+    } else if (action === "top") {
+      const selectedItems = list.filter((item, i) =>
+        multiSelected.has(getItemId(item, i)),
+      );
+      const otherItems = list.filter(
+        (item, i) => !multiSelected.has(getItemId(item, i)),
+      );
+      list.length = 0;
+      list.push(...selectedItems, ...otherItems);
+    } else if (action === "bottom") {
+      const selectedItems = list.filter((item, i) =>
+        multiSelected.has(getItemId(item, i)),
+      );
+      const otherItems = list.filter(
+        (item, i) => !multiSelected.has(getItemId(item, i)),
+      );
+      list.length = 0;
+      list.push(...otherItems, ...selectedItems);
+    } else if (action === "insert") {
+      const scopeItems = list.map((item, i) => ({
+        name: item.name,
+        isSelected: multiSelected.has(getItemId(item, i)),
+      }));
+      showInsertDialog({
+        title: "插入到指定位置",
+        scopeItems: scopeItems,
+        onConfirm: function (targetPos) {
+          const selectedItems = list.filter((item, i) =>
+            multiSelected.has(getItemId(item, i)),
+          );
+          const otherItems = list.filter(
+            (item, i) => !multiSelected.has(getItemId(item, i)),
+          );
+          const newList = [
+            ...otherItems.slice(0, targetPos),
+            ...selectedItems,
+            ...otherItems.slice(targetPos),
+          ];
+          list.length = 0;
+          list.push(...newList);
           if (opts.afterChange) opts.afterChange();
           saveData();
           refresh();
-        });
-      } else {
-        if (bindReorderDrag._cleanup) {
-          bindReorderDrag._cleanup();
-          bindReorderDrag._cleanup = null;
-        }
-      }
+        },
+      });
+      return;
     }
 
-    bindAllEvents();
+    if (opts.afterChange) opts.afterChange();
+    saveData();
+    refresh();
+  });
 
-    $p.find("#ms-toolbar").on("click.ms", "#ms-reorder-multi", function () {
+  refresh();
+}
+
+function renderReorderGroups() {
+  renderReorderList({
+    title: "调整分组顺序",
+    getList: function () {
+      return data.groups;
+    },
+    renderIcon: function (g) {
+      var useAvatar =
+        isIPGroup(g) ||
+        (g.iconMode === "custom" && g.iconUrl) ||
+        (g.iconMode === "char" && g.iconCharKey);
+      return useAvatar
+        ? buildGroupAvatarHTML(g, 22)
+        : `<span class="ms-gitem-color" style="background:${g.color};cursor:default;"></span>`;
+    },
+  });
+}
+
+function renderReorderTags() {
+  renderReorderList({
+    title: "调整标签顺序",
+    getList: function () {
+      return data.settings.definedTags;
+    },
+    renderIcon: function (t) {
+      return `<span class="ms-gitem-color" style="background:${t.color};cursor:default;"></span>`;
+    },
+    afterChange: function () {
+      _tagOrderVersion++;
+    },
+  });
+}
+
+function renderReorderPrompts(v) {
+  if (data.settings.sortMode !== "custom") {
+    data.settings.sortMode = "custom";
+    saveData();
+  }
+  var g = getGroup(v.groupId);
+  var title = g ? g.name : "条目";
+  var $p = setupPage("调整条目顺序", "调整 " + esc(title) + " 内顺序");
+  var groupPrompts = data.prompts.filter(function (p) {
+    return p.groupId === v.groupId;
+  });
+
+  function buildItemBody(p, anchorBadge, smaller, hideSeries, hideCharacter) {
+    anchorBadge = anchorBadge || "";
+    var titleSize = smaller ? "12px" : "13px";
+    var preview = (p.content || "").replace(/\s+/g, " ").trim();
+    var previewH = preview
+      ? '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#777);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4;">' +
+        esc(truncate(preview, 60)) +
+        "</div>"
+      : "";
+    var metaParts = [];
+    if (!hideSeries && p.series && p.series.trim()) {
+      metaParts.push(
+        '<span style="color:var(--ms-accent);opacity:0.75;display:inline-flex;align-items:center;gap:2px;font-size:9px;"><i class="fa-solid fa-layer-group" style="font-size:8px;"></i>' +
+          esc(p.series.trim()) +
+          "</span>",
+      );
+    }
+    if (!hideCharacter && p.character && isLocalCharKey(p.character)) {
+      metaParts.push(
+        '<span style="color:#b48cc8;display:inline-flex;align-items:center;gap:2px;font-size:9px;"><i class="fa-solid fa-user" style="font-size:8px;"></i>' +
+          esc(getCharDisplayName(p.character)) +
+          "</span>",
+      );
+    }
+    var tagsH = "";
+    sortTagIds(p.tags || [])
+      .slice(0, 3)
+      .forEach(function (tid) {
+        var t = getTag(tid);
+        if (t)
+          tagsH +=
+            '<span class="ms-tag-chip ms-tag-chip-sm" style="background:' +
+            t.color +
+            ';">' +
+            esc(t.name) +
+            "</span>";
+      });
+    var ts =
+      p.updatedAt && p.updatedAt !== p.createdAt ? p.updatedAt : p.createdAt;
+    var tsH = "";
+    if (ts) {
+      var d = new Date(ts);
+      if (!isNaN(d.getTime())) {
+        var now = new Date();
+        var shortDate =
+          d.getFullYear() === now.getFullYear()
+            ? String(d.getMonth() + 1).padStart(2, "0") +
+              "/" +
+              String(d.getDate()).padStart(2, "0")
+            : String(d.getFullYear()).slice(2) +
+              "/" +
+              String(d.getMonth() + 1).padStart(2, "0") +
+              "/" +
+              String(d.getDate()).padStart(2, "0");
+        tsH =
+          '<span style="font-size:9px;color:var(--SmartThemeQuoteColor,#666);opacity:0.7;white-space:nowrap;flex-shrink:0;margin-left:auto;">' +
+          shortDate +
+          "</span>";
+      }
+    }
+    var bottomRow = "";
+    if (metaParts.length > 0 || tagsH || tsH) {
+      bottomRow =
+        '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">' +
+        metaParts.join("") +
+        tagsH +
+        tsH +
+        "</div>";
+    }
+    return (
+      '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;overflow:hidden;">' +
+      '<div style="font-size:' +
+      titleSize +
+      ';font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--SmartThemeBodyColor,#ddd);">' +
+      esc(p.title) +
+      anchorBadge +
+      "</div>" +
+      previewH +
+      bottomRow +
+      "</div>"
+    );
+  }
+
+  let multiMode = v._reorderMultiMode || false;
+  const multiSelected = new Set(v._reorderMultiSelected || []);
+  let multiScope = v._reorderMultiScope || null;
+  let rangeMode = v._reorderRangeMode || false;
+  let rangeAnchor = v._reorderRangeAnchor || null;
+
+  $p.find("#ms-toolbar").html(
+    '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button>' +
+      '<div class="ms-toolbar-actions">' +
+      '<button class="ms-tbtn" id="ms-reorder-prompts-range" title="范围选择模式" style="display:none;"><i class="fa-solid fa-arrows-left-right-to-line"></i></button>' +
+      '<button class="ms-tbtn" id="ms-reorder-prompts-multi" title="多选批量调序"><i class="fa-solid fa-check-double"></i></button>' +
+      '<button class="ms-tbtn" id="ms-reorder-series-first" title="把所有系列条目自动排到前面"><i class="fa-solid fa-layer-group"></i> 系列优先</button>' +
+      "</div>",
+  );
+
+  var isIP = g && isIPGroup(g);
+  var expandedSeries = new Set(v._reorderExpandedSeries || []);
+  var collapsedSections = new Set(v._reorderCollapsedSections || []);
+
+  function partitionByCharacter() {
+    var general = [];
+    var byChar = {};
+    groupPrompts.forEach(function (p) {
+      if (p.character && isLocalCharKey(p.character)) {
+        if (!byChar[p.character]) byChar[p.character] = [];
+        byChar[p.character].push(p);
+      } else {
+        general.push(p);
+      }
+    });
+    var order = g ? getCharDisplayOrder(g) : [];
+    var orderedChars = [];
+    order.forEach(function (k) {
+      if (byChar[k]) orderedChars.push(k);
+    });
+    Object.keys(byChar).forEach(function (k) {
+      if (orderedChars.indexOf(k) < 0) orderedChars.push(k);
+    });
+    return { general: general, byChar: byChar, orderedChars: orderedChars };
+  }
+
+  function buildBlocksFromList(list) {
+    var blocks = [];
+    var rendered = new Set();
+    list.forEach(function (p) {
+      if (rendered.has(p.id)) return;
+      if (p.series && p.series.trim()) {
+        var seriesName = p.series.trim();
+        var items = list.filter(function (q) {
+          return (
+            q.series && q.series.trim() === seriesName && !rendered.has(q.id)
+          );
+        });
+        if (items.length > 1) {
+          blocks.push({ type: "series", name: seriesName, items: items });
+          items.forEach(function (q) {
+            rendered.add(q.id);
+          });
+        } else {
+          blocks.push({ type: "single", item: p });
+          rendered.add(p.id);
+        }
+      } else {
+        blocks.push({ type: "single", item: p });
+        rendered.add(p.id);
+      }
+    });
+    return blocks;
+  }
+
+  function getScopeLabel(scope) {
+    if (!scope) return "未选定";
+    if (scope === "_all") return "全部";
+    if (scope.indexOf("::series::") >= 0) {
+      var parts = scope.split("::series::");
+      var section = parts[0];
+      var sn = parts[1];
+      var sectionLabel =
+        section === "_general"
+          ? "通用剧场"
+          : section.indexOf("char_") === 0
+            ? "角色「" + getCharDisplayName(section.substring(5)) + "」"
+            : section;
+      return sectionLabel + " · 系列「" + sn + "」内";
+    }
+    if (scope === "_general") return "通用剧场";
+    if (scope.indexOf("char_") === 0) {
+      return "角色「" + getCharDisplayName(scope.substring(5)) + "」";
+    }
+    return scope;
+  }
+
+  function getScopeOrderedRids(scope) {
+    var result = [];
+    if (!scope) return result;
+    if (scope.indexOf("::series::") >= 0) {
+      var partsS = scope.split("::series::");
+      var sectionListS = getListForSection(partsS[0]);
+      sectionListS.forEach(function (p) {
+        if (p.series && p.series.trim() === partsS[1]) {
+          result.push("c_" + p.id);
+        }
+      });
+    } else {
+      var sectionListT = getListForSection(scope);
+      var blocksT = buildBlocksFromList(sectionListT);
+      blocksT.forEach(function (block) {
+        if (block.type === "single") result.push("p_" + block.item.id);
+        if (block.type === "series")
+          result.push("s_" + scope + "_" + block.name);
+      });
+    }
+    return result;
+  }
+
+  function renderBlocks(blocks, sectionKey) {
+    var html = "";
+    var hideCharInBody = sectionKey && sectionKey.indexOf("char_") === 0;
+    blocks.forEach(function (block, bi) {
+      if (block.type === "single") {
+        var rid = "p_" + block.item.id;
+        var scope = sectionKey;
+        if (multiMode) {
+          var inScope = !multiScope || scope === multiScope;
+          var isSel = multiSelected.has(rid);
+          var isAnchorP = rangeMode && rangeAnchor === rid;
+          var checkBg = isSel
+            ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
+            : "";
+          var rowBg = isSel
+            ? "background:rgba(var(--ms-accent-rgb),0.10);"
+            : "";
+          var rowOpa = inScope ? "" : "opacity:0.35;pointer-events:none;";
+          var anchorBadgeP = isAnchorP
+            ? ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>'
+            : "";
+          html +=
+            '<div class="ms-reorder-item" data-rid="' +
+            rid +
+            '" data-pid="' +
+            block.item.id +
+            '" data-scope="' +
+            esc(scope) +
+            '" style="cursor:pointer;' +
+            rowBg +
+            rowOpa +
+            '">' +
+            '<div class="ms-gitem-check" style="' +
+            checkBg +
+            '"><i class="fa-solid fa-check"></i></div>' +
+            buildItemBody(
+              block.item,
+              anchorBadgeP,
+              false,
+              false,
+              hideCharInBody,
+            ) +
+            '<button class="ms-card-qbtn" data-preview-pid="' +
+            block.item.id +
+            '" title="查看预览" style="flex-shrink:0;"><i class="fa-solid fa-eye"></i></button>' +
+            "</div>";
+        } else {
+          html +=
+            '<div class="ms-reorder-item" data-ridx="' +
+            bi +
+            '" data-section="' +
+            esc(sectionKey) +
+            '" data-type="single" data-pid="' +
+            block.item.id +
+            '"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-ridx="' +
+            bi +
+            '" data-section="' +
+            esc(sectionKey) +
+            '"></i>' +
+            buildItemBody(block.item, "", false, false, hideCharInBody) +
+            '<button class="ms-card-qbtn" data-preview-pid="' +
+            block.item.id +
+            '" title="查看预览" style="flex-shrink:0;"><i class="fa-solid fa-eye"></i></button>' +
+            '<div class="ms-reorder-arrows"><button data-dir="up" data-ridx="' +
+            bi +
+            '" data-section="' +
+            esc(sectionKey) +
+            '"' +
+            (bi === 0 ? " disabled style='opacity:0.3;'" : "") +
+            '><i class="fa-solid fa-angle-up"></i></button><button data-dir="down" data-ridx="' +
+            bi +
+            '" data-section="' +
+            esc(sectionKey) +
+            '"' +
+            (bi === blocks.length - 1 ? " disabled style='opacity:0.3;'" : "") +
+            '><i class="fa-solid fa-angle-down"></i></button></div></div>';
+        }
+      } else {
+        var sRid = "s_" + sectionKey + "_" + block.name;
+        var sScope = sectionKey;
+        var seriesScope = sectionKey + "::series::" + block.name;
+        var sidKey = sectionKey + "||" + block.name;
+        var isOpen = expandedSeries.has(sidKey);
+        var sid = "ms-ro-series-" + simpleHash(sidKey);
+
+        if (multiMode) {
+          var inScope2 = !multiScope || sScope === multiScope;
+          var isSel2 = multiSelected.has(sRid);
+          var isAnchorS = rangeMode && rangeAnchor === sRid;
+          var checkBg2 = isSel2
+            ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
+            : "";
+          var rowBg2 = isSel2
+            ? "background:rgba(var(--ms-accent-rgb),0.18);"
+            : "background:rgba(var(--ms-accent-rgb),0.04);";
+          var rowOpa2 = inScope2 ? "" : "opacity:0.35;pointer-events:none;";
+          var anchorBadgeS = isAnchorS
+            ? ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>'
+            : "";
+          html +=
+            '<div class="ms-reorder-item" data-rid="' +
+            sRid +
+            '" data-scope="' +
+            esc(sScope) +
+            '" style="cursor:pointer;' +
+            rowBg2 +
+            rowOpa2 +
+            '">' +
+            '<div class="ms-gitem-check" style="' +
+            checkBg2 +
+            '"><i class="fa-solid fa-check"></i></div>' +
+            '<i class="fa-solid fa-angle-right ms-series-arrow' +
+            (isOpen ? " open" : "") +
+            '" data-ro-series-toggle="' +
+            sid +
+            '" data-sid-key="' +
+            esc(sidKey) +
+            '" style="cursor:pointer;font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;width:14px;transition:transform 0.2s;"></i>' +
+            '<i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:12px;flex-shrink:0;"></i>' +
+            '<span class="ms-reorder-name" style="font-weight:500;">' +
+            esc(block.name) +
+            ' <span style="font-weight:400;font-size:11px;color:var(--SmartThemeQuoteColor,#777);">(' +
+            block.items.length +
+            " 条)</span>" +
+            anchorBadgeS +
+            "</span>" +
+            "</div>";
+        } else {
+          html +=
+            '<div class="ms-reorder-item" data-ridx="' +
+            bi +
+            '" data-section="' +
+            esc(sectionKey) +
+            '" data-type="series" data-series-name="' +
+            esc(block.name) +
+            '" style="background:rgba(var(--ms-accent-rgb),0.04);"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-ridx="' +
+            bi +
+            '" data-section="' +
+            esc(sectionKey) +
+            '"></i><i class="fa-solid fa-angle-right ms-series-arrow' +
+            (isOpen ? " open" : "") +
+            '" data-ro-series="' +
+            sid +
+            '" data-sid-key="' +
+            esc(sidKey) +
+            '" style="cursor:pointer;font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;width:14px;transition:transform 0.2s;"></i><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:12px;flex-shrink:0;"></i><span class="ms-reorder-name" style="font-weight:500;">' +
+            esc(block.name) +
+            ' <span style="font-weight:400;font-size:11px;color:var(--SmartThemeQuoteColor,#777);">(' +
+            block.items.length +
+            ' 条)</span></span><div class="ms-reorder-arrows"><button data-dir="up" data-ridx="' +
+            bi +
+            '" data-section="' +
+            esc(sectionKey) +
+            '"' +
+            (bi === 0 ? " disabled style='opacity:0.3;'" : "") +
+            '><i class="fa-solid fa-angle-up"></i></button><button data-dir="down" data-ridx="' +
+            bi +
+            '" data-section="' +
+            esc(sectionKey) +
+            '"' +
+            (bi === blocks.length - 1 ? " disabled style='opacity:0.3;'" : "") +
+            '><i class="fa-solid fa-angle-down"></i></button></div></div>';
+        }
+
+        html +=
+          '<div id="' +
+          sid +
+          '" style="display:' +
+          (isOpen ? "block" : "none") +
+          ';border-left:2px solid rgba(var(--ms-accent-rgb),0.2);margin-left:14px;">';
+        block.items.forEach(function (item, ii) {
+          var crid = "c_" + item.id;
+          var cscope = seriesScope;
+
+          if (multiMode) {
+            var inScopeC = !multiScope || cscope === multiScope;
+            var sParentRid = "s_" + sectionKey + "_" + block.name;
+            var isSelC =
+              multiSelected.has(crid) || multiSelected.has(sParentRid);
+            var isAnchorC = rangeMode && rangeAnchor === crid;
+            var checkBgC = isSelC
+              ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
+              : "";
+            var rowBgC = isSelC
+              ? "background:rgba(var(--ms-accent-rgb),0.10);"
+              : "";
+            var rowOpaC = inScopeC ? "" : "opacity:0.35;pointer-events:none;";
+            var anchorBadgeC = isAnchorC
+              ? ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>'
+              : "";
+            html +=
+              '<div class="ms-reorder-item" data-rid="' +
+              crid +
+              '" data-pid="' +
+              item.id +
+              '" data-scope="' +
+              esc(cscope) +
+              '" style="cursor:pointer;' +
+              rowBgC +
+              rowOpaC +
+              '">' +
+              '<div class="ms-gitem-check" style="' +
+              checkBgC +
+              '"><i class="fa-solid fa-check"></i></div>' +
+              buildItemBody(item, anchorBadgeC, true, true, hideCharInBody) +
+              '<button class="ms-card-qbtn" data-preview-pid="' +
+              item.id +
+              '" title="查看预览" style="flex-shrink:0;width:22px;height:22px;font-size:9px;"><i class="fa-solid fa-eye"></i></button>' +
+              "</div>";
+          } else {
+            html +=
+              '<div class="ms-reorder-item" data-type="series-child" data-pid="' +
+              item.id +
+              '" data-parent-series="' +
+              esc(block.name) +
+              '" data-parent-section="' +
+              esc(sectionKey) +
+              '" data-child-idx="' +
+              ii +
+              '"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-child-idx="' +
+              ii +
+              '" data-parent-series="' +
+              esc(block.name) +
+              '" data-parent-section="' +
+              esc(sectionKey) +
+              '"></i>' +
+              buildItemBody(item, "", true, true, hideCharInBody) +
+              '<button class="ms-card-qbtn" data-preview-pid="' +
+              item.id +
+              '" title="查看预览" style="flex-shrink:0;width:22px;height:22px;font-size:9px;"><i class="fa-solid fa-eye"></i></button>' +
+              '<div class="ms-reorder-arrows"><button data-sdir="up" data-child-idx="' +
+              ii +
+              '" data-parent-series="' +
+              esc(block.name) +
+              '" data-parent-section="' +
+              esc(sectionKey) +
+              '"' +
+              (ii === 0 ? " disabled style='opacity:0.3;'" : "") +
+              '><i class="fa-solid fa-angle-up"></i></button><button data-sdir="down" data-child-idx="' +
+              ii +
+              '" data-parent-series="' +
+              esc(block.name) +
+              '" data-parent-section="' +
+              esc(sectionKey) +
+              '"' +
+              (ii === block.items.length - 1
+                ? " disabled style='opacity:0.3;'"
+                : "") +
+              '><i class="fa-solid fa-angle-down"></i></button></div></div>';
+          }
+        });
+        html += "</div>";
+      }
+    });
+    return html;
+  }
+
+  function buildReorderBody() {
+    if (groupPrompts.length === 0) {
+      return '<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>该分组没有条目</div>';
+    }
+    var prefix = "";
+    if (multiMode) {
+      var rangeHint = "";
+      if (rangeMode) {
+        rangeHint =
+          '<div style="margin-top:4px;padding-top:4px;border-top:1px dashed rgba(var(--ms-accent-rgb),0.25);font-size:10px;color:var(--ms-accent);"><i class="fa-solid fa-arrows-left-right-to-line" style="margin-right:3px;"></i>范围模式：' +
+          (rangeAnchor === null
+            ? "点选第一项确定锚点"
+            : "已锚定，再次点选可扩展或收缩范围") +
+          ' · <span style="opacity:0.85;">长按某条目可改锚点到该处</span>' +
+          "</div>";
+      }
+      var ipHint = "";
+      if (isIP) {
+        ipHint =
+          '<div style="margin-top:4px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.08);font-size:10px;color:var(--SmartThemeQuoteColor,#999);"><i class="fa-solid fa-circle-info" style="margin-right:3px;color:#f0a040;"></i>多选模式仅支持<strong>同一范围内</strong>移动，不支持跨角色移动条目。如需跨角色移动或交换角色顺序，请回到单选拖拽模式</div>';
+      }
+      prefix =
+        '<div style="padding:8px 14px;background:rgba(var(--ms-accent-rgb),0.06);border-bottom:1px solid var(--SmartThemeBorderColor,#333);font-size:11px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;"><i class="fa-solid fa-bullseye" style="color:var(--ms-accent);margin-right:4px;"></i>批量范围: <strong>' +
+        esc(getScopeLabel(multiScope)) +
+        "</strong>" +
+        (multiScope
+          ? " · 已选 <strong>" + multiSelected.size + "</strong> 项"
+          : " · 点选第一项以确定范围（其他范围的项会变灰）") +
+        ipHint +
+        rangeHint +
+        "</div>";
+    }
+    if (!isIP) {
+      var blocks = buildBlocksFromList(groupPrompts);
+      return prefix + renderBlocks(blocks, "_all");
+    }
+    var parts = partitionByCharacter();
+    var html = prefix;
+    if (parts.general.length > 0) {
+      var generalCollapsed = collapsedSections.has("_general");
+      html +=
+        '<div class="ms-reorder-section-header" data-section-key="_general" style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:rgba(var(--ms-accent-rgb),0.08);border-top:1px solid rgba(255,255,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;user-select:none;"><i class="fa-solid fa-angle-' +
+        (generalCollapsed ? "right" : "down") +
+        '" style="font-size:10px;color:var(--ms-accent);width:12px;"></i><i class="fa-solid fa-scroll" style="color:var(--ms-accent);font-size:12px;"></i><span style="flex:1;font-size:12px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);">通用剧场 (' +
+        parts.general.length +
+        " 条)</span><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#666);'>固定置顶</span></div>";
+      if (!generalCollapsed) {
+        var blocks2 = buildBlocksFromList(parts.general);
+        html += renderBlocks(blocks2, "_general");
+      }
+    }
+    parts.orderedChars.forEach(function (k, ci) {
+      var ps = parts.byChar[k];
+      var dn = getCharDisplayName(k);
+      var ap = getCharAvatarPathSafe(k);
+      var avH = ap
+        ? '<img src="' +
+          esc(ap) +
+          '" style="width:20px;height:20px;border-radius:4px;object-fit:cover;" onerror="this.style.display=\'none\';this.onerror=null;">'
+        : '<i class="fa-solid fa-user" style="color:#b48cc8;font-size:13px;"></i>';
+      var isCollapsed = collapsedSections.has("char_" + k);
+      var sectionKey = "char_" + k;
+      var charGripHtml = multiMode
+        ? ""
+        : '<i class="fa-solid fa-grip-vertical ms-char-section-grip" data-char-key="' +
+          esc(k) +
+          '" data-char-idx="' +
+          ci +
+          '" style="cursor:grab;color:var(--SmartThemeQuoteColor,#888);font-size:12px;" title="拖动调整角色顺序"></i>';
+      var charArrowsHtml = multiMode
+        ? ""
+        : '<div class="ms-reorder-arrows"><button data-char-dir="up" data-char-idx="' +
+          ci +
+          '"' +
+          (ci === 0 ? " disabled style='opacity:0.3;'" : "") +
+          '><i class="fa-solid fa-angle-up"></i></button><button data-char-dir="down" data-char-idx="' +
+          ci +
+          '"' +
+          (ci === parts.orderedChars.length - 1
+            ? " disabled style='opacity:0.3;'"
+            : "") +
+          '><i class="fa-solid fa-angle-down"></i></button></div>';
+      html +=
+        '<div class="ms-reorder-section-header" data-section-key="' +
+        esc(sectionKey) +
+        '" data-char-key="' +
+        esc(k) +
+        '" data-char-idx="' +
+        ci +
+        '" style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:rgba(180,140,200,0.08);border-top:1px solid rgba(255,255,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;user-select:none;">' +
+        charGripHtml +
+        '<i class="fa-solid fa-angle-' +
+        (isCollapsed ? "right" : "down") +
+        '" style="font-size:10px;color:#b48cc8;width:12px;"></i>' +
+        avH +
+        '<span style="flex:1;font-size:12px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);">' +
+        esc(dn) +
+        " (" +
+        ps.length +
+        " 条)</span>" +
+        charArrowsHtml +
+        "</div>";
+      if (!isCollapsed) {
+        var blocks3 = buildBlocksFromList(ps);
+        html += renderBlocks(blocks3, sectionKey);
+      }
+    });
+    return html;
+  }
+
+  function syncGroupPrompts() {
+    var positions = [];
+    data.prompts.forEach(function (p, i) {
+      if (p.groupId === v.groupId) positions.push(i);
+    });
+    positions.forEach(function (pos, i) {
+      data.prompts[pos] = groupPrompts[i];
+    });
+  }
+
+  function getListForSection(sectionKey) {
+    if (!isIP || sectionKey === "_all") return groupPrompts;
+    if (sectionKey === "_general") {
+      return groupPrompts.filter(function (p) {
+        return !(p.character && isLocalCharKey(p.character));
+      });
+    }
+    if (sectionKey && sectionKey.indexOf("char_") === 0) {
+      var ck = sectionKey.substring(5);
+      return groupPrompts.filter(function (p) {
+        return p.character === ck;
+      });
+    }
+    return groupPrompts;
+  }
+
+  function applySectionList(sectionKey, newList) {
+    if (!isIP || sectionKey === "_all") {
+      groupPrompts.length = 0;
+      newList.forEach(function (p) {
+        groupPrompts.push(p);
+      });
+      return;
+    }
+    var parts = partitionByCharacter();
+    if (sectionKey === "_general") parts.general = newList;
+    else if (sectionKey.indexOf("char_") === 0) {
+      var ck = sectionKey.substring(5);
+      parts.byChar[ck] = newList;
+    }
+    var merged = [];
+    parts.general.forEach(function (p) {
+      merged.push(p);
+    });
+    parts.orderedChars.forEach(function (k) {
+      (parts.byChar[k] || []).forEach(function (p) {
+        merged.push(p);
+      });
+    });
+    groupPrompts.length = 0;
+    merged.forEach(function (p) {
+      groupPrompts.push(p);
+    });
+  }
+
+  function buildFooter() {
+    if (!multiMode) {
+      return (
+        "<span>拖拽 / 箭头调序 · " +
+        (isIP ? "跨角色拖动会确认改绑 · " : "") +
+        '右上角 <i class="fa-solid fa-check-double"></i> 进入批量模式</span>'
+      );
+    }
+    var cnt = multiSelected.size;
+    var disabled = cnt === 0 ? " disabled" : "";
+    var allSel = false;
+    if (multiScope) {
+      var orderedRids = getScopeOrderedRids(multiScope);
+      allSel =
+        orderedRids.length > 0 &&
+        orderedRids.every(function (rid) {
+          return multiSelected.has(rid);
+        });
+    }
+    var selIcon = allSel
+      ? "fa-solid fa-square-check"
+      : cnt === 0
+        ? "fa-regular fa-square"
+        : "fa-solid fa-square-minus";
+    var selLabel = allSel ? "取消全选" : "全选范围";
+    return (
+      '<div class="ms-batch-bar">' +
+      '<span class="ms-batch-count"><i class="fa-solid fa-list-check"></i> ' +
+      cnt +
+      "</span>" +
+      '<button class="ms-batch-btn" data-pmbatch="selectall"><i class="' +
+      selIcon +
+      '"></i><span class="ms-btn-label"> ' +
+      selLabel +
+      "</span></button>" +
+      '<button class="ms-batch-btn" data-pmbatch="top"' +
+      disabled +
+      '><i class="fa-solid fa-angles-up"></i><span class="ms-btn-label"> 置顶</span></button>' +
+      '<button class="ms-batch-btn" data-pmbatch="up"' +
+      disabled +
+      '><i class="fa-solid fa-angle-up"></i><span class="ms-btn-label"> 上移</span></button>' +
+      '<button class="ms-batch-btn" data-pmbatch="down"' +
+      disabled +
+      '><i class="fa-solid fa-angle-down"></i><span class="ms-btn-label"> 下移</span></button>' +
+      '<button class="ms-batch-btn" data-pmbatch="bottom"' +
+      disabled +
+      '><i class="fa-solid fa-angles-down"></i><span class="ms-btn-label"> 置底</span></button>' +
+      '<button class="ms-batch-btn" data-pmbatch="insert"' +
+      disabled +
+      '><i class="fa-solid fa-arrow-right-to-bracket"></i><span class="ms-btn-label"> 插入到</span></button>' +
+      "</div>"
+    );
+  }
+
+  var $body = $p.find("#ms-body");
+  function refreshPrompts() {
+    $body.html(buildReorderBody());
+    $p.find("#ms-footer").html(buildFooter()).show();
+    $p.find("#ms-reorder-prompts-multi").toggleClass("active", multiMode);
+    $p.find("#ms-reorder-prompts-range")
+      .toggleClass("active", rangeMode)
+      .toggle(multiMode);
+    if (v._lastViewedId) {
+      var lastId = v._lastViewedId;
+      delete v._lastViewedId;
+      setTimeout(function () {
+        var $target = $body.find('[data-pid="' + lastId + '"]').first();
+        if ($target.length) {
+          var $parentSeries = $target.closest('div[id^="ms-ro-series-"]');
+          if ($parentSeries.length && $parentSeries.css("display") === "none") {
+            var sid = $parentSeries.attr("id");
+            $parentSeries.show();
+            $body
+              .find(
+                '[data-ro-series="' +
+                  sid +
+                  '"], [data-ro-series-toggle="' +
+                  sid +
+                  '"]',
+              )
+              .addClass("open");
+            var sidKey = $body
+              .find("[data-sid-key]")
+              .filter(function () {
+                return $(this).is(
+                  '[data-ro-series="' +
+                    sid +
+                    '"], [data-ro-series-toggle="' +
+                    sid +
+                    '"]',
+                );
+              })
+              .first()
+              .attr("data-sid-key");
+            if (sidKey) expandedSeries.add(sidKey);
+          }
+          $target.addClass("ms-just-viewed");
+          var elRect = $target[0].getBoundingClientRect();
+          var bodyRect = $body[0].getBoundingClientRect();
+          var relativeTop = elRect.top - bodyRect.top;
+          var elH = $target.outerHeight();
+          var bodyH = $body.height();
+          if (relativeTop < 0 || relativeTop + elH > bodyH) {
+            $body.scrollTop($body.scrollTop() + relativeTop - bodyH * 0.3);
+          }
+        }
+      }, 100);
+    }
+
+    if (multiMode) {
+      if (bindReorderDrag._cleanup) {
+        bindReorderDrag._cleanup();
+        bindReorderDrag._cleanup = null;
+      }
+      return;
+    }
+
+    bindReorderDrag($body, function (fromEl, targetEl) {
+      var fromType = fromEl.getAttribute("data-type");
+      var targetType = targetEl.getAttribute("data-type");
+      var fromSection =
+        fromEl.getAttribute("data-section") ||
+        fromEl.getAttribute("data-parent-section");
+      var targetSection =
+        targetEl.getAttribute("data-section") ||
+        targetEl.getAttribute("data-parent-section");
+
+      if (fromType === "series-child" && targetType === "series-child") {
+        var fromSeries = fromEl.getAttribute("data-parent-series");
+        var targetSeries = targetEl.getAttribute("data-parent-series");
+        if (fromSeries !== targetSeries || fromSection !== targetSection)
+          return;
+        var fromCi = parseInt(fromEl.getAttribute("data-child-idx"));
+        var targetCi = parseInt(targetEl.getAttribute("data-child-idx"));
+        if (isNaN(fromCi) || isNaN(targetCi)) return;
+        var sectionList = getListForSection(fromSection);
+        var seriesItems = sectionList.filter(function (p) {
+          return p.series && p.series.trim() === fromSeries;
+        });
+        if (fromCi >= seriesItems.length || targetCi >= seriesItems.length)
+          return;
+        var movedItem = seriesItems[fromCi];
+        var gpFrom = groupPrompts.indexOf(movedItem);
+        if (gpFrom < 0) return;
+        groupPrompts.splice(gpFrom, 1);
+        var targetItem = seriesItems[targetCi];
+        var gpTarget = groupPrompts.indexOf(targetItem);
+        if (gpTarget < 0) groupPrompts.push(movedItem);
+        else groupPrompts.splice(gpTarget, 0, movedItem);
+        syncGroupPrompts();
+        saveData();
+        refreshPrompts();
+        return;
+      }
+
+      if (fromType === "series-child" || targetType === "series-child") return;
+
+      if (fromSection === targetSection) {
+        var fromIdx = parseInt(fromEl.getAttribute("data-ridx"));
+        var targetIdx = parseInt(targetEl.getAttribute("data-ridx"));
+        if (isNaN(fromIdx) || isNaN(targetIdx)) return;
+        var sectionList2 = getListForSection(fromSection);
+        var blocks = buildBlocksFromList(sectionList2);
+        if (
+          fromIdx < 0 ||
+          fromIdx >= blocks.length ||
+          targetIdx < 0 ||
+          targetIdx >= blocks.length
+        )
+          return;
+        var movedBlock = blocks.splice(fromIdx, 1)[0];
+        var newTargetIdx = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
+        blocks.splice(newTargetIdx, 0, movedBlock);
+        var newSectionList = [];
+        blocks.forEach(function (b) {
+          if (b.type === "single") newSectionList.push(b.item);
+          else
+            b.items.forEach(function (it) {
+              newSectionList.push(it);
+            });
+        });
+        applySectionList(fromSection, newSectionList);
+        syncGroupPrompts();
+        saveData();
+        refreshPrompts();
+        return;
+      }
+
+      if (!isIP) return;
+      var fromIdx2 = parseInt(fromEl.getAttribute("data-ridx"));
+      if (isNaN(fromIdx2)) return;
+      var fromSectionList = getListForSection(fromSection);
+      var fromBlocks = buildBlocksFromList(fromSectionList);
+      if (fromIdx2 < 0 || fromIdx2 >= fromBlocks.length) return;
+      var block = fromBlocks[fromIdx2];
+      var fromItems =
+        block.type === "single" ? [block.item] : block.items.slice();
+      var targetCharKey = null;
+      var targetLabel = "";
+      if (targetSection === "_general") {
+        targetCharKey = "";
+        targetLabel = "通用剧场（解除角色绑定）";
+      } else if (targetSection && targetSection.indexOf("char_") === 0) {
+        targetCharKey = targetSection.substring(5);
+        targetLabel = "角色「" + getCharDisplayName(targetCharKey) + "」";
+      } else {
+        return;
+      }
+      var cnt = fromItems.length;
+      var confirmMsg =
+        "确定要把 " +
+        cnt +
+        " 条剧场" +
+        (cnt > 1 ? "（包括系列内所有条目）" : "") +
+        " 改绑到 " +
+        targetLabel +
+        " 吗？\n\n这会修改这些剧场的「角色绑定」字段。";
+      msConfirm(confirmMsg, {
+        title: "改绑角色",
+        type: "warning",
+        okText: "改绑",
+      }).then(function (ok) {
+        if (!ok) {
+          refreshPrompts();
+          return;
+        }
+        fromItems.forEach(function (p) {
+          p.character = targetCharKey || "";
+        });
+        fromItems.forEach(function (p) {
+          var idx = groupPrompts.indexOf(p);
+          if (idx >= 0) groupPrompts.splice(idx, 1);
+        });
+        var targetSectionPrompts = groupPrompts.filter(function (p) {
+          if (targetCharKey === "")
+            return !(p.character && isLocalCharKey(p.character));
+          return p.character === targetCharKey;
+        });
+        if (targetSectionPrompts.length === 0) {
+          groupPrompts.push.apply(groupPrompts, fromItems);
+        } else {
+          var lastInTarget =
+            targetSectionPrompts[targetSectionPrompts.length - 1];
+          var insertAt = groupPrompts.indexOf(lastInTarget) + 1;
+          groupPrompts.splice.apply(
+            groupPrompts,
+            [insertAt, 0].concat(fromItems),
+          );
+        }
+        syncGroupPrompts();
+        saveData();
+        toast("success", "已改绑到 " + targetLabel);
+        refreshPrompts();
+      });
+    });
+  }
+
+  bindAllEvents();
+
+  function doReorderSeriesFirst() {
+    function sortSeriesFirst(list) {
+      var s = [],
+        l = [];
+      list.forEach(function (p) {
+        if (p.series && p.series.trim()) s.push(p);
+        else l.push(p);
+      });
+      return s.concat(l);
+    }
+    if (isIP) {
+      var parts = partitionByCharacter();
+      parts.general = sortSeriesFirst(parts.general);
+      Object.keys(parts.byChar).forEach(function (k) {
+        parts.byChar[k] = sortSeriesFirst(parts.byChar[k]);
+      });
+      groupPrompts.length = 0;
+      parts.general.forEach(function (p) {
+        groupPrompts.push(p);
+      });
+      parts.orderedChars.forEach(function (k) {
+        (parts.byChar[k] || []).forEach(function (p) {
+          groupPrompts.push(p);
+        });
+      });
+    } else {
+      var sorted = sortSeriesFirst(groupPrompts);
+      groupPrompts.length = 0;
+      sorted.forEach(function (p) {
+        groupPrompts.push(p);
+      });
+    }
+    syncGroupPrompts();
+    saveData();
+    refreshPrompts();
+    toast("success", "已重新排序");
+  }
+
+  $p.find("#ms-toolbar").on(
+    "click.ms",
+    "#ms-reorder-series-first",
+    function () {
+      msConfirm(
+        "会把所有属于系列的剧场自动排到前面（同系列保持现有相对顺序），不在系列里的散条排在后面，确定吗？",
+        { title: "系列优先排序", okText: "排序" },
+      ).then(function (ok) {
+        if (!ok) return;
+        doReorderSeriesFirst();
+      });
+    },
+  );
+
+  $p.find("#ms-toolbar").on(
+    "click.ms",
+    "#ms-reorder-prompts-multi",
+    function () {
       multiMode = !multiMode;
       multiSelected.clear();
+      multiScope = null;
       rangeMode = false;
       rangeAnchor = null;
-      refresh();
-    });
+      refreshPrompts();
+    },
+  );
 
-    $p.find("#ms-toolbar").on("click.ms", "#ms-reorder-range", function () {
+  $p.find("#ms-toolbar").on(
+    "click.ms",
+    "#ms-reorder-prompts-range",
+    function () {
       rangeMode = !rangeMode;
-      if (rangeMode && multiSelected.size > 0) {
-        var list = opts.getList();
-        for (var i = 0; i < list.length; i++) {
-          var rid = getItemId(list[i], i);
-          if (multiSelected.has(rid)) {
-            rangeAnchor = rid;
+      if (rangeMode && multiSelected.size > 0 && multiScope) {
+        var orderedRids = getScopeOrderedRids(multiScope);
+        rangeAnchor = null;
+        for (var i = 0; i < orderedRids.length; i++) {
+          if (multiSelected.has(orderedRids[i])) {
+            rangeAnchor = orderedRids[i];
             break;
           }
         }
       } else {
         rangeAnchor = null;
       }
-      refresh();
-    });
+      refreshPrompts();
+    },
+  );
 
-    $p.find("#ms-body").on("pointerdown.ms", ".ms-reorder-item", function (e) {
-      if (!multiMode || !rangeMode) return;
-      if ($(e.target).closest(".ms-reorder-arrows, .ms-reorder-grip").length)
+  $p.find("#ms-body").on(
+    "click.ms",
+    ".ms-reorder-section-header",
+    function (e) {
+      if (
+        $(e.target).closest(".ms-reorder-arrows, .ms-char-section-grip").length
+      )
         return;
+      var key = $(this).data("section-key");
+      if (collapsedSections.has(key)) collapsedSections.delete(key);
+      else collapsedSections.add(key);
+      refreshPrompts();
+    },
+  );
+
+  $p.find("#ms-body").on("click.ms", "[data-char-dir]", function (e) {
+    e.stopPropagation();
+    var dir = $(this).data("char-dir");
+    var ci = parseInt($(this).data("char-idx"));
+    var parts = partitionByCharacter();
+    var order = parts.orderedChars.slice();
+    var swapCi = dir === "up" ? ci - 1 : ci + 1;
+    if (swapCi < 0 || swapCi >= order.length) return;
+    var tmp = order[ci];
+    order[ci] = order[swapCi];
+    order[swapCi] = tmp;
+    if (g) {
+      g.charDisplayOrder = order;
+      saveData();
+    }
+    refreshPrompts();
+  });
+
+  $p.find("#ms-body").on(
+    "pointerdown.msdrag2",
+    ".ms-char-section-grip",
+    function (e) {
+      if (multiMode) return;
+      var oe = e.originalEvent || e;
+      if (oe.pointerType === "mouse" && oe.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var fromCi = parseInt($(this).data("char-idx"));
+      var gripEl = this;
+      var dragging = true;
+      var panelEl = $("#" + PANEL_ID)[0];
+      var ownerDoc = panelEl ? panelEl.ownerDocument : document;
+      try {
+        gripEl.setPointerCapture(oe.pointerId);
+      } catch (ex) {}
+      function onMove(ev) {
+        if (!dragging) return;
+        ev.preventDefault();
+        var el = ownerDoc.elementFromPoint(ev.clientX, ev.clientY);
+        var targetHdr = el ? el.closest(".ms-reorder-section-header") : null;
+        $body.find(".ms-reorder-section-header").removeClass("ms-drag-over");
+        if (targetHdr) targetHdr.classList.add("ms-drag-over");
+      }
+      function onEnd(ev) {
+        if (!dragging) return;
+        dragging = false;
+        $body.find(".ms-reorder-section-header").removeClass("ms-drag-over");
+        gripEl.removeEventListener("pointermove", onMove);
+        gripEl.removeEventListener("pointerup", onEnd);
+        gripEl.removeEventListener("pointercancel", onEnd);
+        gripEl.removeEventListener("lostpointercapture", onEnd);
+        if (!ev || ev.type === "lostpointercapture") return;
+        var el = ownerDoc.elementFromPoint(ev.clientX, ev.clientY);
+        var targetHdr = el ? el.closest(".ms-reorder-section-header") : null;
+        if (!targetHdr) return;
+        var targetCharKey = targetHdr.getAttribute("data-char-key");
+        if (!targetCharKey) {
+          toast("info", "通用剧场固定在第一位");
+          return;
+        }
+        var targetCi = parseInt(targetHdr.getAttribute("data-char-idx"));
+        if (isNaN(targetCi) || targetCi === fromCi) return;
+        var parts = partitionByCharacter();
+        var order = parts.orderedChars.slice();
+        var moved = order.splice(fromCi, 1)[0];
+        var insertIdx = fromCi < targetCi ? targetCi - 1 : targetCi;
+        order.splice(insertIdx, 0, moved);
+        if (g) {
+          g.charDisplayOrder = order;
+          saveData();
+        }
+        refreshPrompts();
+      }
+      gripEl.addEventListener("pointermove", onMove);
+      gripEl.addEventListener("pointerup", onEnd);
+      gripEl.addEventListener("pointercancel", onEnd);
+      gripEl.addEventListener("lostpointercapture", onEnd);
+    },
+  );
+
+  $p.find("#ms-body").on(
+    "click.ms",
+    ".ms-reorder-item[data-type='series']",
+    function (e) {
+      if ($(e.target).closest(".ms-reorder-grip, .ms-reorder-arrows").length)
+        return;
+      var $arrow = $(this).find("[data-ro-series]");
+      var sid = $arrow.data("ro-series");
+      var sidKey = $arrow.data("sid-key");
+      $arrow.toggleClass("open");
+      $p.find("#" + sid).toggle();
+      if (expandedSeries.has(sidKey)) expandedSeries.delete(sidKey);
+      else expandedSeries.add(sidKey);
+    },
+  );
+
+  $p.find("#ms-body").on("click.ms", "[data-ro-series-toggle]", function (e) {
+    e.stopPropagation();
+    var sid = $(this).data("ro-series-toggle");
+    var sidKey = $(this).data("sid-key");
+    $(this).toggleClass("open");
+    $p.find("#" + sid).toggle();
+    if (expandedSeries.has(sidKey)) expandedSeries.delete(sidKey);
+    else expandedSeries.add(sidKey);
+  });
+
+  $p.find("#ms-body").on(
+    "click.ms",
+    ".ms-reorder-arrows button[data-dir]",
+    function (e) {
+      e.stopPropagation();
+      var idx = parseInt($(this).data("ridx"));
+      var sectionKey = $(this).data("section");
+      var dir = $(this).data("dir");
+      var sectionList = getListForSection(sectionKey);
+      var blocks = buildBlocksFromList(sectionList);
+      if (idx < 0 || idx >= blocks.length) return;
+      var swapIdx = dir === "up" ? idx - 1 : idx + 1;
+      if (swapIdx < 0 || swapIdx >= blocks.length) return;
+      var temp = blocks[idx];
+      blocks[idx] = blocks[swapIdx];
+      blocks[swapIdx] = temp;
+      var newSectionList = [];
+      blocks.forEach(function (b) {
+        if (b.type === "single") newSectionList.push(b.item);
+        else
+          b.items.forEach(function (it) {
+            newSectionList.push(it);
+          });
+      });
+      applySectionList(sectionKey, newSectionList);
+      syncGroupPrompts();
+      saveData();
+      refreshPrompts();
+    },
+  );
+
+  $p.find("#ms-body").on(
+    "click.ms",
+    ".ms-reorder-arrows button[data-sdir]",
+    function (e) {
+      e.stopPropagation();
+      var ci = parseInt($(this).data("child-idx"));
+      var sn = $(this).data("parent-series");
+      var sectionKey = $(this).data("parent-section");
+      var dir = $(this).data("sdir");
+      var sectionList = getListForSection(sectionKey);
+      var seriesItems = sectionList.filter(function (p) {
+        return p.series && p.series.trim() === sn;
+      });
+      var swapCi = dir === "up" ? ci - 1 : ci + 1;
+      if (swapCi < 0 || swapCi >= seriesItems.length) return;
+      var idxA = data.prompts.indexOf(seriesItems[ci]);
+      var idxB = data.prompts.indexOf(seriesItems[swapCi]);
+      if (idxA >= 0 && idxB >= 0) {
+        var tmp = data.prompts[idxA];
+        data.prompts[idxA] = data.prompts[idxB];
+        data.prompts[idxB] = tmp;
+      }
+      var gpA = groupPrompts.indexOf(seriesItems[ci]);
+      var gpB = groupPrompts.indexOf(seriesItems[swapCi]);
+      if (gpA >= 0 && gpB >= 0) {
+        var tmp2 = groupPrompts[gpA];
+        groupPrompts[gpA] = groupPrompts[gpB];
+        groupPrompts[gpB] = tmp2;
+      }
+      saveData();
+      refreshPrompts();
+    },
+  );
+  $p.find("#ms-body").on(
+    "pointerdown.ms",
+    ".ms-reorder-item[data-rid]",
+    function (e) {
+      if (!multiMode || !rangeMode) return;
+      if ($(e.target).closest("[data-ro-series-toggle]").length) return;
       var $el = $(this);
       var rid = $el.attr("data-rid");
-      if (rid === undefined) return;
+      var scope = $el.attr("data-scope");
+      if (!rid || !scope) return;
       var sx = e.clientX || 0,
         sy = e.clientY || 0;
       var lpTimer = setTimeout(function () {
         lpTimer = null;
-        $el.data("ms-ro-lp-fired", true);
+        $el.data("ms-rop-lp-fired", true);
         if (navigator.vibrate) navigator.vibrate(30);
-        var list = opts.getList();
-        var newAnchorIdx = -1;
-        for (var idx = 0; idx < list.length; idx++) {
-          if (getItemId(list[idx], idx) === rid) {
-            newAnchorIdx = idx;
-            break;
-          }
-        }
-        var farEndIdx = -1;
+        var farEndRid = null;
         if (
-          newAnchorIdx >= 0 &&
+          multiScope === scope &&
           rangeAnchor !== null &&
           multiSelected.size > 0
         ) {
-          var oldAnchorIdx = -1;
-          for (var idx2 = 0; idx2 < list.length; idx2++) {
-            if (getItemId(list[idx2], idx2) === rangeAnchor) {
-              oldAnchorIdx = idx2;
-              break;
-            }
-          }
-          if (oldAnchorIdx >= 0) {
+          var orderedRids = getScopeOrderedRids(scope);
+          var newAnchorIdx = orderedRids.indexOf(rid);
+          var oldAnchorIdx = orderedRids.indexOf(rangeAnchor);
+          if (newAnchorIdx >= 0 && oldAnchorIdx >= 0) {
             var selIdxArr = [];
-            for (var idx3 = 0; idx3 < list.length; idx3++) {
-              if (multiSelected.has(getItemId(list[idx3], idx3)))
-                selIdxArr.push(idx3);
-            }
+            orderedRids.forEach(function (r, i) {
+              if (multiSelected.has(r)) selIdxArr.push(i);
+            });
             if (selIdxArr.length > 0) {
               var selMin = Math.min.apply(null, selIdxArr);
               var selMax = Math.max.apply(null, selIdxArr);
-              if (selMin < oldAnchorIdx) farEndIdx = selMin;
-              else if (selMax > oldAnchorIdx) farEndIdx = selMax;
+              var farIdx = -1;
+              if (selMin < oldAnchorIdx) farIdx = selMin;
+              else if (selMax > oldAnchorIdx) farIdx = selMax;
+              if (farIdx >= 0) farEndRid = orderedRids[farIdx];
             }
           }
         }
+        multiScope = scope;
         rangeAnchor = rid;
         multiSelected.clear();
-        if (farEndIdx >= 0 && newAnchorIdx >= 0) {
-          var lo = Math.min(newAnchorIdx, farEndIdx);
-          var hi = Math.max(newAnchorIdx, farEndIdx);
-          for (var ii = lo; ii <= hi; ii++)
-            multiSelected.add(getItemId(list[ii], ii));
+        if (farEndRid !== null) {
+          var orderedRids2 = getScopeOrderedRids(scope);
+          var ai = orderedRids2.indexOf(rid);
+          var fi = orderedRids2.indexOf(farEndRid);
+          if (ai >= 0 && fi >= 0) {
+            var lo = Math.min(ai, fi);
+            var hi = Math.max(ai, fi);
+            for (var ii = lo; ii <= hi; ii++)
+              multiSelected.add(orderedRids2[ii]);
+          } else {
+            multiSelected.add(rid);
+          }
         } else {
           multiSelected.add(rid);
         }
-        refresh();
+        refreshPrompts();
         toast("info", "已设为新锚点");
       }, 600);
       var onMove = function (ev) {
@@ -14981,1775 +17537,324 @@ function renderSettings() {
           clearTimeout(lpTimer);
           lpTimer = null;
         }
-        $p.off("pointermove.ms-rolp pointerup.ms-rolp pointercancel.ms-rolp");
+        $p.off(
+          "pointermove.ms-roplp pointerup.ms-roplp pointercancel.ms-roplp",
+        );
       };
-      $p.off("pointermove.ms-rolp pointerup.ms-rolp pointercancel.ms-rolp")
-        .on("pointermove.ms-rolp", onMove)
-        .on("pointerup.ms-rolp pointercancel.ms-rolp", onUp);
-    });
+      $p.off("pointermove.ms-roplp pointerup.ms-roplp pointercancel.ms-roplp")
+        .on("pointermove.ms-roplp", onMove)
+        .on("pointerup.ms-roplp pointercancel.ms-roplp", onUp);
+    },
+  );
 
-    $p.find("#ms-body").on("click.ms", ".ms-reorder-item", function (e) {
+  $p.find("#ms-body").on(
+    "click.ms",
+    ".ms-reorder-item[data-rid]",
+    function (e) {
       if (!multiMode) return;
-      if ($(this).data("ms-ro-lp-fired")) {
-        $(this).removeData("ms-ro-lp-fired");
+      if ($(this).data("ms-rop-lp-fired")) {
+        $(this).removeData("ms-rop-lp-fired");
         return;
       }
-      if ($(e.target).closest(".ms-reorder-arrows, .ms-reorder-grip").length)
+      if ($(e.target).closest("[data-ro-series-toggle]").length) return;
+      var rid = $(this).attr("data-rid");
+      var scope = $(this).attr("data-scope");
+      if (!rid || !scope) return;
+
+      if (multiScope && scope !== multiScope) {
+        toast(
+          "info",
+          "当前批量范围是「" +
+            getScopeLabel(multiScope) +
+            "」，要选别的范围请先取消已选项",
+        );
         return;
-      const rid = $(this).attr("data-rid");
-      if (rid === undefined) return;
-      const list = opts.getList();
+      }
+
       if (rangeMode) {
-        if (
-          rangeAnchor === null ||
-          !list.some((it, i) => getItemId(it, i) === rangeAnchor)
-        ) {
+        if (!multiScope) multiScope = scope;
+        var orderedRids = getScopeOrderedRids(scope);
+        if (rangeAnchor === null || orderedRids.indexOf(rangeAnchor) < 0) {
           rangeAnchor = rid;
           multiSelected.clear();
           multiSelected.add(rid);
         } else if (rangeAnchor === rid) {
           rangeAnchor = null;
           multiSelected.clear();
+          multiScope = null;
         } else {
-          const ai = list.findIndex(
-            (it, i) => getItemId(it, i) === rangeAnchor,
-          );
-          const yi = list.findIndex((it, i) => getItemId(it, i) === rid);
+          var ai = orderedRids.indexOf(rangeAnchor);
+          var yi = orderedRids.indexOf(rid);
           if (ai < 0 || yi < 0) return;
-          const lo = Math.min(ai, yi),
+          var lo = Math.min(ai, yi),
             hi = Math.max(ai, yi);
           multiSelected.clear();
-          for (let i = lo; i <= hi; i++)
-            multiSelected.add(getItemId(list[i], i));
+          for (var i = lo; i <= hi; i++) multiSelected.add(orderedRids[i]);
         }
       } else {
-        if (multiSelected.has(rid)) multiSelected.delete(rid);
-        else multiSelected.add(rid);
-      }
-      refresh();
-    });
-
-    $p.find("#ms-body").on(
-      "click.ms",
-      ".ms-reorder-arrows button",
-      function () {
-        const idx = parseInt($(this).data("ridx")),
-          dir = $(this).data("dir");
-        var list = opts.getList();
-        if (dir === "up" && idx > 0) {
-          [list[idx - 1], list[idx]] = [list[idx], list[idx - 1]];
-        } else if (dir === "down" && idx < list.length - 1) {
-          [list[idx], list[idx + 1]] = [list[idx + 1], list[idx]];
-        }
-        if (opts.afterChange) opts.afterChange();
-        saveData();
-        refresh();
-      },
-    );
-
-    $p.find("#ms-footer").on("click.ms", "[data-mbatch]", function () {
-      const action = $(this).data("mbatch");
-      var list = opts.getList();
-
-      if (action === "selectall") {
-        const allSel =
-          list.length > 0 &&
-          list.every((item, i) => multiSelected.has(getItemId(item, i)));
-        if (allSel) {
-          multiSelected.clear();
-          rangeAnchor = null;
+        if (multiSelected.has(rid)) {
+          multiSelected.delete(rid);
+          if (multiSelected.size === 0) multiScope = null;
         } else {
-          multiSelected.clear();
-          list.forEach((item, i) => multiSelected.add(getItemId(item, i)));
+          if (!multiScope) multiScope = scope;
+          multiSelected.add(rid);
         }
-        refresh();
-        return;
       }
+      refreshPrompts();
+    },
+  );
 
-      if (multiSelected.size === 0) return;
+  $p.find("#ms-footer").on("click.ms", "[data-pmbatch]", function () {
+    var action = $(this).data("pmbatch");
 
-      if (action === "up") {
-        for (let i = 1; i < list.length; i++) {
-          if (
-            multiSelected.has(getItemId(list[i], i)) &&
-            !multiSelected.has(getItemId(list[i - 1], i - 1))
-          ) {
-            [list[i - 1], list[i]] = [list[i], list[i - 1]];
+    if (action === "selectall") {
+      if (!multiScope) {
+        if (!isIP) {
+          multiScope = "_all";
+        } else {
+          var _ssParts = partitionByCharacter();
+          if (_ssParts.general.length > 0) {
+            multiScope = "_general";
+          } else if (_ssParts.orderedChars.length > 0) {
+            multiScope = "char_" + _ssParts.orderedChars[0];
+          } else {
+            return;
           }
         }
-      } else if (action === "down") {
-        for (let i = list.length - 2; i >= 0; i--) {
-          if (
-            multiSelected.has(getItemId(list[i], i)) &&
-            !multiSelected.has(getItemId(list[i + 1], i + 1))
-          ) {
-            [list[i], list[i + 1]] = [list[i + 1], list[i]];
+      }
+      var orderedRids = getScopeOrderedRids(multiScope);
+      var allSel =
+        orderedRids.length > 0 &&
+        orderedRids.every(function (rid) {
+          return multiSelected.has(rid);
+        });
+      if (allSel) {
+        multiSelected.clear();
+        multiScope = null;
+        rangeAnchor = null;
+      } else {
+        orderedRids.forEach(function (rid) {
+          multiSelected.add(rid);
+        });
+      }
+      refreshPrompts();
+      return;
+    }
+
+    if (multiSelected.size === 0 || !multiScope) return;
+
+    function reorderArr(items, isSelectedFn, act, insertPos) {
+      if (act === "top") {
+        var sel = items.filter(isSelectedFn);
+        var others = items.filter(function (i) {
+          return !isSelectedFn(i);
+        });
+        return sel.concat(others);
+      }
+      if (act === "bottom") {
+        var sel = items.filter(isSelectedFn);
+        var others = items.filter(function (i) {
+          return !isSelectedFn(i);
+        });
+        return others.concat(sel);
+      }
+      if (act === "insert") {
+        var sel = items.filter(isSelectedFn);
+        var others = items.filter(function (i) {
+          return !isSelectedFn(i);
+        });
+        return others
+          .slice(0, insertPos)
+          .concat(sel)
+          .concat(others.slice(insertPos));
+      }
+      if (act === "up") {
+        var result = items.slice();
+        for (var i = 1; i < result.length; i++) {
+          if (isSelectedFn(result[i]) && !isSelectedFn(result[i - 1])) {
+            var t = result[i - 1];
+            result[i - 1] = result[i];
+            result[i] = t;
           }
         }
-      } else if (action === "top") {
-        const selectedItems = list.filter((item, i) =>
-          multiSelected.has(getItemId(item, i)),
-        );
-        const otherItems = list.filter(
-          (item, i) => !multiSelected.has(getItemId(item, i)),
-        );
-        list.length = 0;
-        list.push(...selectedItems, ...otherItems);
-      } else if (action === "bottom") {
-        const selectedItems = list.filter((item, i) =>
-          multiSelected.has(getItemId(item, i)),
-        );
-        const otherItems = list.filter(
-          (item, i) => !multiSelected.has(getItemId(item, i)),
-        );
-        list.length = 0;
-        list.push(...otherItems, ...selectedItems);
-      } else if (action === "insert") {
-        const scopeItems = list.map((item, i) => ({
-          name: item.name,
-          isSelected: multiSelected.has(getItemId(item, i)),
-        }));
-        showInsertDialog({
-          title: "插入到指定位置",
-          scopeItems: scopeItems,
-          onConfirm: function (targetPos) {
-            const selectedItems = list.filter((item, i) =>
-              multiSelected.has(getItemId(item, i)),
-            );
-            const otherItems = list.filter(
-              (item, i) => !multiSelected.has(getItemId(item, i)),
-            );
-            const newList = [
-              ...otherItems.slice(0, targetPos),
-              ...selectedItems,
-              ...otherItems.slice(targetPos),
-            ];
-            list.length = 0;
-            list.push(...newList);
-            if (opts.afterChange) opts.afterChange();
-            saveData();
-            refresh();
+        return result;
+      }
+      if (act === "down") {
+        var result = items.slice();
+        for (var i = result.length - 2; i >= 0; i--) {
+          if (isSelectedFn(result[i]) && !isSelectedFn(result[i + 1])) {
+            var t = result[i];
+            result[i] = result[i + 1];
+            result[i + 1] = t;
+          }
+        }
+        return result;
+      }
+      return items;
+    }
+
+    function applyReorder(act, insertPos) {
+      if (multiScope.indexOf("::series::") >= 0) {
+        var parts2 = multiScope.split("::series::");
+        var sectionKey2 = parts2[0];
+        var seriesName2 = parts2[1];
+        var sectionList3 = getListForSection(sectionKey2);
+        var seriesItems2 = sectionList3.filter(function (p) {
+          return p.series && p.series.trim() === seriesName2;
+        });
+        var reordered = reorderArr(
+          seriesItems2,
+          function (p) {
+            return multiSelected.has("c_" + p.id);
           },
-        });
-        return;
-      }
-
-      if (opts.afterChange) opts.afterChange();
-      saveData();
-      refresh();
-    });
-
-    refresh();
-  }
-
-  function renderReorderGroups() {
-    renderReorderList({
-      title: "调整分组顺序",
-      getList: function () {
-        return data.groups;
-      },
-      renderIcon: function (g) {
-        var useAvatar =
-          isIPGroup(g) ||
-          (g.iconMode === "custom" && g.iconUrl) ||
-          (g.iconMode === "char" && g.iconCharKey);
-        return useAvatar
-          ? buildGroupAvatarHTML(g, 22)
-          : `<span class="ms-gitem-color" style="background:${g.color};cursor:default;"></span>`;
-      },
-    });
-  }
-
-  function renderReorderTags() {
-    renderReorderList({
-      title: "调整标签顺序",
-      getList: function () {
-        return data.settings.definedTags;
-      },
-      renderIcon: function (t) {
-        return `<span class="ms-gitem-color" style="background:${t.color};cursor:default;"></span>`;
-      },
-      afterChange: function () {
-        _tagOrderVersion++;
-      },
-    });
-  }
-
-  function renderReorderPrompts(v) {
-    if (data.settings.sortMode !== "custom") {
-      data.settings.sortMode = "custom";
-      saveData();
-    }
-    var g = getGroup(v.groupId);
-    var title = g ? g.name : "条目";
-    var $p = setupPage("调整条目顺序", "调整 " + esc(title) + " 内顺序");
-    var groupPrompts = data.prompts.filter(function (p) {
-      return p.groupId === v.groupId;
-    });
-
-    function buildItemBody(p, anchorBadge, smaller, hideSeries, hideCharacter) {
-      anchorBadge = anchorBadge || "";
-      var titleSize = smaller ? "12px" : "13px";
-      var preview = (p.content || "").replace(/\s+/g, " ").trim();
-      var previewH = preview
-        ? '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#777);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.4;">' +
-          esc(truncate(preview, 60)) +
-          "</div>"
-        : "";
-      var metaParts = [];
-      if (!hideSeries && p.series && p.series.trim()) {
-        metaParts.push(
-          '<span style="color:var(--ms-accent);opacity:0.75;display:inline-flex;align-items:center;gap:2px;font-size:9px;"><i class="fa-solid fa-layer-group" style="font-size:8px;"></i>' +
-            esc(p.series.trim()) +
-            "</span>",
+          act,
+          insertPos,
         );
-      }
-      if (!hideCharacter && p.character && isLocalCharKey(p.character)) {
-        metaParts.push(
-          '<span style="color:#b48cc8;display:inline-flex;align-items:center;gap:2px;font-size:9px;"><i class="fa-solid fa-user" style="font-size:8px;"></i>' +
-            esc(getCharDisplayName(p.character)) +
-            "</span>",
-        );
-      }
-      var tagsH = "";
-      sortTagIds(p.tags || [])
-        .slice(0, 3)
-        .forEach(function (tid) {
-          var t = getTag(tid);
-          if (t)
-            tagsH +=
-              '<span class="ms-tag-chip ms-tag-chip-sm" style="background:' +
-              t.color +
-              ';">' +
-              esc(t.name) +
-              "</span>";
+        var ridx = 0;
+        var newSectionList3 = sectionList3.map(function (p) {
+          if (p.series && p.series.trim() === seriesName2) {
+            return reordered[ridx++];
+          }
+          return p;
         });
-      var ts =
-        p.updatedAt && p.updatedAt !== p.createdAt ? p.updatedAt : p.createdAt;
-      var tsH = "";
-      if (ts) {
-        var d = new Date(ts);
-        if (!isNaN(d.getTime())) {
-          var now = new Date();
-          var shortDate =
-            d.getFullYear() === now.getFullYear()
-              ? String(d.getMonth() + 1).padStart(2, "0") +
-                "/" +
-                String(d.getDate()).padStart(2, "0")
-              : String(d.getFullYear()).slice(2) +
-                "/" +
-                String(d.getMonth() + 1).padStart(2, "0") +
-                "/" +
-                String(d.getDate()).padStart(2, "0");
-          tsH =
-            '<span style="font-size:9px;color:var(--SmartThemeQuoteColor,#666);opacity:0.7;white-space:nowrap;flex-shrink:0;margin-left:auto;">' +
-            shortDate +
-            "</span>";
-        }
-      }
-      var bottomRow = "";
-      if (metaParts.length > 0 || tagsH || tsH) {
-        bottomRow =
-          '<div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;">' +
-          metaParts.join("") +
-          tagsH +
-          tsH +
-          "</div>";
-      }
-      return (
-        '<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;overflow:hidden;">' +
-        '<div style="font-size:' +
-        titleSize +
-        ';font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--SmartThemeBodyColor,#ddd);">' +
-        esc(p.title) +
-        anchorBadge +
-        "</div>" +
-        previewH +
-        bottomRow +
-        "</div>"
-      );
-    }
-
-    let multiMode = v._reorderMultiMode || false;
-    const multiSelected = new Set(v._reorderMultiSelected || []);
-    let multiScope = v._reorderMultiScope || null;
-    let rangeMode = v._reorderRangeMode || false;
-    let rangeAnchor = v._reorderRangeAnchor || null;
-
-    $p.find("#ms-toolbar").html(
-      '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button>' +
-        '<span class="ms-form-title">调整 ' +
-        esc(title) +
-        " 内顺序</span>" +
-        '<div class="ms-toolbar-actions">' +
-        '<button class="ms-tbtn" id="ms-reorder-prompts-range" title="范围选择模式" style="display:none;"><i class="fa-solid fa-arrows-left-right-to-line"></i></button>' +
-        '<button class="ms-tbtn" id="ms-reorder-prompts-multi" title="多选批量调序"><i class="fa-solid fa-check-double"></i></button>' +
-        '<button class="ms-tbtn" id="ms-reorder-series-first" title="把所有系列条目自动排到前面"><i class="fa-solid fa-layer-group"></i> 系列优先</button>' +
-        "</div>",
-    );
-
-    var isIP = g && isIPGroup(g);
-    var expandedSeries = new Set(v._reorderExpandedSeries || []);
-    var collapsedSections = new Set(v._reorderCollapsedSections || []);
-
-    function partitionByCharacter() {
-      var general = [];
-      var byChar = {};
-      groupPrompts.forEach(function (p) {
-        if (p.character && isLocalCharKey(p.character)) {
-          if (!byChar[p.character]) byChar[p.character] = [];
-          byChar[p.character].push(p);
-        } else {
-          general.push(p);
-        }
-      });
-      var order = g ? getCharDisplayOrder(g) : [];
-      var orderedChars = [];
-      order.forEach(function (k) {
-        if (byChar[k]) orderedChars.push(k);
-      });
-      Object.keys(byChar).forEach(function (k) {
-        if (orderedChars.indexOf(k) < 0) orderedChars.push(k);
-      });
-      return { general: general, byChar: byChar, orderedChars: orderedChars };
-    }
-
-    function buildBlocksFromList(list) {
-      var blocks = [];
-      var rendered = new Set();
-      list.forEach(function (p) {
-        if (rendered.has(p.id)) return;
-        if (p.series && p.series.trim()) {
-          var seriesName = p.series.trim();
-          var items = list.filter(function (q) {
-            return (
-              q.series && q.series.trim() === seriesName && !rendered.has(q.id)
-            );
-          });
-          if (items.length > 1) {
-            blocks.push({ type: "series", name: seriesName, items: items });
-            items.forEach(function (q) {
-              rendered.add(q.id);
+        applySectionList(sectionKey2, newSectionList3);
+      } else {
+        var sectionKey3 = multiScope;
+        var sectionList4 = getListForSection(sectionKey3);
+        var blocks4 = buildBlocksFromList(sectionList4);
+        var reorderedBlocks = reorderArr(
+          blocks4,
+          function (block) {
+            if (block.type === "single")
+              return multiSelected.has("p_" + block.item.id);
+            if (block.type === "series")
+              return multiSelected.has("s_" + sectionKey3 + "_" + block.name);
+            return false;
+          },
+          act,
+          insertPos,
+        );
+        var newSectionList4 = [];
+        reorderedBlocks.forEach(function (b) {
+          if (b.type === "single") newSectionList4.push(b.item);
+          else
+            b.items.forEach(function (it) {
+              newSectionList4.push(it);
             });
-          } else {
-            blocks.push({ type: "single", item: p });
-            rendered.add(p.id);
-          }
-        } else {
-          blocks.push({ type: "single", item: p });
-          rendered.add(p.id);
-        }
-      });
-      return blocks;
-    }
-
-    function getScopeLabel(scope) {
-      if (!scope) return "未选定";
-      if (scope === "_all") return "全部";
-      if (scope.indexOf("::series::") >= 0) {
-        var parts = scope.split("::series::");
-        var section = parts[0];
-        var sn = parts[1];
-        var sectionLabel =
-          section === "_general"
-            ? "通用剧场"
-            : section.indexOf("char_") === 0
-              ? "角色「" + getCharDisplayName(section.substring(5)) + "」"
-              : section;
-        return sectionLabel + " · 系列「" + sn + "」内";
-      }
-      if (scope === "_general") return "通用剧场";
-      if (scope.indexOf("char_") === 0) {
-        return "角色「" + getCharDisplayName(scope.substring(5)) + "」";
-      }
-      return scope;
-    }
-
-    function getScopeOrderedRids(scope) {
-      var result = [];
-      if (!scope) return result;
-      if (scope.indexOf("::series::") >= 0) {
-        var partsS = scope.split("::series::");
-        var sectionListS = getListForSection(partsS[0]);
-        sectionListS.forEach(function (p) {
-          if (p.series && p.series.trim() === partsS[1]) {
-            result.push("c_" + p.id);
-          }
         });
-      } else {
-        var sectionListT = getListForSection(scope);
-        var blocksT = buildBlocksFromList(sectionListT);
-        blocksT.forEach(function (block) {
-          if (block.type === "single") result.push("p_" + block.item.id);
-          if (block.type === "series")
-            result.push("s_" + scope + "_" + block.name);
-        });
-      }
-      return result;
-    }
-
-    function renderBlocks(blocks, sectionKey) {
-      var html = "";
-      var hideCharInBody = sectionKey && sectionKey.indexOf("char_") === 0;
-      blocks.forEach(function (block, bi) {
-        if (block.type === "single") {
-          var rid = "p_" + block.item.id;
-          var scope = sectionKey;
-          if (multiMode) {
-            var inScope = !multiScope || scope === multiScope;
-            var isSel = multiSelected.has(rid);
-            var isAnchorP = rangeMode && rangeAnchor === rid;
-            var checkBg = isSel
-              ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
-              : "";
-            var rowBg = isSel
-              ? "background:rgba(var(--ms-accent-rgb),0.10);"
-              : "";
-            var rowOpa = inScope ? "" : "opacity:0.35;pointer-events:none;";
-            var anchorBadgeP = isAnchorP
-              ? ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>'
-              : "";
-            html +=
-              '<div class="ms-reorder-item" data-rid="' +
-              rid +
-              '" data-pid="' +
-              block.item.id +
-              '" data-scope="' +
-              esc(scope) +
-              '" style="cursor:pointer;' +
-              rowBg +
-              rowOpa +
-              '">' +
-              '<div class="ms-gitem-check" style="' +
-              checkBg +
-              '"><i class="fa-solid fa-check"></i></div>' +
-              buildItemBody(
-                block.item,
-                anchorBadgeP,
-                false,
-                false,
-                hideCharInBody,
-              ) +
-              '<button class="ms-card-qbtn" data-preview-pid="' +
-              block.item.id +
-              '" title="查看预览" style="flex-shrink:0;"><i class="fa-solid fa-eye"></i></button>' +
-              "</div>";
-          } else {
-            html +=
-              '<div class="ms-reorder-item" data-ridx="' +
-              bi +
-              '" data-section="' +
-              esc(sectionKey) +
-              '" data-type="single" data-pid="' +
-              block.item.id +
-              '"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-ridx="' +
-              bi +
-              '" data-section="' +
-              esc(sectionKey) +
-              '"></i>' +
-              buildItemBody(block.item, "", false, false, hideCharInBody) +
-              '<button class="ms-card-qbtn" data-preview-pid="' +
-              block.item.id +
-              '" title="查看预览" style="flex-shrink:0;"><i class="fa-solid fa-eye"></i></button>' +
-              '<div class="ms-reorder-arrows"><button data-dir="up" data-ridx="' +
-              bi +
-              '" data-section="' +
-              esc(sectionKey) +
-              '"' +
-              (bi === 0 ? " disabled style='opacity:0.3;'" : "") +
-              '><i class="fa-solid fa-angle-up"></i></button><button data-dir="down" data-ridx="' +
-              bi +
-              '" data-section="' +
-              esc(sectionKey) +
-              '"' +
-              (bi === blocks.length - 1
-                ? " disabled style='opacity:0.3;'"
-                : "") +
-              '><i class="fa-solid fa-angle-down"></i></button></div></div>';
-          }
-        } else {
-          var sRid = "s_" + sectionKey + "_" + block.name;
-          var sScope = sectionKey;
-          var seriesScope = sectionKey + "::series::" + block.name;
-          var sidKey = sectionKey + "||" + block.name;
-          var isOpen = expandedSeries.has(sidKey);
-          var sid = "ms-ro-series-" + simpleHash(sidKey);
-
-          if (multiMode) {
-            var inScope2 = !multiScope || sScope === multiScope;
-            var isSel2 = multiSelected.has(sRid);
-            var isAnchorS = rangeMode && rangeAnchor === sRid;
-            var checkBg2 = isSel2
-              ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
-              : "";
-            var rowBg2 = isSel2
-              ? "background:rgba(var(--ms-accent-rgb),0.18);"
-              : "background:rgba(var(--ms-accent-rgb),0.04);";
-            var rowOpa2 = inScope2 ? "" : "opacity:0.35;pointer-events:none;";
-            var anchorBadgeS = isAnchorS
-              ? ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>'
-              : "";
-            html +=
-              '<div class="ms-reorder-item" data-rid="' +
-              sRid +
-              '" data-scope="' +
-              esc(sScope) +
-              '" style="cursor:pointer;' +
-              rowBg2 +
-              rowOpa2 +
-              '">' +
-              '<div class="ms-gitem-check" style="' +
-              checkBg2 +
-              '"><i class="fa-solid fa-check"></i></div>' +
-              '<i class="fa-solid fa-angle-right ms-series-arrow' +
-              (isOpen ? " open" : "") +
-              '" data-ro-series-toggle="' +
-              sid +
-              '" data-sid-key="' +
-              esc(sidKey) +
-              '" style="cursor:pointer;font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;width:14px;transition:transform 0.2s;"></i>' +
-              '<i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:12px;flex-shrink:0;"></i>' +
-              '<span class="ms-reorder-name" style="font-weight:500;">' +
-              esc(block.name) +
-              ' <span style="font-weight:400;font-size:11px;color:var(--SmartThemeQuoteColor,#777);">(' +
-              block.items.length +
-              " 条)</span>" +
-              anchorBadgeS +
-              "</span>" +
-              "</div>";
-          } else {
-            html +=
-              '<div class="ms-reorder-item" data-ridx="' +
-              bi +
-              '" data-section="' +
-              esc(sectionKey) +
-              '" data-type="series" data-series-name="' +
-              esc(block.name) +
-              '" style="background:rgba(var(--ms-accent-rgb),0.04);"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-ridx="' +
-              bi +
-              '" data-section="' +
-              esc(sectionKey) +
-              '"></i><i class="fa-solid fa-angle-right ms-series-arrow' +
-              (isOpen ? " open" : "") +
-              '" data-ro-series="' +
-              sid +
-              '" data-sid-key="' +
-              esc(sidKey) +
-              '" style="cursor:pointer;font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;width:14px;transition:transform 0.2s;"></i><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:12px;flex-shrink:0;"></i><span class="ms-reorder-name" style="font-weight:500;">' +
-              esc(block.name) +
-              ' <span style="font-weight:400;font-size:11px;color:var(--SmartThemeQuoteColor,#777);">(' +
-              block.items.length +
-              ' 条)</span></span><div class="ms-reorder-arrows"><button data-dir="up" data-ridx="' +
-              bi +
-              '" data-section="' +
-              esc(sectionKey) +
-              '"' +
-              (bi === 0 ? " disabled style='opacity:0.3;'" : "") +
-              '><i class="fa-solid fa-angle-up"></i></button><button data-dir="down" data-ridx="' +
-              bi +
-              '" data-section="' +
-              esc(sectionKey) +
-              '"' +
-              (bi === blocks.length - 1
-                ? " disabled style='opacity:0.3;'"
-                : "") +
-              '><i class="fa-solid fa-angle-down"></i></button></div></div>';
-          }
-
-          html +=
-            '<div id="' +
-            sid +
-            '" style="display:' +
-            (isOpen ? "block" : "none") +
-            ';border-left:2px solid rgba(var(--ms-accent-rgb),0.2);margin-left:14px;">';
-          block.items.forEach(function (item, ii) {
-            var crid = "c_" + item.id;
-            var cscope = seriesScope;
-
-            if (multiMode) {
-              var inScopeC = !multiScope || cscope === multiScope;
-              var sParentRid = "s_" + sectionKey + "_" + block.name;
-              var isSelC =
-                multiSelected.has(crid) || multiSelected.has(sParentRid);
-              var isAnchorC = rangeMode && rangeAnchor === crid;
-              var checkBgC = isSelC
-                ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
-                : "";
-              var rowBgC = isSelC
-                ? "background:rgba(var(--ms-accent-rgb),0.10);"
-                : "";
-              var rowOpaC = inScopeC ? "" : "opacity:0.35;pointer-events:none;";
-              var anchorBadgeC = isAnchorC
-                ? ' <i class="fa-solid fa-anchor" style="color:var(--ms-accent);font-size:10px;" title="锚点"></i>'
-                : "";
-              html +=
-                '<div class="ms-reorder-item" data-rid="' +
-                crid +
-                '" data-pid="' +
-                item.id +
-                '" data-scope="' +
-                esc(cscope) +
-                '" style="cursor:pointer;' +
-                rowBgC +
-                rowOpaC +
-                '">' +
-                '<div class="ms-gitem-check" style="' +
-                checkBgC +
-                '"><i class="fa-solid fa-check"></i></div>' +
-                buildItemBody(item, anchorBadgeC, true, true, hideCharInBody) +
-                '<button class="ms-card-qbtn" data-preview-pid="' +
-                item.id +
-                '" title="查看预览" style="flex-shrink:0;width:22px;height:22px;font-size:9px;"><i class="fa-solid fa-eye"></i></button>' +
-                "</div>";
-            } else {
-              html +=
-                '<div class="ms-reorder-item" data-type="series-child" data-pid="' +
-                item.id +
-                '" data-parent-series="' +
-                esc(block.name) +
-                '" data-parent-section="' +
-                esc(sectionKey) +
-                '" data-child-idx="' +
-                ii +
-                '"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-child-idx="' +
-                ii +
-                '" data-parent-series="' +
-                esc(block.name) +
-                '" data-parent-section="' +
-                esc(sectionKey) +
-                '"></i>' +
-                buildItemBody(item, "", true, true, hideCharInBody) +
-                '<button class="ms-card-qbtn" data-preview-pid="' +
-                item.id +
-                '" title="查看预览" style="flex-shrink:0;width:22px;height:22px;font-size:9px;"><i class="fa-solid fa-eye"></i></button>' +
-                '<div class="ms-reorder-arrows"><button data-sdir="up" data-child-idx="' +
-                ii +
-                '" data-parent-series="' +
-                esc(block.name) +
-                '" data-parent-section="' +
-                esc(sectionKey) +
-                '"' +
-                (ii === 0 ? " disabled style='opacity:0.3;'" : "") +
-                '><i class="fa-solid fa-angle-up"></i></button><button data-sdir="down" data-child-idx="' +
-                ii +
-                '" data-parent-series="' +
-                esc(block.name) +
-                '" data-parent-section="' +
-                esc(sectionKey) +
-                '"' +
-                (ii === block.items.length - 1
-                  ? " disabled style='opacity:0.3;'"
-                  : "") +
-                '><i class="fa-solid fa-angle-down"></i></button></div></div>';
-            }
-          });
-          html += "</div>";
-        }
-      });
-      return html;
-    }
-
-    function buildReorderBody() {
-      if (groupPrompts.length === 0) {
-        return '<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>该分组没有条目</div>';
-      }
-      var prefix = "";
-      if (multiMode) {
-        var rangeHint = "";
-        if (rangeMode) {
-          rangeHint =
-            '<div style="margin-top:4px;padding-top:4px;border-top:1px dashed rgba(var(--ms-accent-rgb),0.25);font-size:10px;color:var(--ms-accent);"><i class="fa-solid fa-arrows-left-right-to-line" style="margin-right:3px;"></i>范围模式：' +
-            (rangeAnchor === null
-              ? "点选第一项确定锚点"
-              : "已锚定，再次点选可扩展或收缩范围") +
-            ' · <span style="opacity:0.85;">长按某条目可改锚点到该处</span>' +
-            "</div>";
-        }
-        var ipHint = "";
-        if (isIP) {
-          ipHint =
-            '<div style="margin-top:4px;padding-top:4px;border-top:1px dashed rgba(255,255,255,0.08);font-size:10px;color:var(--SmartThemeQuoteColor,#999);"><i class="fa-solid fa-circle-info" style="margin-right:3px;color:#f0a040;"></i>多选模式仅支持<strong>同一范围内</strong>移动，不支持跨角色移动条目。如需跨角色移动或交换角色顺序，请回到单选拖拽模式</div>';
-        }
-        prefix =
-          '<div style="padding:8px 14px;background:rgba(var(--ms-accent-rgb),0.06);border-bottom:1px solid var(--SmartThemeBorderColor,#333);font-size:11px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;"><i class="fa-solid fa-bullseye" style="color:var(--ms-accent);margin-right:4px;"></i>批量范围: <strong>' +
-          esc(getScopeLabel(multiScope)) +
-          "</strong>" +
-          (multiScope
-            ? " · 已选 <strong>" + multiSelected.size + "</strong> 项"
-            : " · 点选第一项以确定范围（其他范围的项会变灰）") +
-          ipHint +
-          rangeHint +
-          "</div>";
-      }
-      if (!isIP) {
-        var blocks = buildBlocksFromList(groupPrompts);
-        return prefix + renderBlocks(blocks, "_all");
-      }
-      var parts = partitionByCharacter();
-      var html = prefix;
-      if (parts.general.length > 0) {
-        var generalCollapsed = collapsedSections.has("_general");
-        html +=
-          '<div class="ms-reorder-section-header" data-section-key="_general" style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:rgba(var(--ms-accent-rgb),0.08);border-top:1px solid rgba(255,255,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;user-select:none;"><i class="fa-solid fa-angle-' +
-          (generalCollapsed ? "right" : "down") +
-          '" style="font-size:10px;color:var(--ms-accent);width:12px;"></i><i class="fa-solid fa-scroll" style="color:var(--ms-accent);font-size:12px;"></i><span style="flex:1;font-size:12px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);">通用剧场 (' +
-          parts.general.length +
-          " 条)</span><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#666);'>固定置顶</span></div>";
-        if (!generalCollapsed) {
-          var blocks2 = buildBlocksFromList(parts.general);
-          html += renderBlocks(blocks2, "_general");
-        }
-      }
-      parts.orderedChars.forEach(function (k, ci) {
-        var ps = parts.byChar[k];
-        var dn = getCharDisplayName(k);
-        var ap = getCharAvatarPathSafe(k);
-        var avH = ap
-          ? '<img src="' +
-            esc(ap) +
-            '" style="width:20px;height:20px;border-radius:4px;object-fit:cover;" onerror="this.style.display=\'none\';this.onerror=null;">'
-          : '<i class="fa-solid fa-user" style="color:#b48cc8;font-size:13px;"></i>';
-        var isCollapsed = collapsedSections.has("char_" + k);
-        var sectionKey = "char_" + k;
-        var charGripHtml = multiMode
-          ? ""
-          : '<i class="fa-solid fa-grip-vertical ms-char-section-grip" data-char-key="' +
-            esc(k) +
-            '" data-char-idx="' +
-            ci +
-            '" style="cursor:grab;color:var(--SmartThemeQuoteColor,#888);font-size:12px;" title="拖动调整角色顺序"></i>';
-        var charArrowsHtml = multiMode
-          ? ""
-          : '<div class="ms-reorder-arrows"><button data-char-dir="up" data-char-idx="' +
-            ci +
-            '"' +
-            (ci === 0 ? " disabled style='opacity:0.3;'" : "") +
-            '><i class="fa-solid fa-angle-up"></i></button><button data-char-dir="down" data-char-idx="' +
-            ci +
-            '"' +
-            (ci === parts.orderedChars.length - 1
-              ? " disabled style='opacity:0.3;'"
-              : "") +
-            '><i class="fa-solid fa-angle-down"></i></button></div>';
-        html +=
-          '<div class="ms-reorder-section-header" data-section-key="' +
-          esc(sectionKey) +
-          '" data-char-key="' +
-          esc(k) +
-          '" data-char-idx="' +
-          ci +
-          '" style="display:flex;align-items:center;gap:8px;padding:8px 14px;background:rgba(180,140,200,0.08);border-top:1px solid rgba(255,255,255,0.06);border-bottom:1px solid rgba(255,255,255,0.06);cursor:pointer;user-select:none;">' +
-          charGripHtml +
-          '<i class="fa-solid fa-angle-' +
-          (isCollapsed ? "right" : "down") +
-          '" style="font-size:10px;color:#b48cc8;width:12px;"></i>' +
-          avH +
-          '<span style="flex:1;font-size:12px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);">' +
-          esc(dn) +
-          " (" +
-          ps.length +
-          " 条)</span>" +
-          charArrowsHtml +
-          "</div>";
-        if (!isCollapsed) {
-          var blocks3 = buildBlocksFromList(ps);
-          html += renderBlocks(blocks3, sectionKey);
-        }
-      });
-      return html;
-    }
-
-    function syncGroupPrompts() {
-      var positions = [];
-      data.prompts.forEach(function (p, i) {
-        if (p.groupId === v.groupId) positions.push(i);
-      });
-      positions.forEach(function (pos, i) {
-        data.prompts[pos] = groupPrompts[i];
-      });
-    }
-
-    function getListForSection(sectionKey) {
-      if (!isIP || sectionKey === "_all") return groupPrompts;
-      if (sectionKey === "_general") {
-        return groupPrompts.filter(function (p) {
-          return !(p.character && isLocalCharKey(p.character));
-        });
-      }
-      if (sectionKey && sectionKey.indexOf("char_") === 0) {
-        var ck = sectionKey.substring(5);
-        return groupPrompts.filter(function (p) {
-          return p.character === ck;
-        });
-      }
-      return groupPrompts;
-    }
-
-    function applySectionList(sectionKey, newList) {
-      if (!isIP || sectionKey === "_all") {
-        groupPrompts.length = 0;
-        newList.forEach(function (p) {
-          groupPrompts.push(p);
-        });
-        return;
-      }
-      var parts = partitionByCharacter();
-      if (sectionKey === "_general") parts.general = newList;
-      else if (sectionKey.indexOf("char_") === 0) {
-        var ck = sectionKey.substring(5);
-        parts.byChar[ck] = newList;
-      }
-      var merged = [];
-      parts.general.forEach(function (p) {
-        merged.push(p);
-      });
-      parts.orderedChars.forEach(function (k) {
-        (parts.byChar[k] || []).forEach(function (p) {
-          merged.push(p);
-        });
-      });
-      groupPrompts.length = 0;
-      merged.forEach(function (p) {
-        groupPrompts.push(p);
-      });
-    }
-
-    function buildFooter() {
-      if (!multiMode) {
-        return (
-          "<span>拖拽 / 箭头调序 · " +
-          (isIP ? "跨角色拖动会确认改绑 · " : "") +
-          '右上角 <i class="fa-solid fa-check-double"></i> 进入批量模式</span>'
-        );
-      }
-      var cnt = multiSelected.size;
-      var disabled = cnt === 0 ? " disabled" : "";
-      var allSel = false;
-      if (multiScope) {
-        var orderedRids = getScopeOrderedRids(multiScope);
-        allSel =
-          orderedRids.length > 0 &&
-          orderedRids.every(function (rid) {
-            return multiSelected.has(rid);
-          });
-      }
-      var selIcon = allSel
-        ? "fa-solid fa-square-check"
-        : cnt === 0
-          ? "fa-regular fa-square"
-          : "fa-solid fa-square-minus";
-      var selLabel = allSel ? "取消全选" : "全选范围";
-      return (
-        '<div class="ms-batch-bar">' +
-        '<span class="ms-batch-count"><i class="fa-solid fa-list-check"></i> ' +
-        cnt +
-        "</span>" +
-        '<button class="ms-batch-btn" data-pmbatch="selectall"><i class="' +
-        selIcon +
-        '"></i><span class="ms-btn-label"> ' +
-        selLabel +
-        "</span></button>" +
-        '<button class="ms-batch-btn" data-pmbatch="top"' +
-        disabled +
-        '><i class="fa-solid fa-angles-up"></i><span class="ms-btn-label"> 置顶</span></button>' +
-        '<button class="ms-batch-btn" data-pmbatch="up"' +
-        disabled +
-        '><i class="fa-solid fa-angle-up"></i><span class="ms-btn-label"> 上移</span></button>' +
-        '<button class="ms-batch-btn" data-pmbatch="down"' +
-        disabled +
-        '><i class="fa-solid fa-angle-down"></i><span class="ms-btn-label"> 下移</span></button>' +
-        '<button class="ms-batch-btn" data-pmbatch="bottom"' +
-        disabled +
-        '><i class="fa-solid fa-angles-down"></i><span class="ms-btn-label"> 置底</span></button>' +
-        '<button class="ms-batch-btn" data-pmbatch="insert"' +
-        disabled +
-        '><i class="fa-solid fa-arrow-right-to-bracket"></i><span class="ms-btn-label"> 插入到</span></button>' +
-        "</div>"
-      );
-    }
-
-    var $body = $p.find("#ms-body");
-    function refreshPrompts() {
-      $body.html(buildReorderBody());
-      $p.find("#ms-footer").html(buildFooter()).show();
-      $p.find("#ms-reorder-prompts-multi").toggleClass("active", multiMode);
-      $p.find("#ms-reorder-prompts-range")
-        .toggleClass("active", rangeMode)
-        .toggle(multiMode);
-      if (v._lastViewedId) {
-        var lastId = v._lastViewedId;
-        delete v._lastViewedId;
-        setTimeout(function () {
-          var $target = $body.find('[data-pid="' + lastId + '"]').first();
-          if ($target.length) {
-            var $parentSeries = $target.closest('div[id^="ms-ro-series-"]');
-            if (
-              $parentSeries.length &&
-              $parentSeries.css("display") === "none"
-            ) {
-              var sid = $parentSeries.attr("id");
-              $parentSeries.show();
-              $body
-                .find(
-                  '[data-ro-series="' +
-                    sid +
-                    '"], [data-ro-series-toggle="' +
-                    sid +
-                    '"]',
-                )
-                .addClass("open");
-              var sidKey = $body
-                .find("[data-sid-key]")
-                .filter(function () {
-                  return $(this).is(
-                    '[data-ro-series="' +
-                      sid +
-                      '"], [data-ro-series-toggle="' +
-                      sid +
-                      '"]',
-                  );
-                })
-                .first()
-                .attr("data-sid-key");
-              if (sidKey) expandedSeries.add(sidKey);
-            }
-            $target.addClass("ms-just-viewed");
-            var elRect = $target[0].getBoundingClientRect();
-            var bodyRect = $body[0].getBoundingClientRect();
-            var relativeTop = elRect.top - bodyRect.top;
-            var elH = $target.outerHeight();
-            var bodyH = $body.height();
-            if (relativeTop < 0 || relativeTop + elH > bodyH) {
-              $body.scrollTop($body.scrollTop() + relativeTop - bodyH * 0.3);
-            }
-          }
-        }, 100);
-      }
-
-      if (multiMode) {
-        if (bindReorderDrag._cleanup) {
-          bindReorderDrag._cleanup();
-          bindReorderDrag._cleanup = null;
-        }
-        return;
-      }
-
-      bindReorderDrag($body, function (fromEl, targetEl) {
-        var fromType = fromEl.getAttribute("data-type");
-        var targetType = targetEl.getAttribute("data-type");
-        var fromSection =
-          fromEl.getAttribute("data-section") ||
-          fromEl.getAttribute("data-parent-section");
-        var targetSection =
-          targetEl.getAttribute("data-section") ||
-          targetEl.getAttribute("data-parent-section");
-
-        if (fromType === "series-child" && targetType === "series-child") {
-          var fromSeries = fromEl.getAttribute("data-parent-series");
-          var targetSeries = targetEl.getAttribute("data-parent-series");
-          if (fromSeries !== targetSeries || fromSection !== targetSection)
-            return;
-          var fromCi = parseInt(fromEl.getAttribute("data-child-idx"));
-          var targetCi = parseInt(targetEl.getAttribute("data-child-idx"));
-          if (isNaN(fromCi) || isNaN(targetCi)) return;
-          var sectionList = getListForSection(fromSection);
-          var seriesItems = sectionList.filter(function (p) {
-            return p.series && p.series.trim() === fromSeries;
-          });
-          if (fromCi >= seriesItems.length || targetCi >= seriesItems.length)
-            return;
-          var movedItem = seriesItems[fromCi];
-          var gpFrom = groupPrompts.indexOf(movedItem);
-          if (gpFrom < 0) return;
-          groupPrompts.splice(gpFrom, 1);
-          var targetItem = seriesItems[targetCi];
-          var gpTarget = groupPrompts.indexOf(targetItem);
-          if (gpTarget < 0) groupPrompts.push(movedItem);
-          else groupPrompts.splice(gpTarget, 0, movedItem);
-          syncGroupPrompts();
-          saveData();
-          refreshPrompts();
-          return;
-        }
-
-        if (fromType === "series-child" || targetType === "series-child")
-          return;
-
-        if (fromSection === targetSection) {
-          var fromIdx = parseInt(fromEl.getAttribute("data-ridx"));
-          var targetIdx = parseInt(targetEl.getAttribute("data-ridx"));
-          if (isNaN(fromIdx) || isNaN(targetIdx)) return;
-          var sectionList2 = getListForSection(fromSection);
-          var blocks = buildBlocksFromList(sectionList2);
-          if (
-            fromIdx < 0 ||
-            fromIdx >= blocks.length ||
-            targetIdx < 0 ||
-            targetIdx >= blocks.length
-          )
-            return;
-          var movedBlock = blocks.splice(fromIdx, 1)[0];
-          var newTargetIdx = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
-          blocks.splice(newTargetIdx, 0, movedBlock);
-          var newSectionList = [];
-          blocks.forEach(function (b) {
-            if (b.type === "single") newSectionList.push(b.item);
-            else
-              b.items.forEach(function (it) {
-                newSectionList.push(it);
-              });
-          });
-          applySectionList(fromSection, newSectionList);
-          syncGroupPrompts();
-          saveData();
-          refreshPrompts();
-          return;
-        }
-
-        if (!isIP) return;
-        var fromIdx2 = parseInt(fromEl.getAttribute("data-ridx"));
-        if (isNaN(fromIdx2)) return;
-        var fromSectionList = getListForSection(fromSection);
-        var fromBlocks = buildBlocksFromList(fromSectionList);
-        if (fromIdx2 < 0 || fromIdx2 >= fromBlocks.length) return;
-        var block = fromBlocks[fromIdx2];
-        var fromItems =
-          block.type === "single" ? [block.item] : block.items.slice();
-        var targetCharKey = null;
-        var targetLabel = "";
-        if (targetSection === "_general") {
-          targetCharKey = "";
-          targetLabel = "通用剧场（解除角色绑定）";
-        } else if (targetSection && targetSection.indexOf("char_") === 0) {
-          targetCharKey = targetSection.substring(5);
-          targetLabel = "角色「" + getCharDisplayName(targetCharKey) + "」";
-        } else {
-          return;
-        }
-        var cnt = fromItems.length;
-        var confirmMsg =
-          "确定要把 " +
-          cnt +
-          " 条剧场" +
-          (cnt > 1 ? "（包括系列内所有条目）" : "") +
-          " 改绑到 " +
-          targetLabel +
-          " 吗？\n\n这会修改这些剧场的「角色绑定」字段。";
-        msConfirm(confirmMsg, {
-          title: "改绑角色",
-          type: "warning",
-          okText: "改绑",
-        }).then(function (ok) {
-          if (!ok) {
-            refreshPrompts();
-            return;
-          }
-          fromItems.forEach(function (p) {
-            p.character = targetCharKey || "";
-          });
-          fromItems.forEach(function (p) {
-            var idx = groupPrompts.indexOf(p);
-            if (idx >= 0) groupPrompts.splice(idx, 1);
-          });
-          var targetSectionPrompts = groupPrompts.filter(function (p) {
-            if (targetCharKey === "")
-              return !(p.character && isLocalCharKey(p.character));
-            return p.character === targetCharKey;
-          });
-          if (targetSectionPrompts.length === 0) {
-            groupPrompts.push.apply(groupPrompts, fromItems);
-          } else {
-            var lastInTarget =
-              targetSectionPrompts[targetSectionPrompts.length - 1];
-            var insertAt = groupPrompts.indexOf(lastInTarget) + 1;
-            groupPrompts.splice.apply(
-              groupPrompts,
-              [insertAt, 0].concat(fromItems),
-            );
-          }
-          syncGroupPrompts();
-          saveData();
-          toast("success", "已改绑到 " + targetLabel);
-          refreshPrompts();
-        });
-      });
-    }
-
-    bindAllEvents();
-
-    function doReorderSeriesFirst() {
-      function sortSeriesFirst(list) {
-        var s = [],
-          l = [];
-        list.forEach(function (p) {
-          if (p.series && p.series.trim()) s.push(p);
-          else l.push(p);
-        });
-        return s.concat(l);
-      }
-      if (isIP) {
-        var parts = partitionByCharacter();
-        parts.general = sortSeriesFirst(parts.general);
-        Object.keys(parts.byChar).forEach(function (k) {
-          parts.byChar[k] = sortSeriesFirst(parts.byChar[k]);
-        });
-        groupPrompts.length = 0;
-        parts.general.forEach(function (p) {
-          groupPrompts.push(p);
-        });
-        parts.orderedChars.forEach(function (k) {
-          (parts.byChar[k] || []).forEach(function (p) {
-            groupPrompts.push(p);
-          });
-        });
-      } else {
-        var sorted = sortSeriesFirst(groupPrompts);
-        groupPrompts.length = 0;
-        sorted.forEach(function (p) {
-          groupPrompts.push(p);
-        });
+        applySectionList(sectionKey3, newSectionList4);
       }
       syncGroupPrompts();
       saveData();
       refreshPrompts();
-      toast("success", "已重新排序");
     }
 
-    $p.find("#ms-toolbar").on(
-      "click.ms",
-      "#ms-reorder-series-first",
-      function () {
-        msConfirm(
-          "会把所有属于系列的剧场自动排到前面（同系列保持现有相对顺序），不在系列里的散条排在后面，确定吗？",
-          { title: "系列优先排序", okText: "排序" },
-        ).then(function (ok) {
-          if (!ok) return;
-          doReorderSeriesFirst();
-        });
-      },
-    );
-
-    $p.find("#ms-toolbar").on(
-      "click.ms",
-      "#ms-reorder-prompts-multi",
-      function () {
-        multiMode = !multiMode;
-        multiSelected.clear();
-        multiScope = null;
-        rangeMode = false;
-        rangeAnchor = null;
-        refreshPrompts();
-      },
-    );
-
-    $p.find("#ms-toolbar").on(
-      "click.ms",
-      "#ms-reorder-prompts-range",
-      function () {
-        rangeMode = !rangeMode;
-        if (rangeMode && multiSelected.size > 0 && multiScope) {
-          var orderedRids = getScopeOrderedRids(multiScope);
-          rangeAnchor = null;
-          for (var i = 0; i < orderedRids.length; i++) {
-            if (multiSelected.has(orderedRids[i])) {
-              rangeAnchor = orderedRids[i];
-              break;
-            }
-          }
-        } else {
-          rangeAnchor = null;
-        }
-        refreshPrompts();
-      },
-    );
-
-    $p.find("#ms-body").on(
-      "click.ms",
-      ".ms-reorder-section-header",
-      function (e) {
-        if (
-          $(e.target).closest(".ms-reorder-arrows, .ms-char-section-grip")
-            .length
-        )
-          return;
-        var key = $(this).data("section-key");
-        if (collapsedSections.has(key)) collapsedSections.delete(key);
-        else collapsedSections.add(key);
-        refreshPrompts();
-      },
-    );
-
-    $p.find("#ms-body").on("click.ms", "[data-char-dir]", function (e) {
-      e.stopPropagation();
-      var dir = $(this).data("char-dir");
-      var ci = parseInt($(this).data("char-idx"));
-      var parts = partitionByCharacter();
-      var order = parts.orderedChars.slice();
-      var swapCi = dir === "up" ? ci - 1 : ci + 1;
-      if (swapCi < 0 || swapCi >= order.length) return;
-      var tmp = order[ci];
-      order[ci] = order[swapCi];
-      order[swapCi] = tmp;
-      if (g) {
-        g.charDisplayOrder = order;
-        saveData();
+    if (action === "insert") {
+      var scopeItems;
+      var selSet = multiSelected;
+      var ctxSectionKey =
+        multiScope.indexOf("::series::") >= 0
+          ? multiScope.split("::series::")[0]
+          : multiScope;
+      var ctxCharKey =
+        ctxSectionKey && ctxSectionKey.indexOf("char_") === 0
+          ? ctxSectionKey.substring(5)
+          : null;
+      function _resolveCharKey(p) {
+        if (ctxCharKey) return ctxCharKey;
+        if (p && p.character && isLocalCharKey(p.character)) return p.character;
+        return null;
       }
-      refreshPrompts();
-    });
-
-    $p.find("#ms-body").on(
-      "pointerdown.msdrag2",
-      ".ms-char-section-grip",
-      function (e) {
-        if (multiMode) return;
-        var oe = e.originalEvent || e;
-        if (oe.pointerType === "mouse" && oe.button !== 0) return;
-        e.preventDefault();
-        e.stopPropagation();
-        var fromCi = parseInt($(this).data("char-idx"));
-        var gripEl = this;
-        var dragging = true;
-        var panelEl = $("#" + PANEL_ID)[0];
-        var ownerDoc = panelEl ? panelEl.ownerDocument : document;
-        try {
-          gripEl.setPointerCapture(oe.pointerId);
-        } catch (ex) {}
-        function onMove(ev) {
-          if (!dragging) return;
-          ev.preventDefault();
-          var el = ownerDoc.elementFromPoint(ev.clientX, ev.clientY);
-          var targetHdr = el ? el.closest(".ms-reorder-section-header") : null;
-          $body.find(".ms-reorder-section-header").removeClass("ms-drag-over");
-          if (targetHdr) targetHdr.classList.add("ms-drag-over");
-        }
-        function onEnd(ev) {
-          if (!dragging) return;
-          dragging = false;
-          $body.find(".ms-reorder-section-header").removeClass("ms-drag-over");
-          gripEl.removeEventListener("pointermove", onMove);
-          gripEl.removeEventListener("pointerup", onEnd);
-          gripEl.removeEventListener("pointercancel", onEnd);
-          gripEl.removeEventListener("lostpointercapture", onEnd);
-          if (!ev || ev.type === "lostpointercapture") return;
-          var el = ownerDoc.elementFromPoint(ev.clientX, ev.clientY);
-          var targetHdr = el ? el.closest(".ms-reorder-section-header") : null;
-          if (!targetHdr) return;
-          var targetCharKey = targetHdr.getAttribute("data-char-key");
-          if (!targetCharKey) {
-            toast("info", "通用剧场固定在第一位");
-            return;
-          }
-          var targetCi = parseInt(targetHdr.getAttribute("data-char-idx"));
-          if (isNaN(targetCi) || targetCi === fromCi) return;
-          var parts = partitionByCharacter();
-          var order = parts.orderedChars.slice();
-          var moved = order.splice(fromCi, 1)[0];
-          var insertIdx = fromCi < targetCi ? targetCi - 1 : targetCi;
-          order.splice(insertIdx, 0, moved);
-          if (g) {
-            g.charDisplayOrder = order;
-            saveData();
-          }
-          refreshPrompts();
-        }
-        gripEl.addEventListener("pointermove", onMove);
-        gripEl.addEventListener("pointerup", onEnd);
-        gripEl.addEventListener("pointercancel", onEnd);
-        gripEl.addEventListener("lostpointercapture", onEnd);
-      },
-    );
-
-    $p.find("#ms-body").on(
-      "click.ms",
-      ".ms-reorder-item[data-type='series']",
-      function (e) {
-        if ($(e.target).closest(".ms-reorder-grip, .ms-reorder-arrows").length)
-          return;
-        var $arrow = $(this).find("[data-ro-series]");
-        var sid = $arrow.data("ro-series");
-        var sidKey = $arrow.data("sid-key");
-        $arrow.toggleClass("open");
-        $p.find("#" + sid).toggle();
-        if (expandedSeries.has(sidKey)) expandedSeries.delete(sidKey);
-        else expandedSeries.add(sidKey);
-      },
-    );
-
-    $p.find("#ms-body").on("click.ms", "[data-ro-series-toggle]", function (e) {
-      e.stopPropagation();
-      var sid = $(this).data("ro-series-toggle");
-      var sidKey = $(this).data("sid-key");
-      $(this).toggleClass("open");
-      $p.find("#" + sid).toggle();
-      if (expandedSeries.has(sidKey)) expandedSeries.delete(sidKey);
-      else expandedSeries.add(sidKey);
-    });
-
-    $p.find("#ms-body").on(
-      "click.ms",
-      ".ms-reorder-arrows button[data-dir]",
-      function (e) {
-        e.stopPropagation();
-        var idx = parseInt($(this).data("ridx"));
-        var sectionKey = $(this).data("section");
-        var dir = $(this).data("dir");
-        var sectionList = getListForSection(sectionKey);
-        var blocks = buildBlocksFromList(sectionList);
-        if (idx < 0 || idx >= blocks.length) return;
-        var swapIdx = dir === "up" ? idx - 1 : idx + 1;
-        if (swapIdx < 0 || swapIdx >= blocks.length) return;
-        var temp = blocks[idx];
-        blocks[idx] = blocks[swapIdx];
-        blocks[swapIdx] = temp;
-        var newSectionList = [];
-        blocks.forEach(function (b) {
-          if (b.type === "single") newSectionList.push(b.item);
-          else
-            b.items.forEach(function (it) {
-              newSectionList.push(it);
-            });
-        });
-        applySectionList(sectionKey, newSectionList);
-        syncGroupPrompts();
-        saveData();
-        refreshPrompts();
-      },
-    );
-
-    $p.find("#ms-body").on(
-      "click.ms",
-      ".ms-reorder-arrows button[data-sdir]",
-      function (e) {
-        e.stopPropagation();
-        var ci = parseInt($(this).data("child-idx"));
-        var sn = $(this).data("parent-series");
-        var sectionKey = $(this).data("parent-section");
-        var dir = $(this).data("sdir");
-        var sectionList = getListForSection(sectionKey);
-        var seriesItems = sectionList.filter(function (p) {
-          return p.series && p.series.trim() === sn;
-        });
-        var swapCi = dir === "up" ? ci - 1 : ci + 1;
-        if (swapCi < 0 || swapCi >= seriesItems.length) return;
-        var idxA = data.prompts.indexOf(seriesItems[ci]);
-        var idxB = data.prompts.indexOf(seriesItems[swapCi]);
-        if (idxA >= 0 && idxB >= 0) {
-          var tmp = data.prompts[idxA];
-          data.prompts[idxA] = data.prompts[idxB];
-          data.prompts[idxB] = tmp;
-        }
-        var gpA = groupPrompts.indexOf(seriesItems[ci]);
-        var gpB = groupPrompts.indexOf(seriesItems[swapCi]);
-        if (gpA >= 0 && gpB >= 0) {
-          var tmp2 = groupPrompts[gpA];
-          groupPrompts[gpA] = groupPrompts[gpB];
-          groupPrompts[gpB] = tmp2;
-        }
-        saveData();
-        refreshPrompts();
-      },
-    );
-    $p.find("#ms-body").on(
-      "pointerdown.ms",
-      ".ms-reorder-item[data-rid]",
-      function (e) {
-        if (!multiMode || !rangeMode) return;
-        if ($(e.target).closest("[data-ro-series-toggle]").length) return;
-        var $el = $(this);
-        var rid = $el.attr("data-rid");
-        var scope = $el.attr("data-scope");
-        if (!rid || !scope) return;
-        var sx = e.clientX || 0,
-          sy = e.clientY || 0;
-        var lpTimer = setTimeout(function () {
-          lpTimer = null;
-          $el.data("ms-rop-lp-fired", true);
-          if (navigator.vibrate) navigator.vibrate(30);
-          var farEndRid = null;
-          if (
-            multiScope === scope &&
-            rangeAnchor !== null &&
-            multiSelected.size > 0
-          ) {
-            var orderedRids = getScopeOrderedRids(scope);
-            var newAnchorIdx = orderedRids.indexOf(rid);
-            var oldAnchorIdx = orderedRids.indexOf(rangeAnchor);
-            if (newAnchorIdx >= 0 && oldAnchorIdx >= 0) {
-              var selIdxArr = [];
-              orderedRids.forEach(function (r, i) {
-                if (multiSelected.has(r)) selIdxArr.push(i);
-              });
-              if (selIdxArr.length > 0) {
-                var selMin = Math.min.apply(null, selIdxArr);
-                var selMax = Math.max.apply(null, selIdxArr);
-                var farIdx = -1;
-                if (selMin < oldAnchorIdx) farIdx = selMin;
-                else if (selMax > oldAnchorIdx) farIdx = selMax;
-                if (farIdx >= 0) farEndRid = orderedRids[farIdx];
-              }
-            }
-          }
-          multiScope = scope;
-          rangeAnchor = rid;
-          multiSelected.clear();
-          if (farEndRid !== null) {
-            var orderedRids2 = getScopeOrderedRids(scope);
-            var ai = orderedRids2.indexOf(rid);
-            var fi = orderedRids2.indexOf(farEndRid);
-            if (ai >= 0 && fi >= 0) {
-              var lo = Math.min(ai, fi);
-              var hi = Math.max(ai, fi);
-              for (var ii = lo; ii <= hi; ii++)
-                multiSelected.add(orderedRids2[ii]);
-            } else {
-              multiSelected.add(rid);
-            }
-          } else {
-            multiSelected.add(rid);
-          }
-          refreshPrompts();
-          toast("info", "已设为新锚点");
-        }, 600);
-        var onMove = function (ev) {
-          if (!lpTimer) return;
-          var dx = (ev.clientX || 0) - sx,
-            dy = (ev.clientY || 0) - sy;
-          if (dx * dx + dy * dy > 100) {
-            clearTimeout(lpTimer);
-            lpTimer = null;
-          }
-        };
-        var onUp = function () {
-          if (lpTimer) {
-            clearTimeout(lpTimer);
-            lpTimer = null;
-          }
-          $p.off(
-            "pointermove.ms-roplp pointerup.ms-roplp pointercancel.ms-roplp",
-          );
-        };
-        $p.off("pointermove.ms-roplp pointerup.ms-roplp pointercancel.ms-roplp")
-          .on("pointermove.ms-roplp", onMove)
-          .on("pointerup.ms-roplp pointercancel.ms-roplp", onUp);
-      },
-    );
-
-    $p.find("#ms-body").on(
-      "click.ms",
-      ".ms-reorder-item[data-rid]",
-      function (e) {
-        if (!multiMode) return;
-        if ($(this).data("ms-rop-lp-fired")) {
-          $(this).removeData("ms-rop-lp-fired");
-          return;
-        }
-        if ($(e.target).closest("[data-ro-series-toggle]").length) return;
-        var rid = $(this).attr("data-rid");
-        var scope = $(this).attr("data-scope");
-        if (!rid || !scope) return;
-
-        if (multiScope && scope !== multiScope) {
-          toast(
-            "info",
-            "当前批量范围是「" +
-              getScopeLabel(multiScope) +
-              "」，要选别的范围请先取消已选项",
-          );
-          return;
-        }
-
-        if (rangeMode) {
-          if (!multiScope) multiScope = scope;
-          var orderedRids = getScopeOrderedRids(scope);
-          if (rangeAnchor === null || orderedRids.indexOf(rangeAnchor) < 0) {
-            rangeAnchor = rid;
-            multiSelected.clear();
-            multiSelected.add(rid);
-          } else if (rangeAnchor === rid) {
-            rangeAnchor = null;
-            multiSelected.clear();
-            multiScope = null;
-          } else {
-            var ai = orderedRids.indexOf(rangeAnchor);
-            var yi = orderedRids.indexOf(rid);
-            if (ai < 0 || yi < 0) return;
-            var lo = Math.min(ai, yi),
-              hi = Math.max(ai, yi);
-            multiSelected.clear();
-            for (var i = lo; i <= hi; i++) multiSelected.add(orderedRids[i]);
-          }
-        } else {
-          if (multiSelected.has(rid)) {
-            multiSelected.delete(rid);
-            if (multiSelected.size === 0) multiScope = null;
-          } else {
-            if (!multiScope) multiScope = scope;
-            multiSelected.add(rid);
-          }
-        }
-        refreshPrompts();
-      },
-    );
-
-    $p.find("#ms-footer").on("click.ms", "[data-pmbatch]", function () {
-      var action = $(this).data("pmbatch");
-
-      if (action === "selectall") {
-        if (!multiScope) {
-          if (!isIP) {
-            multiScope = "_all";
-          } else {
-            var _ssParts = partitionByCharacter();
-            if (_ssParts.general.length > 0) {
-              multiScope = "_general";
-            } else if (_ssParts.orderedChars.length > 0) {
-              multiScope = "char_" + _ssParts.orderedChars[0];
-            } else {
-              return;
-            }
-          }
-        }
-        var orderedRids = getScopeOrderedRids(multiScope);
-        var allSel =
-          orderedRids.length > 0 &&
-          orderedRids.every(function (rid) {
-            return multiSelected.has(rid);
-          });
-        if (allSel) {
-          multiSelected.clear();
-          multiScope = null;
-          rangeAnchor = null;
-        } else {
-          orderedRids.forEach(function (rid) {
-            multiSelected.add(rid);
-          });
-        }
-        refreshPrompts();
-        return;
-      }
-
-      if (multiSelected.size === 0 || !multiScope) return;
-
-      function reorderArr(items, isSelectedFn, act, insertPos) {
-        if (act === "top") {
-          var sel = items.filter(isSelectedFn);
-          var others = items.filter(function (i) {
-            return !isSelectedFn(i);
-          });
-          return sel.concat(others);
-        }
-        if (act === "bottom") {
-          var sel = items.filter(isSelectedFn);
-          var others = items.filter(function (i) {
-            return !isSelectedFn(i);
-          });
-          return others.concat(sel);
-        }
-        if (act === "insert") {
-          var sel = items.filter(isSelectedFn);
-          var others = items.filter(function (i) {
-            return !isSelectedFn(i);
-          });
-          return others
-            .slice(0, insertPos)
-            .concat(sel)
-            .concat(others.slice(insertPos));
-        }
-        if (act === "up") {
-          var result = items.slice();
-          for (var i = 1; i < result.length; i++) {
-            if (isSelectedFn(result[i]) && !isSelectedFn(result[i - 1])) {
-              var t = result[i - 1];
-              result[i - 1] = result[i];
-              result[i] = t;
-            }
-          }
-          return result;
-        }
-        if (act === "down") {
-          var result = items.slice();
-          for (var i = result.length - 2; i >= 0; i--) {
-            if (isSelectedFn(result[i]) && !isSelectedFn(result[i + 1])) {
-              var t = result[i];
-              result[i] = result[i + 1];
-              result[i + 1] = t;
-            }
-          }
-          return result;
-        }
-        return items;
-      }
-
-      function applyReorder(act, insertPos) {
-        if (multiScope.indexOf("::series::") >= 0) {
-          var parts2 = multiScope.split("::series::");
-          var sectionKey2 = parts2[0];
-          var seriesName2 = parts2[1];
-          var sectionList3 = getListForSection(sectionKey2);
-          var seriesItems2 = sectionList3.filter(function (p) {
-            return p.series && p.series.trim() === seriesName2;
-          });
-          var reordered = reorderArr(
-            seriesItems2,
-            function (p) {
-              return multiSelected.has("c_" + p.id);
-            },
-            act,
-            insertPos,
-          );
-          var ridx = 0;
-          var newSectionList3 = sectionList3.map(function (p) {
-            if (p.series && p.series.trim() === seriesName2) {
-              return reordered[ridx++];
-            }
-            return p;
-          });
-          applySectionList(sectionKey2, newSectionList3);
-        } else {
-          var sectionKey3 = multiScope;
-          var sectionList4 = getListForSection(sectionKey3);
-          var blocks4 = buildBlocksFromList(sectionList4);
-          var reorderedBlocks = reorderArr(
-            blocks4,
-            function (block) {
-              if (block.type === "single")
-                return multiSelected.has("p_" + block.item.id);
-              if (block.type === "series")
-                return multiSelected.has("s_" + sectionKey3 + "_" + block.name);
-              return false;
-            },
-            act,
-            insertPos,
-          );
-          var newSectionList4 = [];
-          reorderedBlocks.forEach(function (b) {
-            if (b.type === "single") newSectionList4.push(b.item);
-            else
-              b.items.forEach(function (it) {
-                newSectionList4.push(it);
-              });
-          });
-          applySectionList(sectionKey3, newSectionList4);
-        }
-        syncGroupPrompts();
-        saveData();
-        refreshPrompts();
-      }
-
-      if (action === "insert") {
-        var scopeItems;
-        var selSet = multiSelected;
-        var ctxSectionKey =
-          multiScope.indexOf("::series::") >= 0
-            ? multiScope.split("::series::")[0]
-            : multiScope;
-        var ctxCharKey =
-          ctxSectionKey && ctxSectionKey.indexOf("char_") === 0
-            ? ctxSectionKey.substring(5)
-            : null;
-        function _resolveCharKey(p) {
-          if (ctxCharKey) return ctxCharKey;
-          if (p && p.character && isLocalCharKey(p.character))
-            return p.character;
-          return null;
-        }
-        if (multiScope.indexOf("::series::") >= 0) {
-          var partsI = multiScope.split("::series::");
-          var sectionListI = getListForSection(partsI[0]);
-          scopeItems = sectionListI
-            .filter(function (p) {
-              return p.series && p.series.trim() === partsI[1];
-            })
-            .map(function (p) {
-              return {
-                type: "single",
-                name: p.title || "未命名",
-                desc: truncate(
-                  (p.content || "").replace(/\s+/g, " ").trim(),
-                  50,
-                ),
-                tags: p.tags || [],
-                charKey: _resolveCharKey(p),
-                isSelected: selSet.has("c_" + p.id),
-              };
-            });
-        } else {
-          var sectionListJ = getListForSection(multiScope);
-          var blocksJ = buildBlocksFromList(sectionListJ);
-          scopeItems = blocksJ.map(function (block) {
-            if (block.type === "single") {
-              return {
-                type: "single",
-                name: block.item.title || "未命名",
-                desc: truncate(
-                  (block.item.content || "").replace(/\s+/g, " ").trim(),
-                  50,
-                ),
-                tags: block.item.tags || [],
-                charKey: _resolveCharKey(block.item),
-                isSelected: selSet.has("p_" + block.item.id),
-              };
-            }
-            var children = block.items.map(function (it) {
-              return {
-                name: it.title || "未命名",
-                desc: truncate(
-                  (it.content || "").replace(/\s+/g, " ").trim(),
-                  40,
-                ),
-                tags: it.tags || [],
-                charKey: _resolveCharKey(it),
-              };
-            });
+      if (multiScope.indexOf("::series::") >= 0) {
+        var partsI = multiScope.split("::series::");
+        var sectionListI = getListForSection(partsI[0]);
+        scopeItems = sectionListI
+          .filter(function (p) {
+            return p.series && p.series.trim() === partsI[1];
+          })
+          .map(function (p) {
             return {
-              type: "series",
-              name: block.name + " (" + block.items.length + " 条)",
-              iconClass: "fa-layer-group",
-              charKey: ctxCharKey,
-              children: children,
-              isSelected: selSet.has("s_" + multiScope + "_" + block.name),
+              type: "single",
+              name: p.title || "未命名",
+              desc: truncate((p.content || "").replace(/\s+/g, " ").trim(), 50),
+              tags: p.tags || [],
+              charKey: _resolveCharKey(p),
+              isSelected: selSet.has("c_" + p.id),
             };
           });
-        }
-        showInsertDialog({
-          title: "插入到指定位置",
-          scopeItems: scopeItems,
-          onConfirm: function (insertPos) {
-            applyReorder("insert", insertPos);
-          },
+      } else {
+        var sectionListJ = getListForSection(multiScope);
+        var blocksJ = buildBlocksFromList(sectionListJ);
+        scopeItems = blocksJ.map(function (block) {
+          if (block.type === "single") {
+            return {
+              type: "single",
+              name: block.item.title || "未命名",
+              desc: truncate(
+                (block.item.content || "").replace(/\s+/g, " ").trim(),
+                50,
+              ),
+              tags: block.item.tags || [],
+              charKey: _resolveCharKey(block.item),
+              isSelected: selSet.has("p_" + block.item.id),
+            };
+          }
+          var children = block.items.map(function (it) {
+            return {
+              name: it.title || "未命名",
+              desc: truncate(
+                (it.content || "").replace(/\s+/g, " ").trim(),
+                40,
+              ),
+              tags: it.tags || [],
+              charKey: _resolveCharKey(it),
+            };
+          });
+          return {
+            type: "series",
+            name: block.name + " (" + block.items.length + " 条)",
+            iconClass: "fa-layer-group",
+            charKey: ctxCharKey,
+            children: children,
+            isSelected: selSet.has("s_" + multiScope + "_" + block.name),
+          };
         });
-        return;
       }
-
-      applyReorder(action);
-    });
-
-    $p.find("#ms-body").on(
-      "pointerdown.ms",
-      "[data-preview-pid]",
-      function (e) {
-        e.stopPropagation();
-      },
-    );
-    $p.find("#ms-body").on("click.ms", "[data-preview-pid]", function (e) {
-      e.stopPropagation();
-      var pid = $(this).attr("data-preview-pid");
-      if (!pid) return;
-      v._reorderMultiMode = multiMode;
-      v._reorderMultiSelected = Array.from(multiSelected);
-      v._reorderMultiScope = multiScope;
-      v._reorderRangeMode = rangeMode;
-      v._reorderRangeAnchor = rangeAnchor;
-      v._reorderExpandedSeries = Array.from(expandedSeries);
-      v._reorderCollapsedSections = Array.from(collapsedSections);
-      var orderedIds = groupPrompts.map(function (p) {
-        return p.id;
+      showInsertDialog({
+        title: "插入到指定位置",
+        scopeItems: scopeItems,
+        onConfirm: function (insertPos) {
+          applyReorder("insert", insertPos);
+        },
       });
-      navigateTo({ name: "preview", promptId: pid, _siblingIds: orderedIds });
-    });
+      return;
+    }
 
-    refreshPrompts();
-  }
+    applyReorder(action);
+  });
+
+  $p.find("#ms-body").on("pointerdown.ms", "[data-preview-pid]", function (e) {
+    e.stopPropagation();
+  });
+  $p.find("#ms-body").on("click.ms", "[data-preview-pid]", function (e) {
+    e.stopPropagation();
+    var pid = $(this).attr("data-preview-pid");
+    if (!pid) return;
+    v._reorderMultiMode = multiMode;
+    v._reorderMultiSelected = Array.from(multiSelected);
+    v._reorderMultiScope = multiScope;
+    v._reorderRangeMode = rangeMode;
+    v._reorderRangeAnchor = rangeAnchor;
+    v._reorderExpandedSeries = Array.from(expandedSeries);
+    v._reorderCollapsedSections = Array.from(collapsedSections);
+    var orderedIds = groupPrompts.map(function (p) {
+      return p.id;
+    });
+    navigateTo({ name: "preview", promptId: pid, _siblingIds: orderedIds });
+  });
+
+  refreshPrompts();
+}
 
   function computeSubscriptionHash(imported) {
     var stableContent = JSON.stringify({
@@ -19880,273 +20985,269 @@ function renderSubscriptionDetail(v) {
   });
 }
 
-  function toggleCollapse() {
-    const $p = $("#" + PANEL_ID);
-    $p.toggleClass("ms-collapsed");
-    data.settings.collapsed = $p.hasClass("ms-collapsed");
-    $p.find("#ms-btn-collapse i").attr(
-      "class",
-      data.settings.collapsed
-        ? "fa-solid fa-window-maximize"
-        : "fa-solid fa-window-minimize",
-    );
-    saveData();
-  }
+function toggleCollapse() {
+  const $p = $("#" + PANEL_ID);
+  $p.toggleClass("ms-collapsed");
+  data.settings.collapsed = $p.hasClass("ms-collapsed");
+  $p.find("#ms-btn-collapse i").attr(
+    "class",
+    data.settings.collapsed
+      ? "fa-solid fa-window-maximize"
+      : "fa-solid fa-window-minimize",
+  );
+  saveData();
+}
 
-  function resetPanelPosition() {
-    const $p = $("#" + PANEL_ID);
-    if (!$p.length) return;
+function resetPanelPosition() {
+  const $p = $("#" + PANEL_ID);
+  if (!$p.length) return;
+  $p[0].style.removeProperty("left");
+  $p[0].style.removeProperty("top");
+  $p[0].style.removeProperty("transform");
+  data.settings.panelPos = null;
+  saveData();
+  toast("info", "面板已回到默认位置");
+}
+
+function showPanel() {
+  let $p = $("#" + PANEL_ID);
+  if ($p.length === 0) {
+    if (!$("#" + STYLE_ID).length)
+      $("head").append(`<style id="${STYLE_ID}">${getCSS()}</style>`);
+    $("body").append(getPanelHTML());
+    $p = $("#" + PANEL_ID);
+    if (data.settings.collapsed) {
+      $p.addClass("ms-collapsed");
+      $p.find("#ms-btn-collapse i").attr(
+        "class",
+        "fa-solid fa-window-maximize",
+      );
+    }
+    if (data.settings.panelPos) {
+      $p[0].style.setProperty("top", data.settings.panelPos.top, "important");
+      $p[0].style.setProperty("left", data.settings.panelPos.left, "important");
+      $p[0].style.setProperty("transform", "none", "important");
+    } else {
+      $p[0].style.removeProperty("left");
+      $p[0].style.removeProperty("top");
+      $p[0].style.removeProperty("transform");
+    }
+    makeDraggable();
+    setupKeyboardAdapt();
+    $p.off("click.ms-inject-clear-btn").on(
+      "click.ms-inject-clear-btn",
+      ".ms-inject-clear-btn",
+      function (e) {
+        e.stopPropagation();
+        var sids = data.settings.stageSelectedIds || [];
+        if (sids.length === 0) return;
+        data.settings.stageSelectedIds = [];
+        saveData();
+        updateInjectIndicator();
+        if (panelVisible) {
+          try {
+            if (currentView().name === "preview") renderView();
+            else refreshKeepingState();
+          } catch (e) {}
+        }
+      },
+    );
+    $p.off("click.ms-fs-edit").on(
+      "click.ms-fs-edit",
+      ".ms-fs-edit-btn",
+      function (e) {
+        e.stopPropagation();
+        var target = $(this).data("fs-target");
+        var title = $(this).data("fs-title") || "全屏编辑";
+        if (!target) return;
+        showFullscreenEditor({ targetSelector: target, title: title });
+      },
+    );
+    $p.off("click.ms-inject-ind").on(
+      "click.ms-inject-ind",
+      "#ms-inject-indicator",
+      function () {
+        var sids = (data.settings.stageSelectedIds || []).filter(
+          function (sid) {
+            return getPrompt(sid);
+          },
+        );
+        if (sids.length === 0) return;
+        if (_injectIndicatorIdx >= sids.length) _injectIndicatorIdx = 0;
+        var sid = sids[_injectIndicatorIdx];
+        _injectIndicatorIdx = (_injectIndicatorIdx + 1) % sids.length;
+        if ($p.hasClass("ms-collapsed")) {
+          $p.removeClass("ms-collapsed");
+          data.settings.collapsed = false;
+          $p.find("#ms-btn-collapse i").attr(
+            "class",
+            "fa-solid fa-window-minimize",
+          );
+          saveData();
+        }
+        while (
+          viewStack.length > 1 &&
+          viewStack[viewStack.length - 1].name === "preview"
+        ) {
+          viewStack.pop();
+        }
+        navigateTo({ name: "preview", promptId: sid });
+      },
+    );
+    [
+      "click",
+      "mousedown",
+      "mouseup",
+      "pointerdown",
+      "pointerup",
+      "touchstart",
+      "touchend",
+    ].forEach(function (evt) {
+      $p[0].addEventListener(evt, function (e) {
+        e.stopPropagation();
+      });
+    });
+  }
+  if (escKeyHandler) {
+    try {
+      document.removeEventListener("keydown", escKeyHandler, true);
+    } catch (e) {}
+    escKeyHandler = null;
+  }
+  escKeyHandler = function (e) {
+    if (e.key === "Escape") {
+      var $pp = $("#" + PANEL_ID);
+      if (!$pp.hasClass("ms-visible")) return;
+      if ($pp.find(".ms-modal-overlay").length) return;
+      e.stopImmediatePropagation();
+      e.stopPropagation();
+      e.preventDefault();
+      var $findBar = $pp.find("#ms-find-bar");
+      if ($findBar.is(":visible")) {
+        $findBar.hide();
+        $pp.find("[data-md='find']").removeClass("active");
+        var ta = $pp.find("#ms-edit-content")[0];
+        if (ta) ta.focus();
+        return;
+      }
+      var $qpPopup = $pp.find("#ms-qp-popup");
+      if ($qpPopup.length) {
+        $qpPopup.remove();
+        $pp.find("[data-md='quick-phrases']").removeClass("active");
+        var ta2 = $pp.find("#ms-edit-content")[0];
+        if (ta2) ta2.focus();
+        return;
+      }
+      if ($pp.find("#ms-dropdown").is(":visible")) {
+        closeActiveDropdown();
+        return;
+      }
+      if (viewStack.length > 1) {
+        navigateBack();
+        return;
+      }
+      hidePanel();
+    }
+  };
+  document.addEventListener("keydown", escKeyHandler, true);
+  updateAccentColor();
+  syncThemeBackground();
+  syncThemeColors();
+
+  if (!$p.data("ms-drop-bound")) {
+    $p.data("ms-drop-bound", true);
+    let dragCounter = 0;
+    $p.on("dragenter", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter++;
+      $p.addClass("ms-drag-hover");
+    });
+    $p.on("dragleave", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter--;
+      var rect = $p[0].getBoundingClientRect();
+      var x = e.originalEvent.clientX,
+        y = e.originalEvent.clientY;
+      if (
+        dragCounter <= 0 ||
+        x < rect.left ||
+        x >= rect.right ||
+        y < rect.top ||
+        y >= rect.bottom
+      ) {
+        dragCounter = 0;
+        $p.removeClass("ms-drag-hover");
+      }
+    });
+    $p.on("dragover", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    });
+    $p.on("drop", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounter = 0;
+      $p.removeClass("ms-drag-hover");
+      const files =
+        e.originalEvent.dataTransfer && e.originalEvent.dataTransfer.files;
+      if (files && files.length > 0) {
+        const file = files[0];
+        if (file.name.endsWith(".json")) {
+          doImport(file);
+        } else {
+          toast("warning", "请拖入 .json 文件");
+        }
+      }
+    });
+  }
+  $p.addClass("ms-visible");
+  panelVisible = true;
+  data.settings.panelWasVisible = true;
+  saveData();
+  const panelRect = $p[0].getBoundingClientRect();
+  const pTop = panelRect.top,
+    pLeft = panelRect.left;
+  const checkWin =
+    ($p[0].ownerDocument && $p[0].ownerDocument.defaultView) || window;
+  if (
+    pTop < -10 ||
+    pTop > checkWin.innerHeight - 50 ||
+    pLeft < -200 ||
+    pLeft > checkWin.innerWidth - 60 ||
+    (pTop < 5 && pLeft < 5)
+  ) {
     $p[0].style.removeProperty("left");
     $p[0].style.removeProperty("top");
     $p[0].style.removeProperty("transform");
     data.settings.panelPos = null;
     saveData();
-    toast("info", "面板已回到默认位置");
   }
-
-  function showPanel() {
-    let $p = $("#" + PANEL_ID);
-    if ($p.length === 0) {
-      if (!$("#" + STYLE_ID).length)
-        $("head").append(`<style id="${STYLE_ID}">${getCSS()}</style>`);
-      $("body").append(getPanelHTML());
-      $p = $("#" + PANEL_ID);
-      if (data.settings.collapsed) {
-        $p.addClass("ms-collapsed");
-        $p.find("#ms-btn-collapse i").attr(
-          "class",
-          "fa-solid fa-window-maximize",
-        );
-      }
-      if (data.settings.panelPos) {
-        $p[0].style.setProperty("top", data.settings.panelPos.top, "important");
-        $p[0].style.setProperty(
-          "left",
-          data.settings.panelPos.left,
-          "important",
-        );
-        $p[0].style.setProperty("transform", "none", "important");
-      } else {
-        $p[0].style.removeProperty("left");
-        $p[0].style.removeProperty("top");
-        $p[0].style.removeProperty("transform");
-      }
-      makeDraggable();
-      setupKeyboardAdapt();
-      $p.off("click.ms-inject-clear-btn").on(
-        "click.ms-inject-clear-btn",
-        ".ms-inject-clear-btn",
-        function (e) {
-          e.stopPropagation();
-          var sids = data.settings.stageSelectedIds || [];
-          if (sids.length === 0) return;
-          data.settings.stageSelectedIds = [];
-          saveData();
-          updateInjectIndicator();
-          if (panelVisible) {
-            try {
-              if (currentView().name === "preview") renderView();
-              else refreshKeepingState();
-            } catch (e) {}
-          }
-        },
-      );
-      $p.off("click.ms-fs-edit").on(
-        "click.ms-fs-edit",
-        ".ms-fs-edit-btn",
-        function (e) {
-          e.stopPropagation();
-          var target = $(this).data("fs-target");
-          var title = $(this).data("fs-title") || "全屏编辑";
-          if (!target) return;
-          showFullscreenEditor({ targetSelector: target, title: title });
-        },
-      );
-      $p.off("click.ms-inject-ind").on(
-        "click.ms-inject-ind",
-        "#ms-inject-indicator",
-        function () {
-          var sids = (data.settings.stageSelectedIds || []).filter(
-            function (sid) {
-              return getPrompt(sid);
-            },
-          );
-          if (sids.length === 0) return;
-          if (_injectIndicatorIdx >= sids.length) _injectIndicatorIdx = 0;
-          var sid = sids[_injectIndicatorIdx];
-          _injectIndicatorIdx = (_injectIndicatorIdx + 1) % sids.length;
-          if ($p.hasClass("ms-collapsed")) {
-            $p.removeClass("ms-collapsed");
-            data.settings.collapsed = false;
-            $p.find("#ms-btn-collapse i").attr(
-              "class",
-              "fa-solid fa-window-minimize",
-            );
-            saveData();
-          }
-          while (
-            viewStack.length > 1 &&
-            viewStack[viewStack.length - 1].name === "preview"
-          ) {
-            viewStack.pop();
-          }
-          navigateTo({ name: "preview", promptId: sid });
-        },
-      );
-      [
-        "click",
-        "mousedown",
-        "mouseup",
-        "pointerdown",
-        "pointerup",
-        "touchstart",
-        "touchend",
-      ].forEach(function (evt) {
-        $p[0].addEventListener(evt, function (e) {
-          e.stopPropagation();
-        });
-      });
-    }
-    if (escKeyHandler) {
-      try {
-        document.removeEventListener("keydown", escKeyHandler, true);
-      } catch (e) {}
-      escKeyHandler = null;
-    }
-    escKeyHandler = function (e) {
-      if (e.key === "Escape") {
-        var $pp = $("#" + PANEL_ID);
-        if (!$pp.hasClass("ms-visible")) return;
-        if ($pp.find(".ms-modal-overlay").length) return;
-        e.stopImmediatePropagation();
-        e.stopPropagation();
-        e.preventDefault();
-        var $findBar = $pp.find("#ms-find-bar");
-        if ($findBar.is(":visible")) {
-          $findBar.hide();
-          $pp.find("[data-md='find']").removeClass("active");
-          var ta = $pp.find("#ms-edit-content")[0];
-          if (ta) ta.focus();
-          return;
-        }
-        var $qpPopup = $pp.find("#ms-qp-popup");
-        if ($qpPopup.length) {
-          $qpPopup.remove();
-          $pp.find("[data-md='quick-phrases']").removeClass("active");
-          var ta2 = $pp.find("#ms-edit-content")[0];
-          if (ta2) ta2.focus();
-          return;
-        }
-        if ($pp.find("#ms-dropdown").is(":visible")) {
-          closeActiveDropdown();
-          return;
-        }
-        if (viewStack.length > 1) {
-          navigateBack();
-          return;
-        }
-        hidePanel();
-      }
-    };
-    document.addEventListener("keydown", escKeyHandler, true);
-    updateAccentColor();
-    syncThemeBackground();
-    syncThemeColors();
-
-    if (!$p.data("ms-drop-bound")) {
-      $p.data("ms-drop-bound", true);
-      let dragCounter = 0;
-      $p.on("dragenter", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCounter++;
-        $p.addClass("ms-drag-hover");
-      });
-      $p.on("dragleave", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCounter--;
-        var rect = $p[0].getBoundingClientRect();
-        var x = e.originalEvent.clientX,
-          y = e.originalEvent.clientY;
-        if (
-          dragCounter <= 0 ||
-          x < rect.left ||
-          x >= rect.right ||
-          y < rect.top ||
-          y >= rect.bottom
-        ) {
-          dragCounter = 0;
-          $p.removeClass("ms-drag-hover");
-        }
-      });
-      $p.on("dragover", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-      });
-      $p.on("drop", function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        dragCounter = 0;
-        $p.removeClass("ms-drag-hover");
-        const files =
-          e.originalEvent.dataTransfer && e.originalEvent.dataTransfer.files;
-        if (files && files.length > 0) {
-          const file = files[0];
-          if (file.name.endsWith(".json")) {
-            doImport(file);
-          } else {
-            toast("warning", "请拖入 .json 文件");
-          }
-        }
-      });
-    }
-    $p.addClass("ms-visible");
-    panelVisible = true;
-    data.settings.panelWasVisible = true;
-    saveData();
-    const panelRect = $p[0].getBoundingClientRect();
-    const pTop = panelRect.top,
-      pLeft = panelRect.left;
-    const checkWin =
-      ($p[0].ownerDocument && $p[0].ownerDocument.defaultView) || window;
-    if (
-      pTop < -10 ||
-      pTop > checkWin.innerHeight - 50 ||
-      pLeft < -200 ||
-      pLeft > checkWin.innerWidth - 60 ||
-      (pTop < 5 && pLeft < 5)
-    ) {
-      $p[0].style.removeProperty("left");
-      $p[0].style.removeProperty("top");
-      $p[0].style.removeProperty("transform");
-      data.settings.panelPos = null;
-      saveData();
-    }
-    viewStack = [{ name: "list" }];
-    searchQuery = "";
-    filterState = {
-      includeTags: [],
-      excludeTags: [],
-      tagSelectMode: "include",
-      groupId: null,
-      onlyCurrentChar: false,
-    };
-    var curGroupCount = data.groups.length;
-    if (
-      !showPanel._preloaded ||
-      Math.abs(curGroupCount - (showPanel._lastPreloadCount || 0)) >
-        Math.max(5, curGroupCount * 0.1)
-    ) {
-      showPanel._preloaded = true;
-      showPanel._lastPreloadCount = curGroupCount;
-      setTimeout(preloadPanelImages, 500);
-    }
-    renderView();
-    autoCheckSubscriptions();
-    showBirthdayBannerIfAny();
-    setTimeout(checkAndShowChangelog, 800);
+  viewStack = [{ name: "list" }];
+  searchQuery = "";
+  filterState = {
+    includeTags: [],
+    excludeTags: [],
+    tagSelectMode: "include",
+    groupId: null,
+    onlyCurrentChar: false,
+  };
+  var curGroupCount = data.groups.length;
+  if (
+    !showPanel._preloaded ||
+    Math.abs(curGroupCount - (showPanel._lastPreloadCount || 0)) >
+      Math.max(5, curGroupCount * 0.1)
+  ) {
+    showPanel._preloaded = true;
+    showPanel._lastPreloadCount = curGroupCount;
+    setTimeout(preloadPanelImages, 500);
   }
+  renderView();
+  autoCheckSubscriptions();
+  showBirthdayBannerIfAny();
+  setTimeout(checkAndShowChangelog, 800);
+}
 
   function enterBirthdayPanelMode() {
     var $p = $("#" + PANEL_ID);

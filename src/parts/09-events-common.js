@@ -791,6 +791,13 @@ function bindFilterEvents($p) {
       bindFilterEvents($p);
       renderBodyOnly();
     })
+    .on("click.msf", "#ms-tag-mapping-toggle", function () {
+      data.settings.tagFilterExactMatch = !data.settings.tagFilterExactMatch;
+      saveData();
+      $p.find("#ms-filter-panel").html(buildFilterPanel());
+      bindFilterEvents($p);
+      renderBodyOnly();
+    })
     .on("click.msf", "#ms-tag-exclude-toggle", function () {
       filterState.tagSelectMode =
         filterState.tagSelectMode === "exclude" ? "include" : "exclude";

@@ -34,13 +34,24 @@ function renderGroup(v) {
     var $noteInline = $p.find("#ms-title-note-inline");
     var $notePanel = $p.find("#ms-title-note-panel");
     var rawNote = String(g.note || "").trim();
-    var noteText = rawNote.replace(
+    var _noteLinkStore = [];
+    var _protectedNote = rawNote.replace(
+      /(!?\[[^\]]*\]\([^)]+\))/g,
+      function (m) {
+        _noteLinkStore.push(m);
+        return "\u0000MSLINK" + (_noteLinkStore.length - 1) + "\u0000";
+      },
+    );
+    var noteText = _protectedNote.replace(
       /(^|[\s(（])((?:https?:\/\/|www\.)[^\s<>"'）)]+)/g,
       function (m, prefix, url) {
         var href = url.indexOf("www.") === 0 ? "https://" + url : url;
         return prefix + "[" + url + "](" + href + ")";
       },
     );
+    noteText = noteText.replace(/\u0000MSLINK(\d+)\u0000/g, function (m, i) {
+      return _noteLinkStore[parseInt(i)];
+    });
     $notePanel.html(
       '<div class="ms-preview-content">' + renderMd(noteText) + "</div>",
     );

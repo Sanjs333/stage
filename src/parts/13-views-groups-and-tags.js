@@ -2,7 +2,7 @@
   const $p = $("#" + PANEL_ID);
   $p.find("#ms-title").text("分组管理");
   $p.find("#ms-toolbar").html(
-    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">分组管理</span><div class="ms-toolbar-actions"><button class="ms-tbtn ${groupSelectMode ? "active" : ""}" id="ms-group-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-group-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-group-add"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
+    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><div class="ms-toolbar-actions"><button class="ms-tbtn ${groupSelectMode ? "active" : ""}" id="ms-group-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-group-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-group-add"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
   );
   let expandedColorId = null;
   function buildGroupsBody() {
@@ -537,9 +537,9 @@ function renderGroupEdit(v) {
       '"></div>' +
       iconSectionH +
       colorH +
-      '<div class="ms-field"><label>备注</label><input type="text" id="ms-gedit-note" placeholder="可选的简短说明" value="' +
+      '<div class="ms-field"><label>备注 <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-gedit-note" data-fs-title="编辑分组备注" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-gedit-note" placeholder="可选的简短说明，支持多行和链接" style="min-height:60px;resize:vertical;">' +
       esc(g ? g.note : "") +
-      '"></div>' +
+      "</textarea></div>" +
       '<div class="ms-field"><label>默认作者</label><input type="text" id="ms-gedit-author" placeholder="该分组下新建时自动填入" value="' +
       esc(g ? g.defaultAuthor || "" : "") +
       '"></div>' +
@@ -1244,11 +1244,533 @@ function renderGroupEdit(v) {
   });
 }
 
+function renderTagMappings() {
+  const $p = setupPage("标签映射组", "标签映射组管理");
+  if (!Array.isArray(data.settings.tagMappings)) data.settings.tagMappings = [];
+  var _tmExplainText =
+    "不同作者的同义标签（如BE、虐向）可归入同一映射组。筛选时默认「映射」模式，勾选任一标签即联动筛选全组；切换「独立」模式则仅筛选所选标签。";
+  var $tmInfoBtn = $p.find("#ms-title-info");
+  var $tmNotePanel = $p.find("#ms-title-note-panel");
+  $tmNotePanel.html(
+    '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#999);line-height:1.7;padding:0;background:transparent;border:none;">' +
+      esc(_tmExplainText) +
+      "</div>",
+  );
+  $tmInfoBtn
+    .css("display", "flex")
+    .off("click.ms-note")
+    .on("click.ms-note", function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      $tmInfoBtn.toggleClass("open");
+      $tmNotePanel.toggleClass("open");
+    });
+
+  $p.find("#ms-toolbar").html(
+    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><div class="ms-toolbar-actions"><button class="ms-tbtn" id="ms-tm-add"><i class="fa-solid fa-plus"></i> 新建映射组</button></div>`,
+  );
+
+  function buildBody() {
+    var html = "";
+    if (data.settings.tagMappings.length === 0) {
+      html +=
+        '<div class="ms-empty"><i class="fa-solid fa-link"></i>还没有映射组<br><span style="font-size:11px;opacity:0.6;margin-top:6px;display:block;">点右上角 + 新建映射组</span></div>';
+      return html;
+    }
+    data.settings.tagMappings.forEach(function (m) {
+      var tagsH = "";
+      (m.tagIds || []).forEach(function (tid) {
+        var t = getTag(tid);
+        if (t) {
+          var isPrimary = m.primaryTagId === tid;
+          tagsH +=
+            '<span class="ms-tag-chip" style="background:' +
+            t.color +
+            ";margin:2px 3px 2px 0;font-size:10px;" +
+            (isPrimary ? "box-shadow:0 0 0 1.5px var(--ms-accent);" : "") +
+            '">' +
+            (isPrimary
+              ? '<i class="fa-solid fa-crown" style="font-size:8px;margin-right:3px;color:var(--ms-accent);"></i>'
+              : "") +
+            esc(t.name) +
+            "</span>";
+        }
+      });
+      if (!tagsH)
+        tagsH =
+          '<span style="font-size:11px;color:var(--SmartThemeQuoteColor,#666);font-style:italic;">还没加入任何标签</span>';
+      html +=
+        '<div style="padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.04);">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
+        '<i class="fa-solid fa-link" style="color:var(--ms-accent);font-size:12px;"></i>' +
+        '<span style="flex:1;font-size:13px;font-weight:500;color:var(--SmartThemeBodyColor,#ddd);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+        esc(m.name) +
+        "</span>" +
+        '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);flex-shrink:0;">' +
+        (m.tagIds || []).length +
+        " 个标签</span>" +
+        '<button class="ms-gitem-btn" data-tm-action="edit" data-mid="' +
+        m.id +
+        '" title="编辑成员"><i class="fa-solid fa-pen"></i></button>' +
+        '<button class="ms-gitem-btn" data-tm-action="rename" data-mid="' +
+        m.id +
+        '" title="改名"><i class="fa-solid fa-i-cursor"></i></button>' +
+        '<button class="ms-gitem-btn danger" data-tm-action="delete" data-mid="' +
+        m.id +
+        '" title="删除"><i class="fa-solid fa-trash"></i></button>' +
+        "</div>" +
+        '<div style="padding-left:20px;display:flex;flex-wrap:wrap;align-items:center;">' +
+        tagsH +
+        "</div>" +
+        "</div>";
+    });
+    return html;
+  }
+
+  function refresh() {
+    $p.find("#ms-body").html(buildBody());
+  }
+
+  refresh();
+  $p.find("#ms-footer")
+    .html("<span>" + data.settings.tagMappings.length + " 个映射组</span>")
+    .show();
+  bindAllEvents();
+
+  $p.find("#ms-toolbar").on("click.ms", "#ms-tm-add", function () {
+    msPrompt("", {
+      title: "新建映射组",
+      placeholder: "例如：性格-温柔系 / 场景-亲密互动",
+      validate: function (v) {
+        if (!v || !v.trim()) return "名称不能为空";
+        return null;
+      },
+    }).then(function (name) {
+      if (!name || !name.trim()) return;
+      var newMapping = { id: uid(), name: name.trim(), tagIds: [] };
+      data.settings.tagMappings.push(newMapping);
+      saveData();
+      refresh();
+      $p.find("#ms-footer span:first").text(
+        data.settings.tagMappings.length + " 个映射组",
+      );
+      setTimeout(function () {
+        showMappingMembersEditor(newMapping.id, refresh);
+      }, 100);
+    });
+  });
+
+  $p.find("#ms-body").on("click.ms", "[data-tm-action='edit']", function () {
+    showMappingMembersEditor($(this).data("mid"), refresh);
+  });
+
+  $p.find("#ms-body").on("click.ms", "[data-tm-action='rename']", function () {
+    var mid = $(this).data("mid");
+    var m = data.settings.tagMappings.find(function (x) {
+      return x.id === mid;
+    });
+    if (!m) return;
+    msPrompt("", {
+      title: "重命名映射组",
+      defaultValue: m.name,
+      validate: function (v) {
+        if (!v || !v.trim()) return "名称不能为空";
+        return null;
+      },
+    }).then(function (newName) {
+      if (!newName || !newName.trim()) return;
+      m.name = newName.trim();
+      saveData();
+      refresh();
+    });
+  });
+
+  $p.find("#ms-body").on("click.ms", "[data-tm-action='delete']", function () {
+    var mid = $(this).data("mid");
+    var m = data.settings.tagMappings.find(function (x) {
+      return x.id === mid;
+    });
+    if (!m) return;
+    msConfirm(
+      "确定删除映射组「" +
+        m.name +
+        "」吗？\n\n标签本身不会被删除，只是不再参与联动筛选。",
+      {
+        title: "删除映射组",
+        dangerous: true,
+        okText: "删除",
+      },
+    ).then(function (ok) {
+      if (!ok) return;
+      data.settings.tagMappings = data.settings.tagMappings.filter(
+        function (x) {
+          return x.id !== mid;
+        },
+      );
+      saveData();
+      refresh();
+      $p.find("#ms-footer span:first").text(
+        data.settings.tagMappings.length + " 个映射组",
+      );
+    });
+  });
+}
+
+function showMappingMembersEditor(mid, onDone) {
+  var m = (data.settings.tagMappings || []).find(function (x) {
+    return x.id === mid;
+  });
+  if (!m) return;
+  enterBirthdayPanelMode();
+  var workingIds = (m.tagIds || []).slice();
+  var workingPrimaryId =
+    m.primaryTagId && workingIds.indexOf(m.primaryTagId) >= 0
+      ? m.primaryTagId
+      : workingIds.length > 0
+        ? workingIds[0]
+        : null;
+  var kw = "";
+  var expandedGroups = new Set();
+
+  function renderTagRow(t) {
+    var inGroup = workingIds.indexOf(t.id) >= 0;
+    var isPrimary = inGroup && t.id === workingPrimaryId;
+    var checkBg = inGroup
+      ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
+      : "";
+    var rowBg = isPrimary
+      ? "background:rgba(var(--ms-accent-rgb),0.15);border:1px solid rgba(var(--ms-accent-rgb),0.45);"
+      : inGroup
+        ? "background:rgba(var(--ms-accent-rgb),0.08);border:1px solid transparent;"
+        : "border:1px solid transparent;";
+    var inOtherMapping = (data.settings.tagMappings || []).find(function (mm) {
+      return (
+        mm.id !== mid &&
+        Array.isArray(mm.tagIds) &&
+        mm.tagIds.indexOf(t.id) >= 0
+      );
+    });
+    var hintH = inOtherMapping
+      ? '<span style="font-size:9px;color:var(--SmartThemeQuoteColor,#888);background:rgba(255,255,255,0.05);padding:1px 5px;border-radius:3px;flex-shrink:0;">也在「' +
+        esc(truncate(inOtherMapping.name, 8)) +
+        "」</span>"
+      : "";
+    var crownH = inGroup
+      ? '<button class="ms-tm-primary-btn" data-tid="' +
+        t.id +
+        '" title="' +
+        (isPrimary ? "当前主标签（筛选时只显示它）" : "设为主标签") +
+        '" style="background:none;border:none;cursor:pointer;padding:3px 5px;border-radius:4px;flex-shrink:0;color:' +
+        (isPrimary ? "var(--ms-accent)" : "rgba(255,255,255,0.18)") +
+        ';font-size:13px;line-height:1;transition:color 0.15s;"><i class="fa-solid fa-crown"></i></button>'
+      : '<span style="width:24px;flex-shrink:0;"></span>';
+    return (
+      '<div class="ms-tm-row" data-tid="' +
+      t.id +
+      '" style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:5px;cursor:pointer;transition:background 0.12s;' +
+      rowBg +
+      '">' +
+      '<div class="ms-gitem-check" style="' +
+      checkBg +
+      '"><i class="fa-solid fa-check"></i></div>' +
+      '<span class="ms-gitem-color" style="background:' +
+      t.color +
+      ';width:14px;height:14px;cursor:default;"></span>' +
+      '<span style="flex:1;font-size:13px;color:var(--SmartThemeBodyColor,#ddd);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+      esc(t.name) +
+      (isPrimary
+        ? ' <span style="font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.18);padding:1px 5px;border-radius:3px;margin-left:3px;font-weight:600;">主</span>'
+        : "") +
+      "</span>" +
+      hintH +
+      crownH +
+      "</div>"
+    );
+  }
+
+  function buildList() {
+    var lkw = kw.toLowerCase();
+    function matchTag(t) {
+      if (!lkw) return true;
+      return t.name.toLowerCase().indexOf(lkw) >= 0;
+    }
+
+    var tagsByGroup = {};
+    data.groups.forEach(function (g) {
+      tagsByGroup[g.id] = new Set();
+    });
+    tagsByGroup["_ungrouped"] = new Set();
+
+    data.prompts.forEach(function (p) {
+      if (!p.tags || p.tags.length === 0) return;
+      var gid = p.groupId && getGroup(p.groupId) ? p.groupId : "_ungrouped";
+      p.tags.forEach(function (tid) {
+        if (getTag(tid)) tagsByGroup[gid].add(tid);
+      });
+    });
+
+    var usedTagIds = new Set();
+    Object.keys(tagsByGroup).forEach(function (gid) {
+      tagsByGroup[gid].forEach(function (tid) {
+        usedTagIds.add(tid);
+      });
+    });
+    var unusedTagsAll = data.settings.definedTags.filter(function (t) {
+      return !usedTagIds.has(t.id);
+    });
+
+    function renderGroupSection(gid, gName, tagIdSet, gIconHtml, headerBg) {
+      var filteredTags = Array.from(tagIdSet)
+        .map(function (tid) {
+          return getTag(tid);
+        })
+        .filter(function (t) {
+          return t && matchTag(t);
+        });
+      if (filteredTags.length === 0) return "";
+
+      var isOpen = expandedGroups.has(gid) || !!lkw;
+      var inGroupCount = filteredTags.filter(function (t) {
+        return workingIds.indexOf(t.id) >= 0;
+      }).length;
+
+      // 折叠头样式：背景色由调用方传入；6px 内边距让头部更紧凑
+      var html = '<div style="margin-bottom:4px;">';
+      html +=
+        '<div class="ms-mm-group-header" data-mm-gid="' +
+        gid +
+        '" style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:' +
+        headerBg +
+        ';border-radius:5px;cursor:pointer;user-select:none;">';
+      html +=
+        '<i class="fa-solid fa-angle-' +
+        (isOpen ? "down" : "right") +
+        '" style="font-size:11px;color:var(--ms-accent);width:10px;transition:transform 0.15s;"></i>';
+      html += gIconHtml;
+      html +=
+        '<span style="flex:1;font-size:12px;color:var(--SmartThemeBodyColor,#ddd);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+        esc(gName) +
+        "</span>";
+      html +=
+        '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">' +
+        filteredTags.length +
+        " 标签" +
+        (inGroupCount > 0
+          ? ' · <span style="color:var(--ms-accent);">选中 ' +
+            inGroupCount +
+            "</span>"
+          : "") +
+        "</span>";
+      html += "</div>";
+      if (isOpen) {
+        // 左侧 14px 缩进，让标签行视觉上属于该分组
+        html += '<div style="padding:4px 0 0 14px;">';
+        filteredTags.forEach(function (t) {
+          html += renderTagRow(t);
+        });
+        html += "</div>";
+      }
+      html += "</div>";
+      return html;
+    }
+
+    var html =
+      '<div class="ms-modal-list" style="min-height:50vh;max-height:60vh;overflow-y:auto;">';
+    var anyVisible = false;
+
+    data.groups.forEach(function (g) {
+      var useAvatar =
+        isIPGroup(g) ||
+        (g.iconMode === "custom" && g.iconUrl) ||
+        (g.iconMode === "char" && g.iconCharKey);
+      var iconH = useAvatar
+        ? buildGroupAvatarHTML(g, 18)
+        : '<i class="fa-solid fa-folder" style="color:' +
+          g.color +
+          ';font-size:11px;"></i>';
+      var section = renderGroupSection(
+        g.id,
+        g.name,
+        tagsByGroup[g.id],
+        iconH,
+        "rgba(var(--ms-accent-rgb),0.06)",
+      );
+      if (section) {
+        html += section;
+        anyVisible = true;
+      }
+    });
+
+    if (tagsByGroup["_ungrouped"].size > 0) {
+      var section = renderGroupSection(
+        "_ungrouped",
+        "未分组",
+        tagsByGroup["_ungrouped"],
+        '<i class="fa-solid fa-inbox" style="color:#888;font-size:11px;"></i>',
+        "rgba(255,255,255,0.03)",
+      );
+      if (section) {
+        html += section;
+        anyVisible = true;
+      }
+    }
+
+    if (unusedTagsAll.length > 0) {
+      var filteredUnused = unusedTagsAll.filter(matchTag);
+      if (filteredUnused.length > 0) {
+        var isOpen = expandedGroups.has("_unused") || !!lkw;
+        var inGroupCount = filteredUnused.filter(function (t) {
+          return workingIds.indexOf(t.id) >= 0;
+        }).length;
+        html += '<div style="margin-bottom:4px;">';
+        html +=
+          '<div class="ms-mm-group-header" data-mm-gid="_unused" style="display:flex;align-items:center;gap:6px;padding:6px 8px;background:rgba(255,255,255,0.03);border-radius:5px;cursor:pointer;user-select:none;">';
+        html +=
+          '<i class="fa-solid fa-angle-' +
+          (isOpen ? "down" : "right") +
+          '" style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);width:10px;transition:transform 0.15s;"></i>';
+        html +=
+          '<i class="fa-solid fa-ghost" style="color:var(--SmartThemeQuoteColor,#888);font-size:11px;"></i>';
+        html +=
+          '<span style="flex:1;font-size:12px;color:var(--SmartThemeBodyColor,#bbb);font-weight:600;">未被使用过</span>';
+        html +=
+          '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">' +
+          filteredUnused.length +
+          " 标签" +
+          (inGroupCount > 0
+            ? ' · <span style="color:var(--ms-accent);">选中 ' +
+              inGroupCount +
+              "</span>"
+            : "") +
+          "</span>";
+        html += "</div>";
+        if (isOpen) {
+          html += '<div style="padding:4px 0 0 14px;">';
+          filteredUnused.forEach(function (t) {
+            html += renderTagRow(t);
+          });
+          html += "</div>";
+        }
+        html += "</div>";
+        anyVisible = true;
+      }
+    }
+
+    if (!anyVisible) {
+      html +=
+        '<div style="min-height:30vh;display:flex;align-items:center;justify-content:center;color:var(--SmartThemeQuoteColor,#666);font-size:12px;">没有匹配的标签</div>';
+    }
+
+    html += "</div>";
+    return html;
+  }
+
+  function buildModalBody() {
+    return (
+      '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;line-height:1.6;">勾选标签加入「<strong style="color:var(--ms-accent);">' +
+      esc(m.name) +
+      '</strong>」组，点击 <i class="fa-solid fa-crown" style="color:#ffc857;"></i> 设为<strong style="color:#ffc857;">主标签</strong>。映射模式下筛选面板仅显示主标签并自动联动从标签，独立模式则全部展示。</div>' +
+      '<input type="text" class="ms-modal-search" id="ms-tm-search" placeholder="搜索标签..." value="' +
+      esc(kw) +
+      '">' +
+      '<div id="ms-tm-list">' +
+      buildList() +
+      "</div>"
+    );
+  }
+
+  function refreshList($overlay) {
+    var savedScroll = 0;
+    var $oldList = $overlay.find("#ms-tm-list .ms-modal-list");
+    if ($oldList.length) savedScroll = $oldList[0].scrollTop;
+    var caretPos = -1;
+    var $oldInput = $overlay.find("#ms-tm-search");
+    if ($oldInput.is(":focus") && $oldInput[0])
+      caretPos = $oldInput[0].selectionStart || 0;
+    $overlay.find("#ms-tm-list").html(buildList());
+    var $newList = $overlay.find("#ms-tm-list .ms-modal-list");
+    if ($newList.length && savedScroll > 0) $newList[0].scrollTop = savedScroll;
+    if (caretPos >= 0) {
+      var $newInput = $overlay.find("#ms-tm-search");
+      if ($newInput.length) {
+        $newInput.focus();
+        try {
+          $newInput[0].setSelectionRange(caretPos, caretPos);
+        } catch (e) {}
+      }
+    }
+  }
+
+  showModal({
+    title: "配置「" + truncate(m.name, 18) + "」的成员",
+    iconType: "info",
+    icon: "fa-link",
+    modalStyle: "min-width:380px;max-width:94vw;width:480px;",
+    body: buildModalBody(),
+    buttons: [
+      { text: "取消", value: null },
+      {
+        text: "保存",
+        cls: "primary",
+        primary: true,
+        action: function () {
+          m.tagIds = workingIds.slice();
+          m.primaryTagId = workingPrimaryId;
+          saveData();
+          if (typeof onDone === "function") onDone();
+          return true;
+        },
+      },
+    ],
+    cancelValue: null,
+    onShow: function ($overlay) {
+      $overlay.on("input", "#ms-tm-search", function () {
+        kw = $(this).val();
+        refreshList($overlay);
+      });
+      $overlay.on("click", ".ms-mm-group-header", function (e) {
+        e.stopPropagation();
+        var gid = $(this).attr("data-mm-gid");
+        if (!gid) return;
+        if (expandedGroups.has(gid)) expandedGroups.delete(gid);
+        else expandedGroups.add(gid);
+        refreshList($overlay);
+      });
+      $overlay.on("click", ".ms-tm-primary-btn", function (e) {
+        e.stopPropagation();
+        var tid = $(this).attr("data-tid");
+        if (!tid) return;
+        if (workingIds.indexOf(tid) < 0) return;
+        workingPrimaryId = tid;
+        refreshList($overlay);
+      });
+      $overlay.on("click", ".ms-tm-row", function (e) {
+        if ($(e.target).closest(".ms-tm-primary-btn").length) return;
+        var tid = $(this).attr("data-tid");
+        if (!tid) return;
+        var i = workingIds.indexOf(tid);
+        if (i >= 0) {
+          workingIds.splice(i, 1);
+          if (workingPrimaryId === tid) {
+            workingPrimaryId = workingIds.length > 0 ? workingIds[0] : null;
+          }
+        } else {
+          workingIds.push(tid);
+          if (!workingPrimaryId) workingPrimaryId = tid;
+        }
+        refreshList($overlay);
+      });
+    },
+  }).then(function () {
+    exitBirthdayPanelMode();
+  });
+}
+
 function renderTagManage() {
   const $p = $("#" + PANEL_ID);
   $p.find("#ms-title").text("标签管理");
   $p.find("#ms-toolbar").html(
-    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">标签管理</span><div class="ms-toolbar-actions"><button class="ms-tbtn ${tagSelectMode ? "active" : ""}" id="ms-tag-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-tag-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-tag-add-btn"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
+    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><div class="ms-toolbar-actions"><button class="ms-tbtn" id="ms-tag-mapping-mgr" title="管理标签映射组"><i class="fa-solid fa-link"></i></button><button class="ms-tbtn ${tagSelectMode ? "active" : ""}" id="ms-tag-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-tag-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-tag-add-btn"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
   );
   let expandedColorId = null;
   function buildTagsBody() {
@@ -1261,10 +1783,23 @@ function renderTagManage() {
           (p) => p.tags && p.tags.includes(t.id),
         ).length;
         const isSel = selectedTagIds.has(t.id);
+        const sources = getTagSourceGroups(t.id);
+        let sourceH = "";
+        if (sources.length === 1) {
+          const s = sources[0];
+          sourceH = `<span class="ms-tag-source" data-tid="${t.id}" title="${esc(s.group.name)}（${s.count} 条）" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;color:${s.group.color};background:${s.group.color}1a;padding:1px 6px;border-radius:8px;margin-left:6px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:default;"><i class="fa-solid fa-folder" style="font-size:8px;opacity:0.7;"></i>${esc(truncate(s.group.name, 8))}</span>`;
+        } else if (sources.length > 1) {
+          sourceH = `<span class="ms-tag-source" data-tid="${t.id}" title="点击查看 ${sources.length} 个来源分组" style="display:inline-flex;align-items:center;gap:3px;font-size:10px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.10);padding:1px 6px;border-radius:8px;margin-left:6px;cursor:pointer;border:1px solid rgba(var(--ms-accent-rgb),0.25);"><i class="fa-solid fa-folder-tree" style="font-size:8px;"></i>${sources.length} 个分组</span>`;
+        }
+        const mappingGroups = getTagMappingGroups(t.id);
+        let mappingBadge = "";
+        if (mappingGroups.length > 0) {
+          mappingBadge = `<span title="属于映射组：${esc(mappingGroups.map((m) => m.name).join("、"))}" style="display:inline-flex;align-items:center;font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.08);padding:1px 5px;border-radius:6px;margin-left:4px;"><i class="fa-solid fa-link" style="font-size:8px;"></i></span>`;
+        }
         if (tagSelectMode) {
-          html += `<div class="ms-gitem ${isSel ? "ms-gitem-selected" : ""}" data-tid="${t.id}"><div class="ms-gitem-check"><i class="fa-solid fa-check"></i></div><span class="ms-gitem-color" style="background:${t.color};cursor:default;"></span><span class="ms-gitem-name">${esc(t.name)}</span><span class="ms-gitem-cnt">${cnt}</span></div>`;
+          html += `<div class="ms-gitem ${isSel ? "ms-gitem-selected" : ""}" data-tid="${t.id}"><div class="ms-gitem-check"><i class="fa-solid fa-check"></i></div><span class="ms-gitem-color" style="background:${t.color};cursor:default;"></span><span class="ms-gitem-name" style="display:flex;align-items:center;flex-wrap:wrap;gap:0;">${esc(t.name)}${mappingBadge}${sourceH}</span><span class="ms-gitem-cnt">${cnt}</span></div>`;
         } else {
-          html += `<div class="ms-gitem"><span class="ms-gitem-color" style="background:${t.color}" data-tid="${t.id}"></span><span class="ms-gitem-name">${esc(t.name)}</span><span class="ms-gitem-cnt">${cnt}</span><button class="ms-gitem-btn" data-action="rename-tag" data-tid="${t.id}"><i class="fa-solid fa-pen"></i></button><button class="ms-gitem-btn danger" data-action="delete-tag" data-tid="${t.id}"><i class="fa-solid fa-trash"></i></button></div>`;
+          html += `<div class="ms-gitem"><span class="ms-gitem-color" style="background:${t.color}" data-tid="${t.id}"></span><span class="ms-gitem-name" style="display:flex;align-items:center;flex-wrap:wrap;gap:0;">${esc(t.name)}${mappingBadge}${sourceH}</span><span class="ms-gitem-cnt">${cnt}</span><button class="ms-gitem-btn" data-action="rename-tag" data-tid="${t.id}"><i class="fa-solid fa-pen"></i></button><button class="ms-gitem-btn danger" data-action="delete-tag" data-tid="${t.id}"><i class="fa-solid fa-trash"></i></button></div>`;
           if (expandedColorId === t.id) {
             html += buildColorPickerHTML(t.color, "data-tid", t.id);
           }
@@ -1304,6 +1839,79 @@ function renderTagManage() {
     if (data.settings.definedTags.length > 1)
       navigateTo({ name: "reorder-tags" });
     else toast("info", "至少需要2个标签才能排序");
+  });
+  $p.find("#ms-toolbar").on("click.ms", "#ms-tag-mapping-mgr", function () {
+    navigateTo({ name: "tag-mappings" });
+  });
+  $p.find("#ms-body").on("click.ms", ".ms-tag-source", function (e) {
+    e.stopPropagation();
+    var tid = $(this).data("tid");
+    var sources = getTagSourceGroups(tid);
+    if (sources.length <= 1) return;
+    var t = getTag(tid);
+    var listH =
+      '<div class="ms-modal-list" style="max-height:60vh;overflow-y:auto;">';
+    sources.forEach(function (s) {
+      var g = s.group;
+      var iconH;
+      if (g.id === "_ungrouped") {
+        iconH =
+          '<div class="ms-modal-list-icon" style="background:rgba(255,255,255,0.08);color:#888;"><i class="fa-solid fa-inbox"></i></div>';
+      } else {
+        var gObj = getGroup(g.id);
+        var useAvatar =
+          gObj &&
+          (isIPGroup(gObj) ||
+            (gObj.iconMode === "custom" && gObj.iconUrl) ||
+            (gObj.iconMode === "char" && gObj.iconCharKey));
+        if (useAvatar) {
+          iconH =
+            '<div class="ms-modal-list-icon" style="padding:0;">' +
+            buildGroupAvatarHTML(gObj, 28) +
+            "</div>";
+        } else {
+          iconH =
+            '<div class="ms-modal-list-icon" style="background:' +
+            g.color +
+            "22;color:" +
+            g.color +
+            ';"><i class="fa-solid fa-folder"></i></div>';
+        }
+      }
+      listH +=
+        '<div class="ms-modal-list-item" data-source-gid="' +
+        g.id +
+        '">' +
+        iconH +
+        '<div class="ms-modal-list-info"><div class="ms-modal-list-name">' +
+        esc(g.name) +
+        '</div><div class="ms-modal-list-desc">' +
+        s.count +
+        " 条剧场使用此标签</div></div></div>";
+    });
+    listH += "</div>";
+    showModal({
+      title: "「" + (t ? t.name : "") + "」的来源分组",
+      iconType: "info",
+      icon: "fa-folder-tree",
+      modalStyle: "min-width:340px;max-width:90vw;width:400px;",
+      body: listH,
+      buttons: [{ text: "关闭", value: null }],
+      onShow: function ($overlay, close) {
+        $overlay.on("click", ".ms-modal-list-item", function () {
+          var gid = $(this).attr("data-source-gid");
+          if (!gid) return;
+          close("done");
+          setTimeout(function () {
+            if (gid === "_ungrouped") {
+              navigateTo({ name: "group", groupId: "_ungrouped" });
+            } else {
+              navigateTo({ name: "group", groupId: gid });
+            }
+          }, 200);
+        });
+      },
+    });
   });
   $p.find("#ms-toolbar").on("click.ms", "#ms-tag-add-btn", () => {
     msPrompt("", {

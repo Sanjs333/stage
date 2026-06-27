@@ -76,8 +76,16 @@
         !Array.isArray(data.settings.randomInject.excludedCharGroupIds)
       )
         data.settings.randomInject.excludedCharGroupIds = [];
-      if (!Array.isArray(data.settings.definedTags))
-        data.settings.definedTags = [];
+      if (!Array.isArray(data.settings.tagMappings))
+        data.settings.tagMappings = [];
+      data.settings.tagMappings.forEach(function (m) {
+        if (!Array.isArray(m.tagIds)) m.tagIds = [];
+        if (!m.primaryTagId || m.tagIds.indexOf(m.primaryTagId) < 0) {
+          m.primaryTagId = m.tagIds.length > 0 ? m.tagIds[0] : null;
+        }
+      });
+      if (data.settings.tagFilterExactMatch === undefined)
+        data.settings.tagFilterExactMatch = false;
       if (
         !data.settings.themeBindings ||
         typeof data.settings.themeBindings !== "object"
@@ -185,15 +193,21 @@
           delete _unlockedToMigrate[k];
         }
       });
-      if (!data.settings._bdIsOwnMigrated) {
+      if (data.settings._bdIsOwnMigrated !== 2) {
         Object.keys(data.settings.charBirthdayMessages).forEach(function (k) {
           var m = data.settings.charBirthdayMessages[k];
-          if (m && m.isOwn === undefined) m.isOwn = true;
+          if (m && m.versions) {
+            Object.keys(m.versions).forEach(function (year) {
+              var v = m.versions[year];
+              if (v) v.isOwn = true;
+            });
+          }
+          if (m && m.isOwn !== undefined) delete m.isOwn;
         });
         Object.keys(data.settings.charBirthdays || {}).forEach(function (k) {
           data.settings.ownBirthdays[k] = true;
         });
-        data.settings._bdIsOwnMigrated = true;
+        data.settings._bdIsOwnMigrated = 2;
       }
       if (
         !data.settings.dismissedBirthdays ||
@@ -539,11 +553,9 @@ async function updateBuiltinGuidesFromRemote(forceAll) {
 
 function setupPage(title, toolbarHtml) {
   var $p = $("#" + PANEL_ID);
-  $p.find("#ms-title").text(title);
+  $p.find("#ms-title").text(toolbarHtml !== undefined ? toolbarHtml : title);
   $p.find("#ms-toolbar").html(
-    '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><span class="ms-form-title">' +
-      (toolbarHtml !== undefined ? toolbarHtml : esc(title)) +
-      "</span>",
+    '<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button>',
   );
   return $p;
 }
@@ -1132,7 +1144,7 @@ function getCharBdData(charKey) {
           authorName: raw.authorName || "",
           contentType: raw.contentType || "text",
           updatedAt: raw.updatedAt || 0,
-          isOwn: raw.isOwn === true,
+          isOwn: raw.isOwn !== false,
           year: "default",
         },
       },
@@ -1405,6 +1417,56 @@ function getTag(id) {
   if (!_tagIdx) _rebuildIdx();
   return _tagIdx[id] || null;
 }
+function getTagSourceGroups(tagId) {
+  var groupMap = {};
+  var ungroupedCount = 0;
+  data.prompts.forEach(function (p) {
+    if (!p.tags || p.tags.indexOf(tagId) < 0) return;
+    var g = p.groupId ? getGroup(p.groupId) : null;
+    if (g) {
+      if (!groupMap[g.id]) groupMap[g.id] = { group: g, count: 0 };
+      groupMap[g.id].count++;
+    } else {
+      ungroupedCount++;
+    }
+  });
+  var result = Object.keys(groupMap).map(function (gid) {
+    return groupMap[gid];
+  });
+  if (ungroupedCount > 0) {
+    result.push({
+      group: { id: "_ungrouped", name: "未分组", color: "#888" },
+      count: ungroupedCount,
+    });
+  }
+  return result;
+}
+
+function expandTagsByMapping(tagIds) {
+  if (!Array.isArray(tagIds) || tagIds.length === 0) return tagIds || [];
+  if (data.settings.tagFilterExactMatch) return tagIds.slice();
+  var mappings = data.settings.tagMappings || [];
+  if (mappings.length === 0) return tagIds.slice();
+  var expanded = new Set(tagIds);
+  tagIds.forEach(function (tid) {
+    mappings.forEach(function (m) {
+      if (Array.isArray(m.tagIds) && m.tagIds.indexOf(tid) >= 0) {
+        m.tagIds.forEach(function (linkedTid) {
+          expanded.add(linkedTid);
+        });
+      }
+    });
+  });
+  return Array.from(expanded);
+}
+
+function getTagMappingGroups(tagId) {
+  var mappings = data.settings.tagMappings || [];
+  return mappings.filter(function (m) {
+    return Array.isArray(m.tagIds) && m.tagIds.indexOf(tagId) >= 0;
+  });
+}
+
 var _tagOrderCache = null;
 var _tagOrderVersion = 0;
 var _tagOrderCachedVersion = -1;

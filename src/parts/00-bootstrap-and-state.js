@@ -2,7 +2,7 @@
 const STORAGE_KEY = "miniStage_data";
 const PANEL_ID = "mini-stage-panel";
 const STYLE_ID = "mini-stage-styles";
-const SCRIPT_VERSION = "3.6";
+const SCRIPT_VERSION = "3.7";
 const GROUP_COLORS = [
   "#D6A2A2",
   "#DDAA90",

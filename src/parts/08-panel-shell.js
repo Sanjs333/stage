@@ -45,6 +45,7 @@ function renderView() {
     groups: renderGroups,
     "group-edit": renderGroupEdit,
     "tag-manage": renderTagManage,
+    "tag-mappings": renderTagMappings,
     export: renderExport,
     "export-single-options": renderExportSingleOptions,
     "export-group-options": renderExportGroupOptions,
@@ -532,12 +533,41 @@ function buildFilterPanel() {
         return _visibleTagIds.has(t.id);
       })
     : data.settings.definedTags;
+  if (!data.settings.tagFilterExactMatch) {
+    var _hideFromTags = new Set();
+    var _mappings = data.settings.tagMappings || [];
+    _mappings.forEach(function (mm) {
+      if (Array.isArray(mm.tagIds) && mm.primaryTagId) {
+        mm.tagIds.forEach(function (tid) {
+          if (tid !== mm.primaryTagId) _hideFromTags.add(tid);
+        });
+      }
+    });
+    if (_hideFromTags.size > 0) {
+      _tagsToShow = _tagsToShow.filter(function (t) {
+        if (!_hideFromTags.has(t.id)) return true;
+        return (
+          filterState.includeTags.indexOf(t.id) >= 0 ||
+          filterState.excludeTags.indexOf(t.id) >= 0
+        );
+      });
+    }
+  }
 
   if (_tagsToShow.length > 0) {
     var modeLabel =
       data.settings.filterTagMode === "and" ? "全部匹配" : "任一匹配";
     var excludeActive = filterState.tagSelectMode === "exclude";
-    html += `<div class="ms-filter-section" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">标签筛选（可多选）<button class="ms-filter-mode-btn" id="ms-tag-mode-toggle">${modeLabel}</button><button class="ms-filter-mode-btn ${excludeActive ? "ms-mode-exclude-active" : ""}" id="ms-tag-exclude-toggle" title="开启后点击的标签将被排除"><i class="fa-solid fa-ban"></i> 排除模式${excludeActive ? "·开" : ""}</button>${hasAnyFilter ? '<button class="ms-filter-mode-btn" id="ms-clear-filter" style="margin-left:auto;color:var(--ms-danger);border-color:rgba(var(--ms-danger-rgb),0.3);background:rgba(var(--ms-danger-rgb),0.05);"><i class="fa-solid fa-broom"></i> 清空筛选</button>' : ""}</div><div class="ms-tag-row">`;
+    var isExact = data.settings.tagFilterExactMatch === true;
+    var mappingCount = (data.settings.tagMappings || []).length;
+    var mappingBtnTitle = isExact
+      ? "当前为独立模式：只筛选你选中的标签\n点击切换到联动模式（同映射组的标签一起参与筛选）"
+      : "当前为映射模式：选中标签时，同映射组的其他标签也会参与筛选\n点击切换到独立模式";
+    var mappingBtnHtml =
+      mappingCount > 0
+        ? `<button class="ms-filter-mode-btn" id="ms-tag-mapping-toggle" title="${escAttr(mappingBtnTitle)}" style="${isExact ? "" : "background:rgba(var(--ms-accent-rgb),0.15);color:var(--ms-accent);border-color:var(--ms-accent);"}"><i class="fa-solid ${isExact ? "fa-link-slash" : "fa-link"}"></i> ${isExact ? "独立" : "映射"}</button>`
+        : "";
+    html += `<div class="ms-filter-section" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">标签筛选（可多选）${mappingBtnHtml}<button class="ms-filter-mode-btn" id="ms-tag-mode-toggle">${modeLabel}</button><button class="ms-filter-mode-btn ${excludeActive ? "ms-mode-exclude-active" : ""}" id="ms-tag-exclude-toggle" title="开启后点击的标签将被排除"><i class="fa-solid fa-ban"></i> 排除模式${excludeActive ? "·开" : ""}</button>${hasAnyFilter ? '<button class="ms-filter-mode-btn" id="ms-clear-filter" style="margin-left:auto;color:var(--ms-danger);border-color:rgba(var(--ms-danger-rgb),0.3);background:rgba(var(--ms-danger-rgb),0.05);"><i class="fa-solid fa-broom"></i> 清空筛选</button>' : ""}</div><div class="ms-tag-row">`;
     _tagsToShow.forEach((t) => {
       const inc = filterState.includeTags.includes(t.id);
       const exc = filterState.excludeTags.includes(t.id);
@@ -978,6 +1008,8 @@ function showMoveDropdown($p) {
   });
 }
 
+var _batchTagSectionState = { used: true, global: true };
+
 function showBatchTagDropdown($p) {
   if ($p.find("#ms-dropdown").is(":visible")) {
     closeActiveDropdown();
@@ -987,28 +1019,293 @@ function showBatchTagDropdown($p) {
     toast("warning", "还没有标签，请先在标签管理中创建");
     return;
   }
-  function buildTagContent() {
-    let html = `<div style="padding:6px 12px;font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#888);border-bottom:1px solid var(--SmartThemeBorderColor,#444);">批量标签管理 · 已选 ${selectedIds.size} 项</div>`;
-    data.settings.definedTags.forEach((t) => {
-      let cnt = 0;
-      selectedIds.forEach((pid) => {
-        const p = getPrompt(pid);
-        if (p && p.tags && p.tags.includes(t.id)) cnt++;
-      });
-      html += `<div class="ms-batch-tag-item">
-          <div class="ms-batch-tag-info"><span class="ms-tag-chip" style="background:${t.color};">${esc(t.name)}</span><span class="ms-batch-tag-cnt">${cnt}/${selectedIds.size}</span></div>
-          <button class="ms-batch-tag-btn add-btn" data-tagid="${t.id}" title="添加"><i class="fa-solid fa-plus"></i></button>
-          <button class="ms-batch-tag-btn rm-btn" data-tagid="${t.id}" title="移除"><i class="fa-solid fa-minus"></i></button>
-        </div>`;
+
+  var _expandedMappings = new Set();
+
+  function getUsedTagIds() {
+    var used = new Set();
+    var involvedGroups = new Set();
+    var hasUngrouped = false;
+    selectedIds.forEach(function (pid) {
+      var p = getPrompt(pid);
+      if (!p) return;
+      if (p.groupId && getGroup(p.groupId)) involvedGroups.add(p.groupId);
+      else hasUngrouped = true;
     });
-    html += `<div class="ms-batch-tag-item" style="border-top:1px solid var(--SmartThemeBorderColor,#444);">
-        <div class="ms-batch-tag-info" style="cursor:pointer;color:var(--ms-accent);" id="ms-batch-new-tag"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>新建标签</div>
-      </div>`;
+    data.prompts.forEach(function (p) {
+      if (!Array.isArray(p.tags) || p.tags.length === 0) return;
+      var inScope = false;
+      if (p.groupId && getGroup(p.groupId)) {
+        if (involvedGroups.has(p.groupId)) inScope = true;
+      } else {
+        if (hasUngrouped) inScope = true;
+      }
+      if (!inScope) return;
+      p.tags.forEach(function (tid) {
+        if (getTag(tid)) used.add(tid);
+      });
+    });
+    return used;
+  }
+
+  function getCountForTag(tid) {
+    var cnt = 0;
+    selectedIds.forEach(function (pid) {
+      var p = getPrompt(pid);
+      if (p && p.tags && p.tags.includes(tid)) cnt++;
+    });
+    return cnt;
+  }
+
+  function getMappingInfo() {
+    var primaryMap = {};
+    var memberMap = {};
+    var children = {};
+    (data.settings.tagMappings || []).forEach(function (m) {
+      if (!Array.isArray(m.tagIds) || m.tagIds.length === 0) return;
+      var primary = m.primaryTagId;
+      if (!primary || m.tagIds.indexOf(primary) < 0) primary = m.tagIds[0];
+      if (!primary || !getTag(primary)) return;
+      primaryMap[primary] = m;
+      children[m.id] = [];
+      m.tagIds.forEach(function (tid) {
+        if (tid !== primary && getTag(tid)) {
+          if (!memberMap[tid]) memberMap[tid] = m;
+          children[m.id].push(tid);
+        }
+      });
+    });
+    return { primaryMap: primaryMap, memberMap: memberMap, children: children };
+  }
+  function buildOwnershipBadge(actualSection, currentSection) {
+    if (actualSection === currentSection) return "";
+    var label = actualSection === "used" ? "本组" : "全局";
+    var bg =
+      actualSection === "used"
+        ? "background:rgba(var(--ms-accent-rgb),0.15);color:var(--ms-accent);"
+        : "background:rgba(255,255,255,0.06);color:var(--SmartThemeQuoteColor,#888);";
+    return (
+      '<span style="font-size:9px;padding:1px 5px;border-radius:3px;margin-left:4px;' +
+      bg +
+      '">' +
+      label +
+      "</span>"
+    );
+  }
+
+  function buildTagRow(t, mappingInfo, sectionKey, options) {
+    options = options || {};
+    var cnt = getCountForTag(t.id);
+    var mapping = !options.isChild ? mappingInfo.primaryMap[t.id] : null;
+    var childIds = mapping ? mappingInfo.children[mapping.id] : null;
+    var hasChildren = childIds && childIds.length > 0;
+    var isExpanded = mapping && _expandedMappings.has(mapping.id);
+
+    var indentStyle = options.isChild
+      ? "padding-left:28px;background:rgba(var(--ms-accent-rgb),0.03);"
+      : "";
+    var ownershipBadge = options.isChild
+      ? buildOwnershipBadge(options.actualSection, sectionKey)
+      : "";
+    var prefixH;
+    if (hasChildren) {
+      prefixH =
+        '<i class="fa-solid fa-angle-' +
+        (isExpanded ? "down" : "right") +
+        ' ms-btag-toggle" data-mapping-id="' +
+        mapping.id +
+        '" style="cursor:pointer;font-size:11px;color:var(--ms-accent);width:14px;text-align:center;flex-shrink:0;padding:2px;"></i>';
+    } else if (options.isChild) {
+      prefixH =
+        '<i class="fa-solid fa-link" style="font-size:9px;color:var(--ms-accent);opacity:0.5;width:14px;text-align:center;flex-shrink:0;"></i>';
+    } else {
+      prefixH = '<span style="width:14px;flex-shrink:0;"></span>';
+    }
+    var childCntBadge = hasChildren
+      ? '<span style="font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.10);padding:1px 5px;border-radius:3px;margin-left:4px;flex-shrink:0;">+' +
+        childIds.length +
+        "</span>"
+      : "";
+
+    return (
+      '<div class="ms-batch-tag-item" data-row-tagid="' +
+      t.id +
+      '" style="' +
+      indentStyle +
+      '">' +
+      prefixH +
+      '<div class="ms-batch-tag-info">' +
+      '<span class="ms-tag-chip" style="background:' +
+      t.color +
+      ';">' +
+      esc(t.name) +
+      "</span>" +
+      childCntBadge +
+      ownershipBadge +
+      '<span class="ms-batch-tag-cnt">' +
+      cnt +
+      "/" +
+      selectedIds.size +
+      "</span>" +
+      "</div>" +
+      '<button class="ms-batch-tag-btn add-btn" data-tagid="' +
+      t.id +
+      '" title="添加"><i class="fa-solid fa-plus"></i></button>' +
+      '<button class="ms-batch-tag-btn rm-btn" data-tagid="' +
+      t.id +
+      '" title="移除"><i class="fa-solid fa-minus"></i></button>' +
+      "</div>"
+    );
+  }
+
+  function buildSection(
+    title,
+    icon,
+    iconColor,
+    tags,
+    sectionKey,
+    badgeText,
+    mappingInfo,
+    usedIds,
+  ) {
+    var isOpen = _batchTagSectionState[sectionKey] !== false;
+    var bodyH = "";
+    if (tags.length === 0) {
+      bodyH =
+        '<div style="padding:10px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#666);font-style:italic;text-align:center;">' +
+        (sectionKey === "used" ? "本组还没用过任何标签" : "没有其他可用标签") +
+        "</div>";
+    } else {
+      tags.forEach(function (t) {
+        bodyH += buildTagRow(t, mappingInfo, sectionKey);
+        var mapping = mappingInfo.primaryMap[t.id];
+        if (mapping && _expandedMappings.has(mapping.id)) {
+          mappingInfo.children[mapping.id].forEach(function (childId) {
+            var childTag = getTag(childId);
+            if (!childTag) return;
+            var actualSection = usedIds.has(childId) ? "used" : "global";
+            bodyH += buildTagRow(childTag, mappingInfo, sectionKey, {
+              isChild: true,
+              actualSection: actualSection,
+            });
+          });
+        }
+      });
+    }
+    var _stickyCss =
+      sectionKey === "used"
+        ? "position:sticky;top:21px;z-index:9;background:rgba(var(--ms-accent-rgb),0.06);"
+        : "background:rgba(var(--ms-accent-rgb),0.06);";
+    return (
+      '<div class="ms-btag-section" data-section-key="' +
+      sectionKey +
+      '">' +
+      '<div class="ms-btag-section-header" data-toggle-section="' +
+      sectionKey +
+      '" style="display:flex;align-items:center;gap:6px;padding:7px 12px;' +
+      _stickyCss +
+      'cursor:pointer;user-select:none;border-bottom:1px solid var(--SmartThemeBorderColor,#444);font-size:11px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);">' +
+      '<i class="fa-solid fa-angle-' +
+      (isOpen ? "down" : "right") +
+      '" style="font-size:10px;color:var(--ms-accent);width:10px;"></i>' +
+      '<i class="fa-solid ' +
+      icon +
+      '" style="color:' +
+      iconColor +
+      ';font-size:11px;"></i>' +
+      '<span style="flex:1;">' +
+      title +
+      "</span>" +
+      '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-weight:normal;">' +
+      badgeText +
+      "</span>" +
+      "</div>" +
+      '<div class="ms-btag-section-body" data-section-body="' +
+      sectionKey +
+      '" style="display:' +
+      (isOpen ? "block" : "none") +
+      ';">' +
+      bodyH +
+      "</div>" +
+      "</div>"
+    );
+  }
+
+  function buildTagContent() {
+    var usedIds = getUsedTagIds();
+    var mappingInfo = getMappingInfo();
+    var usedTags = [];
+    var globalTags = [];
+    data.settings.definedTags.forEach(function (t) {
+      if (mappingInfo.memberMap[t.id]) return;
+      if (usedIds.has(t.id)) usedTags.push(t);
+      else globalTags.push(t);
+    });
+
+    var html =
+      '<div style="position:sticky;top:-4px;z-index:10;">' +
+      '<div style="padding:6px 12px;background:rgba(var(--ms-accent-rgb),0.06);font-size:11px;font-weight:600;color:var(--SmartThemeQuoteColor,#888);border-bottom:1px solid var(--SmartThemeBorderColor,#444);">批量标签管理 · 已选 ' +
+      selectedIds.size +
+      " 项</div>" +
+      "</div>";
+
+    html += buildSection(
+      "本组已使用标签",
+      "fa-check-circle",
+      "var(--ms-accent)",
+      usedTags,
+      "used",
+      usedTags.length + " 个",
+      mappingInfo,
+      usedIds,
+    );
+    html += buildSection(
+      "全局标签",
+      "fa-tags",
+      "var(--SmartThemeQuoteColor,#888)",
+      globalTags,
+      "global",
+      globalTags.length + " 个",
+      mappingInfo,
+      usedIds,
+    );
+
+    html +=
+      '<div class="ms-batch-tag-item" style="border-top:1px solid var(--SmartThemeBorderColor,#444);">' +
+      '<div class="ms-batch-tag-info" style="cursor:pointer;color:var(--ms-accent);" id="ms-batch-new-tag"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>新建标签</div>' +
+      "</div>";
+
     return html;
   }
-  var $dd = openDropdown($p, buildTagContent(), { minWidth: "220px" });
+
+  var $dd = openDropdown($p, buildTagContent(), { minWidth: "280px" });
   if (!$dd) return;
   $dd.off("click");
+
+  $dd.on("click.btag", "[data-toggle-section]", function (e) {
+    e.stopPropagation();
+    var key = $(this).attr("data-toggle-section");
+    var $body = $dd.find('[data-section-body="' + key + '"]');
+    var $arrow = $(this).find(".fa-angle-down, .fa-angle-right");
+    var isOpen = $body.is(":visible");
+    if (isOpen) {
+      $body.hide();
+      $arrow.removeClass("fa-angle-down").addClass("fa-angle-right");
+      _batchTagSectionState[key] = false;
+    } else {
+      $body.show();
+      $arrow.removeClass("fa-angle-right").addClass("fa-angle-down");
+      _batchTagSectionState[key] = true;
+    }
+  });
+  $dd.on("click.btag", ".ms-btag-toggle", function (e) {
+    e.stopPropagation();
+    var mid = $(this).data("mapping-id");
+    if (_expandedMappings.has(mid)) _expandedMappings.delete(mid);
+    else _expandedMappings.add(mid);
+    $dd.html(buildTagContent());
+  });
+
   $dd.on("click.btag", "#ms-batch-new-tag", function (e) {
     e.stopPropagation();
     msPrompt("", {
@@ -1025,15 +1322,15 @@ function showBatchTagDropdown($p) {
       refreshKeepingState();
     });
   });
+
   var _btagRefreshTimer = null;
   $dd.on("click.btag", ".ms-batch-tag-btn", function (e) {
     e.stopPropagation();
-    const tid = $(this).data("tagid");
-    const isAdd = $(this).hasClass("add-btn");
-    const tagObj = getTag(tid);
-    let changed = 0;
-    selectedIds.forEach((pid) => {
-      const p = getPrompt(pid);
+    var tid = $(this).data("tagid");
+    var isAdd = $(this).hasClass("add-btn");
+    var changed = 0;
+    selectedIds.forEach(function (pid) {
+      var p = getPrompt(pid);
       if (!p) return;
       if (isAdd) {
         if (!p.tags.includes(tid)) {
@@ -1041,22 +1338,17 @@ function showBatchTagDropdown($p) {
           changed++;
         }
       } else {
-        const before = p.tags.length;
-        p.tags = p.tags.filter((id) => id !== tid);
+        var before = p.tags.length;
+        p.tags = p.tags.filter(function (id) {
+          return id !== tid;
+        });
         if (p.tags.length !== before) changed++;
       }
     });
     if (changed === 0) return;
     saveData();
-    const $row = $dd
-      .find('.ms-batch-tag-btn[data-tagid="' + tid + '"]')
-      .closest(".ms-batch-tag-item");
-    let cnt = 0;
-    selectedIds.forEach((pid) => {
-      const p = getPrompt(pid);
-      if (p && p.tags && p.tags.includes(tid)) cnt++;
-    });
-    $row.find(".ms-batch-tag-cnt").text(cnt + "/" + selectedIds.size);
+    $dd.html(buildTagContent());
+
     if (_btagRefreshTimer) clearTimeout(_btagRefreshTimer);
     _btagRefreshTimer = setTimeout(function () {
       _btagRefreshTimer = null;
