@@ -643,6 +643,8 @@ function showFullscreenEditor(opts) {
     var saved = $p.data("ms-fs-saved-pos");
     $overlay.remove();
     $p.removeClass("ms-fs-editor-mode");
+    $p[0].removeAttribute("data-ms-kb");
+    $p[0].style.removeProperty("border-radius");
     if (saved) {
       var elem = $p[0];
       var keys = [
@@ -1450,7 +1452,8 @@ function applyUICustomization() {
   var isFullMode =
     $p.hasClass("ms-focus-mode") ||
     $p.hasClass("ms-bd-editor-mode") ||
-    $p.hasClass("ms-modal-expand-mode");
+    $p.hasClass("ms-modal-expand-mode") ||
+    $p.hasClass("ms-fs-editor-mode");
 
   if (isFullMode) {
     el.style.setProperty("zoom", "1", "important");

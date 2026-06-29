@@ -774,6 +774,8 @@ function exitFocusMode() {
   if (!$panel.hasClass("ms-focus-mode")) return;
   const el = $panel[0];
   $panel.removeClass("ms-focus-mode");
+  el.removeAttribute("data-ms-kb");
+  el.style.removeProperty("border-radius");
   applyUICustomization();
   const saved = $panel.data("ms-focus-saved-pos");
   if (saved) {
