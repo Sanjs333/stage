@@ -396,7 +396,7 @@ function buildListBody() {
       (g.iconMode === "char" && g.iconCharKey);
     var _iconH = _useAvatar
       ? buildGroupAvatarHTML(g, 32)
-      : `<div class="ms-nav-icon" style="background:${g.color}22;color:${g.color};"><i class="fa-solid fa-folder"></i></div>`;
+      : `<div class="ms-nav-icon" style="background:${g.color}22;color:${g.color};"><i class="fa-solid fa-folder" style="color:${g.color};"></i></div>`;
     var cntParts = [];
     if (charCnt > 0)
       cntParts.push(

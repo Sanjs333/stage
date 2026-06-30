@@ -1471,11 +1471,6 @@ function makeDraggable() {
   headerEl.addEventListener("pointerup", endDrag);
   headerEl.addEventListener("pointercancel", endDrag);
   headerEl.addEventListener("lostpointercapture", endDrag);
-
-  headerEl.addEventListener("dblclick", function (e) {
-    if (e.target.closest(".ms-hbtn, button")) return;
-    resetPanelPosition();
-  });
 }
 
 function addMenuButton() {

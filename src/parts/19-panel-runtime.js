@@ -19,7 +19,7 @@ function resetPanelPosition() {
   $p[0].style.removeProperty("transform");
   data.settings.panelPos = null;
   saveData();
-  toast("info", "面板已回到默认位置");
+  toast("info", "面板已回到默认位置", 500);
 }
 
 function showPanel() {

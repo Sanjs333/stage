@@ -8,7 +8,7 @@
 const STORAGE_KEY = "miniStage_data";
 const PANEL_ID = "mini-stage-panel";
 const STYLE_ID = "mini-stage-styles";
-const SCRIPT_VERSION = "3.7.1";
+const SCRIPT_VERSION = "3.7.2";
 const GROUP_COLORS = [
   "#D6A2A2",
   "#DDAA90",
@@ -31,7 +31,7 @@ const GROUP_COLORS = [
   "#8b5b8c",
 ];
 const TAG_COLORS = GROUP_COLORS;
-var GUIDE_VERSION = "3.7.1";
+var GUIDE_VERSION = "3.7.2";
 var GUIDE_REMOTE_URLS = {
   guide:
     "https://gist.githubusercontent.com/Sanjs333/c45460dc2bb5908ff53b5769088b122d/raw/guide.md",
@@ -302,9 +302,9 @@ function toast(type, msg, duration) {
   if (typeof toastr !== "undefined" && toastr[type]) {
     var defaultDuration = {
       success: 800,
-      info: 1500,
-      warning: 1500,
-      error: 1500,
+      info: 1000,
+      warning: 1200,
+      error: 1000,
     };
     var finalDuration =
       duration !== undefined ? duration : defaultDuration[type] || 3000;
@@ -392,9 +392,9 @@ function showModal(opts) {
     if (typeof opts.body === "function") {
       $overlay.find(".ms-modal-body").html(opts.body($overlay));
     }
-    requestAnimationFrame(function () {
+    setTimeout(function () {
       $overlay.addClass("visible");
-    });
+    }, 20);
     var closed = false;
     function close(result) {
       if (closed) return;
@@ -1060,11 +1060,86 @@ function getParentWindowSafe() {
   return null;
 }
 
+function getThemeVarWin() {
+  var candidates = [];
+  try {
+    var $pp = $("#" + PANEL_ID);
+    if ($pp.length && $pp[0].ownerDocument) {
+      var ownerWin = $pp[0].ownerDocument.defaultView;
+      if (ownerWin) candidates.push(ownerWin);
+    }
+  } catch (e) {}
+  try {
+    if (window.top) candidates.push(window.top);
+  } catch (e) {}
+  try {
+    var pw = getParentWindowSafe();
+    if (pw && candidates.indexOf(pw) < 0) {
+      candidates.push(pw);
+    }
+  } catch (e) {}
+  candidates.push(window);
+  for (var i = 0; i < candidates.length; i++) {
+    try {
+      var w = candidates[i];
+      var cs = w.getComputedStyle(w.document.documentElement);
+      var probe =
+        cs.getPropertyValue("--SmartThemeBodyColor").trim() ||
+        cs.getPropertyValue("--SmartThemeBlurTintColor").trim() ||
+        cs.getPropertyValue("--SmartThemeEmColor").trim();
+      if (probe) return w;
+    } catch (e) {}
+  }
+  return window;
+}
+
+function parseColorToRGBA(colorStr) {
+  if (!colorStr) return null;
+  var s = String(colorStr).trim();
+  var direct = s.match(
+    /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/i,
+  );
+  if (direct) {
+    return {
+      r: direct[1],
+      g: direct[2],
+      b: direct[3],
+      a: direct[4] !== undefined ? parseFloat(direct[4]) : 1,
+    };
+  }
+  try {
+    var w = getThemeVarWin();
+    var doc = w.document;
+    var d = doc.createElement("div");
+    d.style.color = s;
+    d.style.display = "none";
+    doc.body.appendChild(d);
+    var parsed = w.getComputedStyle(d).color;
+    doc.body.removeChild(d);
+    var m = parsed.match(
+      /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/i,
+    );
+    if (m) {
+      return {
+        r: m[1],
+        g: m[2],
+        b: m[3],
+        a: m[4] !== undefined ? parseFloat(m[4]) : 1,
+      };
+    }
+  } catch (e) {}
+  return null;
+}
+
 function getThemeSelectDocs() {
   var docs = [];
   try {
+    if (window.top && window.top.document) docs.push(window.top.document);
+  } catch (e) {}
+  try {
     var parentWin = getParentWindowSafe();
-    if (parentWin && parentWin.document) docs.push(parentWin.document);
+    if (parentWin && parentWin.document && docs.indexOf(parentWin.document) < 0)
+      docs.push(parentWin.document);
   } catch (e) {}
   try {
     if (document && docs.indexOf(document) < 0) docs.push(document);
@@ -1112,6 +1187,9 @@ function getSillyTavernLikeObjects() {
     var parentWin = getParentWindowSafe();
     if (parentWin) add(parentWin.SillyTavern);
   } catch (e) {}
+  try {
+    if (window.top) add(window.top.SillyTavern);
+  } catch (e) {}
   return list;
 }
 
@@ -1140,6 +1218,9 @@ function getPowerUserSettingsCandidates() {
   try {
     var parentWin = getParentWindowSafe();
     if (parentWin) add(parentWin.power_user);
+  } catch (e) {}
+  try {
+    if (window.top) add(window.top.power_user);
   } catch (e) {}
   return list;
 }
@@ -1270,20 +1351,28 @@ function applyThemeBindingBg($p, binding) {
       "background-size": "cover",
       "background-position": "center",
       "background-repeat": "no-repeat",
-      "background-attachment": "fixed",
+      "background-attachment": "scroll",
     });
     $p[0].style.removeProperty("background-color");
     $p[0].style.setProperty("--ms-panel-bg-image", bgImg);
     $p[0].style.setProperty("--ms-panel-bg-size", "cover");
     $p[0].style.setProperty("--ms-panel-bg-position", "center");
     $p[0].style.setProperty("--ms-panel-bg-repeat", "no-repeat");
-    $p[0].style.setProperty("--ms-panel-bg-attachment", "fixed");
+    $p[0].style.setProperty("--ms-panel-bg-attachment", "scroll");
     $p[0].style.setProperty(
       "--ms-popup-bg",
       "var(--SmartThemeBlurTintColor,#2a2a3a)",
     );
   } else if (binding.bgMode === "color") {
     var c = binding.bgColor || "#1a1a2e";
+    var op = binding.bgOpacity === undefined ? 1 : binding.bgOpacity;
+    var finalC = c;
+    if (op < 1) {
+      var _cp = parseColorToRGBA(c);
+      if (_cp) {
+        finalC = "rgba(" + _cp.r + "," + _cp.g + "," + _cp.b + "," + op + ")";
+      }
+    }
     $p.css({
       "background-image": "none",
       "background-size": "",
@@ -1291,8 +1380,8 @@ function applyThemeBindingBg($p, binding) {
       "background-repeat": "",
       "background-attachment": "",
     });
-    $p[0].style.setProperty("background-color", c, "important");
-    $p[0].style.setProperty("--ms-popup-bg", c);
+    $p[0].style.setProperty("background-color", finalC, "important");
+    $p[0].style.setProperty("--ms-popup-bg", finalC);
     $p[0].style.setProperty("--ms-panel-bg-image", "none");
     $p[0].style.removeProperty("--ms-panel-bg-size");
     $p[0].style.removeProperty("--ms-panel-bg-position");
@@ -1322,9 +1411,10 @@ function syncThemeBackground() {
     let parentDoc = null;
     let parentWin = null;
     try {
-      if (window.parent && window.parent.document) {
-        parentDoc = window.parent.document;
-        parentWin = window.parent;
+      var _bgWin = getThemeVarWin();
+      if (_bgWin && _bgWin.document) {
+        parentDoc = _bgWin.document;
+        parentWin = _bgWin;
       }
     } catch (e) {}
     const doc = parentDoc || document;
@@ -1343,7 +1433,7 @@ function syncThemeBackground() {
         bgSize = cs.backgroundSize || "cover";
         bgPos = cs.backgroundPosition || "center";
         bgRepeat = cs.backgroundRepeat || "no-repeat";
-        bgAttach = cs.backgroundAttachment || "fixed";
+        bgAttach = "scroll";
         break;
       }
     }
@@ -1380,37 +1470,25 @@ function syncThemeBackground() {
       const pcs = win.getComputedStyle(parentDoc.documentElement);
       rawColor = pcs.getPropertyValue("--SmartThemeBlurTintColor").trim();
     }
-    if (rawColor) {
-      const d = document.createElement("div");
-      d.style.color = rawColor;
-      d.style.display = "none";
-      document.body.appendChild(d);
-      const parsed = getComputedStyle(d).color;
-      document.body.removeChild(d);
-      const m = parsed.match(
-        /rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/,
-      );
-      if (m) {
-        const r = m[1],
-          g = m[2],
-          b = m[3],
-          a = m[4] !== undefined ? parseFloat(m[4]) : 1;
-        const minAlpha = 0.75;
-        if (a < minAlpha) {
-          $p.css(
-            "background-color",
-            "rgba(" + r + "," + g + "," + b + "," + minAlpha + ")",
-          );
-        } else {
-          $p[0].style.removeProperty("background-color");
-        }
-        $p[0].style.setProperty(
-          "--ms-popup-bg",
-          "rgba(" + r + "," + g + "," + b + ",0.95)",
+    var _bgParsed = parseColorToRGBA(rawColor);
+    if (_bgParsed) {
+      var r = _bgParsed.r,
+        g = _bgParsed.g,
+        b = _bgParsed.b,
+        a = _bgParsed.a;
+      var minAlpha = 0.75;
+      if (a < minAlpha) {
+        $p.css(
+          "background-color",
+          "rgba(" + r + "," + g + "," + b + "," + minAlpha + ")",
         );
       } else {
-        $p[0].style.removeProperty("--ms-popup-bg");
+        $p[0].style.removeProperty("background-color");
       }
+      $p[0].style.setProperty(
+        "--ms-popup-bg",
+        "rgba(" + r + "," + g + "," + b + ",0.95)",
+      );
     } else {
       $p[0].style.removeProperty("background-color");
       $p[0].style.removeProperty("--ms-popup-bg");
@@ -1423,12 +1501,11 @@ function updateAccentColor() {
   if (!$p.length) return;
   let raw = "";
   try {
-    if (window.parent && window.parent.document) {
-      const pcs = getComputedStyle(window.parent.document.documentElement);
-      raw =
-        pcs.getPropertyValue("--SmartThemeFavColor").trim() ||
-        pcs.getPropertyValue("--SmartThemeEmColor").trim();
-    }
+    var tw = getThemeVarWin();
+    const pcs = tw.getComputedStyle(tw.document.documentElement);
+    raw =
+      pcs.getPropertyValue("--SmartThemeFavColor").trim() ||
+      pcs.getPropertyValue("--SmartThemeEmColor").trim();
   } catch (e) {}
   if (!raw) {
     const cs = getComputedStyle(document.documentElement);
@@ -1438,15 +1515,12 @@ function updateAccentColor() {
       "#c9957a";
   }
   $p[0].style.setProperty("--ms-accent", raw);
-  const d = document.createElement("div");
-  d.style.color = raw;
-  d.style.display = "none";
-  document.body.appendChild(d);
-  const parsed = getComputedStyle(d).color;
-  document.body.removeChild(d);
-  const m = parsed.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
-  if (m) {
-    $p[0].style.setProperty("--ms-accent-rgb", m[1] + "," + m[2] + "," + m[3]);
+  var _ac = parseColorToRGBA(raw);
+  if (_ac) {
+    $p[0].style.setProperty(
+      "--ms-accent-rgb",
+      _ac.r + "," + _ac.g + "," + _ac.b,
+    );
   }
 }
 
@@ -1582,9 +1656,10 @@ function syncThemeColors() {
     let parentDoc = null;
     let parentWin = null;
     try {
-      if (window.parent && window.parent.document) {
-        parentDoc = window.parent.document;
-        parentWin = window.parent;
+      var _colWin = getThemeVarWin();
+      if (_colWin && _colWin.document) {
+        parentDoc = _colWin.document;
+        parentWin = _colWin;
       }
     } catch (e) {}
     const doc = parentDoc || document;
@@ -6013,7 +6088,7 @@ function getCSS() {
 .ms-find-count{font-size:11px;color:var(--SmartThemeQuoteColor,#888);white-space:nowrap;min-width:32px;text-align:center;flex-shrink:0;}
 .ms-find-count.no-match{color:var(--ms-danger);}
 #${PANEL_ID}.ms-fs-editor-mode{width:96vw!important;max-width:96vw!important;height:90vh!important;max-height:90vh!important;left:50%!important;top:5vh!important;right:auto!important;bottom:auto!important;transform:translateX(-50%)!important;zoom:1!important;}
-.ms-fs-editor-overlay{position:absolute;inset:0;background:var(--ms-popup-bg,var(--SmartThemeBlurTintColor,#1a1a2e));z-index:5005;display:flex;flex-direction:column;padding:8px 10px;gap:6px;background-image:var(--ms-panel-bg-image,none)!important;background-size:var(--ms-panel-bg-size,cover)!important;background-position:var(--ms-panel-bg-position,center)!important;background-repeat:var(--ms-panel-bg-repeat,no-repeat)!important;background-attachment:var(--ms-panel-bg-attachment,fixed)!important;}
+.ms-fs-editor-overlay{position:absolute;inset:0;background:var(--ms-popup-bg,var(--SmartThemeBlurTintColor,#1a1a2e));z-index:5005;display:flex;flex-direction:column;padding:8px 10px;gap:6px;background-image:var(--ms-panel-bg-image,none)!important;background-size:var(--ms-panel-bg-size,cover)!important;background-position:var(--ms-panel-bg-position,center)!important;background-repeat:var(--ms-panel-bg-repeat,no-repeat)!important;background-attachment:var(--ms-panel-bg-attachment,scroll)!important;}
 .ms-fs-editor-overlay .ms-fs-header-bar{display:flex;align-items:center;gap:8px;padding:2px 4px 6px;border-bottom:1px solid var(--SmartThemeBorderColor,#333);flex-shrink:0;}
 .ms-fs-editor-overlay .ms-fs-title-text{font-size:13px;font-weight:600;flex:1;color:var(--SmartThemeBodyColor,#ddd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ms-fs-editor-overlay .ms-md-toolbar{flex-shrink:0;}
@@ -6082,7 +6157,7 @@ function getCSS() {
   background-size:var(--ms-panel-bg-size,cover)!important;
   background-position:var(--ms-panel-bg-position,center)!important;
   background-repeat:var(--ms-panel-bg-repeat,no-repeat)!important;
-  background-attachment:var(--ms-panel-bg-attachment,fixed)!important;
+  background-attachment:var(--ms-panel-bg-attachment,scroll)!important;
 }
 .ms-modal-header{padding:14px 16px 6px;display:flex;align-items:center;gap:10px;flex-shrink:0;}
 .ms-modal-icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;}
@@ -6561,7 +6636,7 @@ function buildListBody() {
       (g.iconMode === "char" && g.iconCharKey);
     var _iconH = _useAvatar
       ? buildGroupAvatarHTML(g, 32)
-      : `<div class="ms-nav-icon" style="background:${g.color}22;color:${g.color};"><i class="fa-solid fa-folder"></i></div>`;
+      : `<div class="ms-nav-icon" style="background:${g.color}22;color:${g.color};"><i class="fa-solid fa-folder" style="color:${g.color};"></i></div>`;
     var cntParts = [];
     if (charCnt > 0)
       cntParts.push(
@@ -8914,7 +8989,7 @@ function bindAllEvents() {
   $body.off("scroll.ms-scroll-top").on("scroll.ms-scroll-top", function () {
     var el = this;
     if (_scrollRaf) return;
-    _scrollRaf = requestAnimationFrame(function () {
+    _scrollRaf = setTimeout(function () {
       _scrollRaf = null;
       var $btnTop = $p.find("#ms-scroll-top");
       var $btnBottom = $p.find("#ms-scroll-bottom");
@@ -18993,16 +19068,25 @@ function renderThemeBinding() {
     var html = "";
     html +=
       '<div style="padding:10px 14px;background:rgba(var(--ms-accent-rgb),0.06);border-bottom:1px solid var(--SmartThemeBorderColor,#333);font-size:12px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;"><i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>若主题背景缺失或文字不易辨认，可在此手动指定其面板背景与文字颜色。设置后将覆盖自动抓取，仅对该主题生效。</div>';
-    html +=
-      '<div style="padding:8px 14px;"><button class="ms-tbtn" id="ms-tb-add" style="width:100%;text-align:center;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>添加主题绑定</button></div>';
     if (curTheme) {
       html +=
-        '<div style="padding:0 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);">当前主题：<strong style="color:var(--ms-accent);">' +
+        '<div style="padding:10px 14px;background:rgba(var(--ms-accent-rgb),0.05);border-bottom:1px solid var(--SmartThemeBorderColor,#333);">' +
+        '<div style="font-size:12px;color:var(--SmartThemeBodyColor,#ccc);margin-bottom:8px;"><i class="fa-solid fa-palette" style="color:var(--ms-accent);margin-right:4px;"></i>当前主题：<strong style="color:var(--ms-accent);">' +
         esc(curTheme) +
         "</strong>" +
-        (bindings[curTheme] ? " · 已绑定" : " · 未绑定") +
-        "</div>";
+        (bindings[curTheme]
+          ? ' <span style="font-size:10px;color:var(--ms-success);">· 已绑定</span>'
+          : ' <span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">· 未绑定</span>') +
+        "</div>" +
+        '<button class="ms-tbtn" id="ms-tb-bind-current" style="width:100%;text-align:center;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-bolt" style="margin-right:4px;"></i>' +
+        (bindings[curTheme] ? "编辑当前主题绑定" : "为当前主题绑定") +
+        "</button></div>";
+    } else {
+      html +=
+        '<div style="padding:10px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);background:rgba(255,255,255,0.02);border-bottom:1px solid var(--SmartThemeBorderColor,#333);"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>当前未读取到主题名</div>';
     }
+    html +=
+      '<div style="padding:8px 14px;"><button class="ms-tbtn" id="ms-tb-add" style="width:100%;text-align:center;"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>添加其它主题绑定</button></div>';
     if (boundNames.length === 0) {
       html +=
         '<div class="ms-empty"><i class="fa-solid fa-palette"></i>还没有绑定任何主题</div>';
@@ -19132,6 +19216,7 @@ function renderThemeBinding() {
       bgMode: existing.bgMode || "default",
       bgImage: existing.bgImage || "",
       bgColor: existing.bgColor || "#1a1a2e",
+      bgOpacity: existing.bgOpacity === undefined ? 1 : existing.bgOpacity,
       textColor: existing.textColor || "",
       _textEnabled: !!existing.textColor,
     };
@@ -19142,6 +19227,8 @@ function renderThemeBinding() {
       } else if (work.bgMode === "color") {
         var v = $overlay.find("#ms-tb-bgcolor").val();
         if (v) work.bgColor = v;
+        var ov = $overlay.find("#ms-tb-bgopacity").val();
+        if (ov !== undefined && ov !== "") work.bgOpacity = parseInt(ov) / 100;
       }
       if (work._textEnabled) {
         var tv = $overlay.find("#ms-tb-textcolor").val();
@@ -19179,10 +19266,23 @@ function renderThemeBinding() {
       });
       html += "</div>";
       if (work.bgMode === "color") {
+        var _opPct = Math.round(
+          (work.bgOpacity === undefined ? 1 : work.bgOpacity) * 100,
+        );
         html +=
           '<input type="color" id="ms-tb-bgcolor" value="' +
           escAttr(work.bgColor) +
           '" style="width:100%;height:36px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;background:transparent;cursor:pointer;margin-bottom:8px;">';
+        html +=
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
+          '<span style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);flex-shrink:0;">不透明度</span>' +
+          '<input type="range" id="ms-tb-bgopacity" min="0" max="100" step="1" value="' +
+          _opPct +
+          '" style="flex:1;cursor:pointer;accent-color:var(--ms-accent);">' +
+          '<span id="ms-tb-bgopacity-val" style="font-size:11px;color:var(--ms-accent);flex-shrink:0;min-width:38px;text-align:right;">' +
+          _opPct +
+          "%</span></div>" +
+          '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;line-height:1.5;">越低面板越透，能看到背后的聊天界面；100% 为完全不透明</div>';
       } else if (work.bgMode === "image") {
         html +=
           '<input class="ms-modal-input" id="ms-tb-bgimg" type="text" placeholder="粘贴图片直链 URL（图床地址）..." value="' +
@@ -19243,6 +19343,7 @@ function renderThemeBinding() {
           bgMode: work.bgMode,
           bgImage: work.bgImage || "",
           bgColor: work.bgColor || "#1a1a2e",
+          bgOpacity: work.bgOpacity === undefined ? 1 : work.bgOpacity,
           textColor: work._textEnabled ? work.textColor || "#cccccc" : "",
         };
         if (saved.bgMode === "image" && !saved.bgImage) {
@@ -19270,6 +19371,12 @@ function renderThemeBinding() {
       buttons: btns,
       cancelValue: null,
       onShow: function ($overlay) {
+        $overlay.on("input", "#ms-tb-bgopacity", function () {
+          var pct = parseInt($(this).val());
+          if (isNaN(pct)) pct = 100;
+          work.bgOpacity = pct / 100;
+          $overlay.find("#ms-tb-bgopacity-val").text(pct + "%");
+        });
         $overlay.on("click", "[data-tb-bgmode]", function () {
           captureInputs($overlay);
           work.bgMode = $(this).attr("data-tb-bgmode");
@@ -19293,6 +19400,14 @@ function renderThemeBinding() {
   refresh();
   bindAllEvents();
   $p.find("#ms-body").on("click.ms", "#ms-tb-add", showThemePicker);
+  $p.find("#ms-body").on("click.ms", "#ms-tb-bind-current", function () {
+    var cur = getCurrentThemeName();
+    if (!cur) {
+      toast("warning", "没有读取到当前主题名");
+      return;
+    }
+    showThemeBindingEditor(cur);
+  });
   $p.find("#ms-body").on("click.ms", "[data-tb-edit]", function () {
     showThemeBindingEditor($(this).attr("data-tb-edit"));
   });
@@ -21011,7 +21126,7 @@ function resetPanelPosition() {
   $p[0].style.removeProperty("transform");
   data.settings.panelPos = null;
   saveData();
-  toast("info", "面板已回到默认位置");
+  toast("info", "面板已回到默认位置", 500);
 }
 
 function showPanel() {
@@ -22728,11 +22843,6 @@ function makeDraggable() {
   headerEl.addEventListener("pointerup", endDrag);
   headerEl.addEventListener("pointercancel", endDrag);
   headerEl.addEventListener("lostpointercapture", endDrag);
-
-  headerEl.addEventListener("dblclick", function (e) {
-    if (e.target.closest(".ms-hbtn, button")) return;
-    resetPanelPosition();
-  });
 }
 
 function addMenuButton() {
@@ -23300,6 +23410,21 @@ function init() {
       });
       window._msThemeObs = themeObs;
     }
+  } catch (e) {}
+  try {
+    var _msLastTheme = getCurrentThemeName();
+    if (window._msThemePoll) clearInterval(window._msThemePoll);
+    window._msThemePoll = setInterval(function () {
+      if (!panelVisible) return;
+      var cur = getCurrentThemeName();
+      if (cur !== _msLastTheme) {
+        _msLastTheme = cur;
+        updateAccentColor();
+        syncThemeBackground();
+        syncThemeColors();
+        applyUICustomization();
+      }
+    }, 1000);
   } catch (e) {}
   window.addEventListener("resize", function () {
     const $p = $("#" + PANEL_ID);

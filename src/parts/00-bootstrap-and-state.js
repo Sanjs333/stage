@@ -2,7 +2,7 @@
 const STORAGE_KEY = "miniStage_data";
 const PANEL_ID = "mini-stage-panel";
 const STYLE_ID = "mini-stage-styles";
-const SCRIPT_VERSION = "3.7.1";
+const SCRIPT_VERSION = "3.7.2";
 const GROUP_COLORS = [
   "#D6A2A2",
   "#DDAA90",
@@ -25,7 +25,7 @@ const GROUP_COLORS = [
   "#8b5b8c",
 ];
 const TAG_COLORS = GROUP_COLORS;
-var GUIDE_VERSION = "3.7.1";
+var GUIDE_VERSION = "3.7.2";
 var GUIDE_REMOTE_URLS = {
   guide:
     "https://gist.githubusercontent.com/Sanjs333/c45460dc2bb5908ff53b5769088b122d/raw/guide.md",
@@ -296,9 +296,9 @@ function toast(type, msg, duration) {
   if (typeof toastr !== "undefined" && toastr[type]) {
     var defaultDuration = {
       success: 800,
-      info: 1500,
-      warning: 1500,
-      error: 1500,
+      info: 1000,
+      warning: 1200,
+      error: 1000,
     };
     var finalDuration =
       duration !== undefined ? duration : defaultDuration[type] || 3000;
@@ -386,9 +386,9 @@ function showModal(opts) {
     if (typeof opts.body === "function") {
       $overlay.find(".ms-modal-body").html(opts.body($overlay));
     }
-    requestAnimationFrame(function () {
+    setTimeout(function () {
       $overlay.addClass("visible");
-    });
+    }, 20);
     var closed = false;
     function close(result) {
       if (closed) return;
@@ -1054,11 +1054,86 @@ function getParentWindowSafe() {
   return null;
 }
 
+function getThemeVarWin() {
+  var candidates = [];
+  try {
+    var $pp = $("#" + PANEL_ID);
+    if ($pp.length && $pp[0].ownerDocument) {
+      var ownerWin = $pp[0].ownerDocument.defaultView;
+      if (ownerWin) candidates.push(ownerWin);
+    }
+  } catch (e) {}
+  try {
+    if (window.top) candidates.push(window.top);
+  } catch (e) {}
+  try {
+    var pw = getParentWindowSafe();
+    if (pw && candidates.indexOf(pw) < 0) {
+      candidates.push(pw);
+    }
+  } catch (e) {}
+  candidates.push(window);
+  for (var i = 0; i < candidates.length; i++) {
+    try {
+      var w = candidates[i];
+      var cs = w.getComputedStyle(w.document.documentElement);
+      var probe =
+        cs.getPropertyValue("--SmartThemeBodyColor").trim() ||
+        cs.getPropertyValue("--SmartThemeBlurTintColor").trim() ||
+        cs.getPropertyValue("--SmartThemeEmColor").trim();
+      if (probe) return w;
+    } catch (e) {}
+  }
+  return window;
+}
+
+function parseColorToRGBA(colorStr) {
+  if (!colorStr) return null;
+  var s = String(colorStr).trim();
+  var direct = s.match(
+    /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/i,
+  );
+  if (direct) {
+    return {
+      r: direct[1],
+      g: direct[2],
+      b: direct[3],
+      a: direct[4] !== undefined ? parseFloat(direct[4]) : 1,
+    };
+  }
+  try {
+    var w = getThemeVarWin();
+    var doc = w.document;
+    var d = doc.createElement("div");
+    d.style.color = s;
+    d.style.display = "none";
+    doc.body.appendChild(d);
+    var parsed = w.getComputedStyle(d).color;
+    doc.body.removeChild(d);
+    var m = parsed.match(
+      /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([\d.]+))?\s*\)/i,
+    );
+    if (m) {
+      return {
+        r: m[1],
+        g: m[2],
+        b: m[3],
+        a: m[4] !== undefined ? parseFloat(m[4]) : 1,
+      };
+    }
+  } catch (e) {}
+  return null;
+}
+
 function getThemeSelectDocs() {
   var docs = [];
   try {
+    if (window.top && window.top.document) docs.push(window.top.document);
+  } catch (e) {}
+  try {
     var parentWin = getParentWindowSafe();
-    if (parentWin && parentWin.document) docs.push(parentWin.document);
+    if (parentWin && parentWin.document && docs.indexOf(parentWin.document) < 0)
+      docs.push(parentWin.document);
   } catch (e) {}
   try {
     if (document && docs.indexOf(document) < 0) docs.push(document);
@@ -1106,6 +1181,9 @@ function getSillyTavernLikeObjects() {
     var parentWin = getParentWindowSafe();
     if (parentWin) add(parentWin.SillyTavern);
   } catch (e) {}
+  try {
+    if (window.top) add(window.top.SillyTavern);
+  } catch (e) {}
   return list;
 }
 
@@ -1134,6 +1212,9 @@ function getPowerUserSettingsCandidates() {
   try {
     var parentWin = getParentWindowSafe();
     if (parentWin) add(parentWin.power_user);
+  } catch (e) {}
+  try {
+    if (window.top) add(window.top.power_user);
   } catch (e) {}
   return list;
 }
@@ -1264,20 +1345,28 @@ function applyThemeBindingBg($p, binding) {
       "background-size": "cover",
       "background-position": "center",
       "background-repeat": "no-repeat",
-      "background-attachment": "fixed",
+      "background-attachment": "scroll",
     });
     $p[0].style.removeProperty("background-color");
     $p[0].style.setProperty("--ms-panel-bg-image", bgImg);
     $p[0].style.setProperty("--ms-panel-bg-size", "cover");
     $p[0].style.setProperty("--ms-panel-bg-position", "center");
     $p[0].style.setProperty("--ms-panel-bg-repeat", "no-repeat");
-    $p[0].style.setProperty("--ms-panel-bg-attachment", "fixed");
+    $p[0].style.setProperty("--ms-panel-bg-attachment", "scroll");
     $p[0].style.setProperty(
       "--ms-popup-bg",
       "var(--SmartThemeBlurTintColor,#2a2a3a)",
     );
   } else if (binding.bgMode === "color") {
     var c = binding.bgColor || "#1a1a2e";
+    var op = binding.bgOpacity === undefined ? 1 : binding.bgOpacity;
+    var finalC = c;
+    if (op < 1) {
+      var _cp = parseColorToRGBA(c);
+      if (_cp) {
+        finalC = "rgba(" + _cp.r + "," + _cp.g + "," + _cp.b + "," + op + ")";
+      }
+    }
     $p.css({
       "background-image": "none",
       "background-size": "",
@@ -1285,8 +1374,8 @@ function applyThemeBindingBg($p, binding) {
       "background-repeat": "",
       "background-attachment": "",
     });
-    $p[0].style.setProperty("background-color", c, "important");
-    $p[0].style.setProperty("--ms-popup-bg", c);
+    $p[0].style.setProperty("background-color", finalC, "important");
+    $p[0].style.setProperty("--ms-popup-bg", finalC);
     $p[0].style.setProperty("--ms-panel-bg-image", "none");
     $p[0].style.removeProperty("--ms-panel-bg-size");
     $p[0].style.removeProperty("--ms-panel-bg-position");
@@ -1316,9 +1405,10 @@ function syncThemeBackground() {
     let parentDoc = null;
     let parentWin = null;
     try {
-      if (window.parent && window.parent.document) {
-        parentDoc = window.parent.document;
-        parentWin = window.parent;
+      var _bgWin = getThemeVarWin();
+      if (_bgWin && _bgWin.document) {
+        parentDoc = _bgWin.document;
+        parentWin = _bgWin;
       }
     } catch (e) {}
     const doc = parentDoc || document;
@@ -1337,7 +1427,7 @@ function syncThemeBackground() {
         bgSize = cs.backgroundSize || "cover";
         bgPos = cs.backgroundPosition || "center";
         bgRepeat = cs.backgroundRepeat || "no-repeat";
-        bgAttach = cs.backgroundAttachment || "fixed";
+        bgAttach = "scroll";
         break;
       }
     }
@@ -1374,37 +1464,25 @@ function syncThemeBackground() {
       const pcs = win.getComputedStyle(parentDoc.documentElement);
       rawColor = pcs.getPropertyValue("--SmartThemeBlurTintColor").trim();
     }
-    if (rawColor) {
-      const d = document.createElement("div");
-      d.style.color = rawColor;
-      d.style.display = "none";
-      document.body.appendChild(d);
-      const parsed = getComputedStyle(d).color;
-      document.body.removeChild(d);
-      const m = parsed.match(
-        /rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/,
-      );
-      if (m) {
-        const r = m[1],
-          g = m[2],
-          b = m[3],
-          a = m[4] !== undefined ? parseFloat(m[4]) : 1;
-        const minAlpha = 0.75;
-        if (a < minAlpha) {
-          $p.css(
-            "background-color",
-            "rgba(" + r + "," + g + "," + b + "," + minAlpha + ")",
-          );
-        } else {
-          $p[0].style.removeProperty("background-color");
-        }
-        $p[0].style.setProperty(
-          "--ms-popup-bg",
-          "rgba(" + r + "," + g + "," + b + ",0.95)",
+    var _bgParsed = parseColorToRGBA(rawColor);
+    if (_bgParsed) {
+      var r = _bgParsed.r,
+        g = _bgParsed.g,
+        b = _bgParsed.b,
+        a = _bgParsed.a;
+      var minAlpha = 0.75;
+      if (a < minAlpha) {
+        $p.css(
+          "background-color",
+          "rgba(" + r + "," + g + "," + b + "," + minAlpha + ")",
         );
       } else {
-        $p[0].style.removeProperty("--ms-popup-bg");
+        $p[0].style.removeProperty("background-color");
       }
+      $p[0].style.setProperty(
+        "--ms-popup-bg",
+        "rgba(" + r + "," + g + "," + b + ",0.95)",
+      );
     } else {
       $p[0].style.removeProperty("background-color");
       $p[0].style.removeProperty("--ms-popup-bg");
@@ -1417,12 +1495,11 @@ function updateAccentColor() {
   if (!$p.length) return;
   let raw = "";
   try {
-    if (window.parent && window.parent.document) {
-      const pcs = getComputedStyle(window.parent.document.documentElement);
-      raw =
-        pcs.getPropertyValue("--SmartThemeFavColor").trim() ||
-        pcs.getPropertyValue("--SmartThemeEmColor").trim();
-    }
+    var tw = getThemeVarWin();
+    const pcs = tw.getComputedStyle(tw.document.documentElement);
+    raw =
+      pcs.getPropertyValue("--SmartThemeFavColor").trim() ||
+      pcs.getPropertyValue("--SmartThemeEmColor").trim();
   } catch (e) {}
   if (!raw) {
     const cs = getComputedStyle(document.documentElement);
@@ -1432,15 +1509,12 @@ function updateAccentColor() {
       "#c9957a";
   }
   $p[0].style.setProperty("--ms-accent", raw);
-  const d = document.createElement("div");
-  d.style.color = raw;
-  d.style.display = "none";
-  document.body.appendChild(d);
-  const parsed = getComputedStyle(d).color;
-  document.body.removeChild(d);
-  const m = parsed.match(/rgba?\(\s*(\d+),\s*(\d+),\s*(\d+)/);
-  if (m) {
-    $p[0].style.setProperty("--ms-accent-rgb", m[1] + "," + m[2] + "," + m[3]);
+  var _ac = parseColorToRGBA(raw);
+  if (_ac) {
+    $p[0].style.setProperty(
+      "--ms-accent-rgb",
+      _ac.r + "," + _ac.g + "," + _ac.b,
+    );
   }
 }
 
@@ -1576,9 +1650,10 @@ function syncThemeColors() {
     let parentDoc = null;
     let parentWin = null;
     try {
-      if (window.parent && window.parent.document) {
-        parentDoc = window.parent.document;
-        parentWin = window.parent;
+      var _colWin = getThemeVarWin();
+      if (_colWin && _colWin.document) {
+        parentDoc = _colWin.document;
+        parentWin = _colWin;
       }
     } catch (e) {}
     const doc = parentDoc || document;

@@ -553,6 +553,21 @@ function init() {
       window._msThemeObs = themeObs;
     }
   } catch (e) {}
+  try {
+    var _msLastTheme = getCurrentThemeName();
+    if (window._msThemePoll) clearInterval(window._msThemePoll);
+    window._msThemePoll = setInterval(function () {
+      if (!panelVisible) return;
+      var cur = getCurrentThemeName();
+      if (cur !== _msLastTheme) {
+        _msLastTheme = cur;
+        updateAccentColor();
+        syncThemeBackground();
+        syncThemeColors();
+        applyUICustomization();
+      }
+    }, 1000);
+  } catch (e) {}
   window.addEventListener("resize", function () {
     const $p = $("#" + PANEL_ID);
     if (!$p.length || !panelVisible) return;

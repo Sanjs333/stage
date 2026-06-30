@@ -151,16 +151,25 @@ function renderThemeBinding() {
     var html = "";
     html +=
       '<div style="padding:10px 14px;background:rgba(var(--ms-accent-rgb),0.06);border-bottom:1px solid var(--SmartThemeBorderColor,#333);font-size:12px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;"><i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>若主题背景缺失或文字不易辨认，可在此手动指定其面板背景与文字颜色。设置后将覆盖自动抓取，仅对该主题生效。</div>';
-    html +=
-      '<div style="padding:8px 14px;"><button class="ms-tbtn" id="ms-tb-add" style="width:100%;text-align:center;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>添加主题绑定</button></div>';
     if (curTheme) {
       html +=
-        '<div style="padding:0 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);">当前主题：<strong style="color:var(--ms-accent);">' +
+        '<div style="padding:10px 14px;background:rgba(var(--ms-accent-rgb),0.05);border-bottom:1px solid var(--SmartThemeBorderColor,#333);">' +
+        '<div style="font-size:12px;color:var(--SmartThemeBodyColor,#ccc);margin-bottom:8px;"><i class="fa-solid fa-palette" style="color:var(--ms-accent);margin-right:4px;"></i>当前主题：<strong style="color:var(--ms-accent);">' +
         esc(curTheme) +
         "</strong>" +
-        (bindings[curTheme] ? " · 已绑定" : " · 未绑定") +
-        "</div>";
+        (bindings[curTheme]
+          ? ' <span style="font-size:10px;color:var(--ms-success);">· 已绑定</span>'
+          : ' <span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">· 未绑定</span>') +
+        "</div>" +
+        '<button class="ms-tbtn" id="ms-tb-bind-current" style="width:100%;text-align:center;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-bolt" style="margin-right:4px;"></i>' +
+        (bindings[curTheme] ? "编辑当前主题绑定" : "为当前主题绑定") +
+        "</button></div>";
+    } else {
+      html +=
+        '<div style="padding:10px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);background:rgba(255,255,255,0.02);border-bottom:1px solid var(--SmartThemeBorderColor,#333);"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>当前未读取到主题名</div>';
     }
+    html +=
+      '<div style="padding:8px 14px;"><button class="ms-tbtn" id="ms-tb-add" style="width:100%;text-align:center;"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>添加其它主题绑定</button></div>';
     if (boundNames.length === 0) {
       html +=
         '<div class="ms-empty"><i class="fa-solid fa-palette"></i>还没有绑定任何主题</div>';
@@ -290,6 +299,7 @@ function renderThemeBinding() {
       bgMode: existing.bgMode || "default",
       bgImage: existing.bgImage || "",
       bgColor: existing.bgColor || "#1a1a2e",
+      bgOpacity: existing.bgOpacity === undefined ? 1 : existing.bgOpacity,
       textColor: existing.textColor || "",
       _textEnabled: !!existing.textColor,
     };
@@ -300,6 +310,8 @@ function renderThemeBinding() {
       } else if (work.bgMode === "color") {
         var v = $overlay.find("#ms-tb-bgcolor").val();
         if (v) work.bgColor = v;
+        var ov = $overlay.find("#ms-tb-bgopacity").val();
+        if (ov !== undefined && ov !== "") work.bgOpacity = parseInt(ov) / 100;
       }
       if (work._textEnabled) {
         var tv = $overlay.find("#ms-tb-textcolor").val();
@@ -337,10 +349,23 @@ function renderThemeBinding() {
       });
       html += "</div>";
       if (work.bgMode === "color") {
+        var _opPct = Math.round(
+          (work.bgOpacity === undefined ? 1 : work.bgOpacity) * 100,
+        );
         html +=
           '<input type="color" id="ms-tb-bgcolor" value="' +
           escAttr(work.bgColor) +
           '" style="width:100%;height:36px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;background:transparent;cursor:pointer;margin-bottom:8px;">';
+        html +=
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
+          '<span style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);flex-shrink:0;">不透明度</span>' +
+          '<input type="range" id="ms-tb-bgopacity" min="0" max="100" step="1" value="' +
+          _opPct +
+          '" style="flex:1;cursor:pointer;accent-color:var(--ms-accent);">' +
+          '<span id="ms-tb-bgopacity-val" style="font-size:11px;color:var(--ms-accent);flex-shrink:0;min-width:38px;text-align:right;">' +
+          _opPct +
+          "%</span></div>" +
+          '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;line-height:1.5;">越低面板越透，能看到背后的聊天界面；100% 为完全不透明</div>';
       } else if (work.bgMode === "image") {
         html +=
           '<input class="ms-modal-input" id="ms-tb-bgimg" type="text" placeholder="粘贴图片直链 URL（图床地址）..." value="' +
@@ -401,6 +426,7 @@ function renderThemeBinding() {
           bgMode: work.bgMode,
           bgImage: work.bgImage || "",
           bgColor: work.bgColor || "#1a1a2e",
+          bgOpacity: work.bgOpacity === undefined ? 1 : work.bgOpacity,
           textColor: work._textEnabled ? work.textColor || "#cccccc" : "",
         };
         if (saved.bgMode === "image" && !saved.bgImage) {
@@ -428,6 +454,12 @@ function renderThemeBinding() {
       buttons: btns,
       cancelValue: null,
       onShow: function ($overlay) {
+        $overlay.on("input", "#ms-tb-bgopacity", function () {
+          var pct = parseInt($(this).val());
+          if (isNaN(pct)) pct = 100;
+          work.bgOpacity = pct / 100;
+          $overlay.find("#ms-tb-bgopacity-val").text(pct + "%");
+        });
         $overlay.on("click", "[data-tb-bgmode]", function () {
           captureInputs($overlay);
           work.bgMode = $(this).attr("data-tb-bgmode");
@@ -451,6 +483,14 @@ function renderThemeBinding() {
   refresh();
   bindAllEvents();
   $p.find("#ms-body").on("click.ms", "#ms-tb-add", showThemePicker);
+  $p.find("#ms-body").on("click.ms", "#ms-tb-bind-current", function () {
+    var cur = getCurrentThemeName();
+    if (!cur) {
+      toast("warning", "没有读取到当前主题名");
+      return;
+    }
+    showThemeBindingEditor(cur);
+  });
   $p.find("#ms-body").on("click.ms", "[data-tb-edit]", function () {
     showThemeBindingEditor($(this).attr("data-tb-edit"));
   });

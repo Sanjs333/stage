@@ -731,7 +731,7 @@
   $body.off("scroll.ms-scroll-top").on("scroll.ms-scroll-top", function () {
     var el = this;
     if (_scrollRaf) return;
-    _scrollRaf = requestAnimationFrame(function () {
+    _scrollRaf = setTimeout(function () {
       _scrollRaf = null;
       var $btnTop = $p.find("#ms-scroll-top");
       var $btnBottom = $p.find("#ms-scroll-bottom");

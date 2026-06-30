@@ -394,7 +394,7 @@
 .ms-find-count{font-size:11px;color:var(--SmartThemeQuoteColor,#888);white-space:nowrap;min-width:32px;text-align:center;flex-shrink:0;}
 .ms-find-count.no-match{color:var(--ms-danger);}
 #${PANEL_ID}.ms-fs-editor-mode{width:96vw!important;max-width:96vw!important;height:90vh!important;max-height:90vh!important;left:50%!important;top:5vh!important;right:auto!important;bottom:auto!important;transform:translateX(-50%)!important;zoom:1!important;}
-.ms-fs-editor-overlay{position:absolute;inset:0;background:var(--ms-popup-bg,var(--SmartThemeBlurTintColor,#1a1a2e));z-index:5005;display:flex;flex-direction:column;padding:8px 10px;gap:6px;background-image:var(--ms-panel-bg-image,none)!important;background-size:var(--ms-panel-bg-size,cover)!important;background-position:var(--ms-panel-bg-position,center)!important;background-repeat:var(--ms-panel-bg-repeat,no-repeat)!important;background-attachment:var(--ms-panel-bg-attachment,fixed)!important;}
+.ms-fs-editor-overlay{position:absolute;inset:0;background:var(--ms-popup-bg,var(--SmartThemeBlurTintColor,#1a1a2e));z-index:5005;display:flex;flex-direction:column;padding:8px 10px;gap:6px;background-image:var(--ms-panel-bg-image,none)!important;background-size:var(--ms-panel-bg-size,cover)!important;background-position:var(--ms-panel-bg-position,center)!important;background-repeat:var(--ms-panel-bg-repeat,no-repeat)!important;background-attachment:var(--ms-panel-bg-attachment,scroll)!important;}
 .ms-fs-editor-overlay .ms-fs-header-bar{display:flex;align-items:center;gap:8px;padding:2px 4px 6px;border-bottom:1px solid var(--SmartThemeBorderColor,#333);flex-shrink:0;}
 .ms-fs-editor-overlay .ms-fs-title-text{font-size:13px;font-weight:600;flex:1;color:var(--SmartThemeBodyColor,#ddd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 .ms-fs-editor-overlay .ms-md-toolbar{flex-shrink:0;}
@@ -463,7 +463,7 @@
   background-size:var(--ms-panel-bg-size,cover)!important;
   background-position:var(--ms-panel-bg-position,center)!important;
   background-repeat:var(--ms-panel-bg-repeat,no-repeat)!important;
-  background-attachment:var(--ms-panel-bg-attachment,fixed)!important;
+  background-attachment:var(--ms-panel-bg-attachment,scroll)!important;
 }
 .ms-modal-header{padding:14px 16px 6px;display:flex;align-items:center;gap:10px;flex-shrink:0;}
 .ms-modal-icon{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:13px;}
