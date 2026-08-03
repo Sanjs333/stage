@@ -1,4 +1,4 @@
-﻿async function deleteLastPair() {
+async function deleteLastPair() {
   const lastId = getLastMessageId();
   if (lastId < 0) {
     toast("warning", "没有消息可以删除");
@@ -70,7 +70,8 @@ function init() {
   addScriptButton();
   if (data.settings.panelWasVisible) {
     setTimeout(function () {
-      showPanel();
+      if (data.settings.collapseMode === "ball") showFloatBall();
+      else showPanel();
     }, 2000);
   }
   setTimeout(function () {
@@ -339,7 +340,6 @@ function init() {
 
           if (!data.settings.stageInjectEnabled) return;
           var stagePrompts = [];
-          var wasManual = false;
           var sids = data.settings.stageSelectedIds || [];
 
           if (sids.length > 0) {
@@ -347,9 +347,16 @@ function init() {
               var sp = getPrompt(sid);
               if (sp) stagePrompts.push(sp);
             });
-            wasManual = true;
           }
 
+          if (stagePrompts.length === 0) {
+            var _pinnedSeq = resolvePinnedSequence();
+            if (_pinnedSeq.length > 0) {
+              _pinnedSeq.forEach(function (_pp) {
+                stagePrompts.push(_pp);
+              });
+            }
+          }
           if (
             stagePrompts.length === 0 &&
             data.settings.randomInject &&
@@ -367,7 +374,6 @@ function init() {
               var rp = getRandomStagePrompt();
               if (rp) stagePrompts.push(rp);
             }
-            wasManual = false;
           }
           _currentStagePrompts = [];
           if (stagePrompts.length === 0) {

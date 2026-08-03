@@ -1,4 +1,4 @@
-﻿function createGroup(name) {
+function createGroup(name) {
   const g = {
     id: uid(),
     name,
@@ -123,6 +123,17 @@ function deletePrompts(ids) {
     data.settings.stageSelectedIds = data.settings.stageSelectedIds.filter(
       (sid) => !s.has(sid),
     );
+  }
+  if (
+    data.settings.pinnedInject &&
+    Array.isArray(data.settings.pinnedInject.sequence)
+  ) {
+    data.settings.pinnedInject.sequence =
+      data.settings.pinnedInject.sequence.filter(function (it) {
+        if (!it) return false;
+        if (it.type === "random") return true;
+        return !s.has(it.id);
+      });
   }
   var ri = data.settings.randomInject;
   if (ri && Array.isArray(ri.excludedPromptIds)) {

@@ -1,4 +1,4 @@
-﻿function getPanelHTML() {
+function getPanelHTML() {
   return `<div id="${PANEL_ID}">
       <div class="ms-header" id="ms-header">
         <i class="fa-solid fa-grip ms-drag-handle"></i>
@@ -65,6 +65,7 @@ function renderView() {
     "subscription-add": renderSubscriptionAdd,
     "subscription-detail": renderSubscriptionDetail,
     "random-pool": renderRandomPool,
+    "pinned-pool": renderPinnedPool,
     "theme-binding": renderThemeBinding,
   };
   if (map[v.name]) map[v.name](v);

@@ -1,4 +1,4 @@
-﻿function buildExportPayload(
+function buildExportPayload(
   exportPrompts,
   includeGroups,
   includeTags,
@@ -797,6 +797,7 @@ function exitFocusMode() {
 }
 
 function updateInjectIndicator() {
+  syncBallBadge();
   var $p = $("#" + PANEL_ID);
   if (!$p.length) return;
   var $ind = $p.find("#ms-inject-indicator");
@@ -1089,30 +1090,7 @@ function getRandomStagePrompt() {
   var pool = data.prompts.filter(function (p) {
     return isInRandomPool(p);
   });
-  if (pool.length === 0) return null;
-  var now = Date.now();
-  var weighted = pool.map(function (p) {
-    var w = 1;
-    if (p.lastUsedAt) {
-      var hoursAgo = (now - p.lastUsedAt) / 3600000;
-      if (hoursAgo < 1) w = 0.1;
-      else if (hoursAgo < 6) w = 0.3;
-      else if (hoursAgo < 24) w = 0.6;
-      else if (hoursAgo < 72) w = 0.85;
-    }
-    return { p: p, w: w };
-  });
-  var totalW = 0;
-  weighted.forEach(function (it) {
-    totalW += it.w;
-  });
-  var r = Math.random() * totalW;
-  var acc = 0;
-  for (var i = 0; i < weighted.length; i++) {
-    acc += weighted[i].w;
-    if (r <= acc) return weighted[i].p;
-  }
-  return pool[Math.floor(Math.random() * pool.length)];
+  return _pickWeightedFromPool(pool);
 }
 
 function getRandomStagePrompts(count) {
@@ -1121,41 +1099,85 @@ function getRandomStagePrompts(count) {
   });
   if (pool.length === 0) return [];
   count = Math.min(Math.max(1, count), pool.length);
-  var now = Date.now();
   var available = pool.slice();
   var result = [];
   while (result.length < count && available.length > 0) {
-    var weighted = available.map(function (p) {
-      var w = 1;
-      if (p.lastUsedAt) {
-        var hoursAgo = (now - p.lastUsedAt) / 3600000;
-        if (hoursAgo < 1) w = 0.1;
-        else if (hoursAgo < 6) w = 0.3;
-        else if (hoursAgo < 24) w = 0.6;
-        else if (hoursAgo < 72) w = 0.85;
-      }
-      return { p: p, w: w };
-    });
-    var totalW = 0;
-    weighted.forEach(function (it) {
-      totalW += it.w;
-    });
-    var r = Math.random() * totalW;
-    var acc = 0;
-    var picked = null;
-    for (var i = 0; i < weighted.length; i++) {
-      acc += weighted[i].w;
-      if (r <= acc) {
-        picked = weighted[i].p;
-        break;
-      }
-    }
-    if (!picked)
-      picked = available[Math.floor(Math.random() * available.length)];
+    var picked = _pickWeightedFromPool(available);
+    if (!picked) break;
     result.push(picked);
     available = available.filter(function (p) {
       return p.id !== picked.id;
     });
+  }
+  return result;
+}
+function _pickWeightedFromPool(pool) {
+  if (!pool || pool.length === 0) return null;
+  var now = Date.now();
+  var totalW = 0;
+  var weights = pool.map(function (p) {
+    var w = 1;
+    if (p.lastUsedAt) {
+      var hoursAgo = (now - p.lastUsedAt) / 3600000;
+      if (hoursAgo < 1) w = 0.1;
+      else if (hoursAgo < 6) w = 0.3;
+      else if (hoursAgo < 24) w = 0.6;
+      else if (hoursAgo < 72) w = 0.85;
+    }
+    totalW += w;
+    return w;
+  });
+  var r = Math.random() * totalW;
+  var acc = 0;
+  for (var i = 0; i < pool.length; i++) {
+    acc += weights[i];
+    if (r <= acc) return pool[i];
+  }
+  return pool[pool.length - 1];
+}
+
+function getPinnedInjectCount() {
+  var pi = data.settings.pinnedInject;
+  if (!pi || !pi.enabled || !Array.isArray(pi.sequence)) return 0;
+  var randomEnabled = !!(
+    data.settings.randomInject && data.settings.randomInject.enabled
+  );
+  var cnt = 0;
+  pi.sequence.forEach(function (it) {
+    if (!it) return;
+    if (it.type === "pinned" && getPrompt(it.id)) cnt++;
+    else if (it.type === "random" && randomEnabled) cnt++;
+  });
+  return cnt;
+}
+
+function resolvePinnedSequence() {
+  var pi = data.settings.pinnedInject;
+  if (!pi || !pi.enabled || !Array.isArray(pi.sequence)) return [];
+  var randomEnabled = !!(
+    data.settings.randomInject && data.settings.randomInject.enabled
+  );
+  var result = [];
+  var used = {};
+  for (var i = 0; i < pi.sequence.length; i++) {
+    var item = pi.sequence[i];
+    if (!item) continue;
+    if (item.type === "pinned") {
+      var p = getPrompt(item.id);
+      if (p && !used[p.id]) {
+        result.push(p);
+        used[p.id] = true;
+      }
+    } else if (item.type === "random" && randomEnabled) {
+      var pool = data.prompts.filter(function (q) {
+        return isInRandomPool(q) && !used[q.id];
+      });
+      var picked = _pickWeightedFromPool(pool);
+      if (picked) {
+        result.push(picked);
+        used[picked.id] = true;
+      }
+    }
   }
   return result;
 }

@@ -1,4 +1,4 @@
-﻿function enterBirthdayPanelMode() {
+function enterBirthdayPanelMode() {
   var $p = $("#" + PANEL_ID);
   if (!$p.length) return;
 

@@ -1,4 +1,4 @@
-﻿async function autoCheckSubscriptions() {
+async function autoCheckSubscriptions() {
   if (data.subscriptions.length === 0) return;
   if (autoCheckSubscriptions._running) return;
   var interval = (data.settings.autoCheckInterval || 6) * 3600000;
@@ -997,6 +997,439 @@ function renderRandomPool() {
     var pid = $(this).data("pid");
     togglePromptExclude(pid);
     refreshPool();
+  });
+}
+function renderPinnedPool() {
+  if (!data.settings.pinnedInject)
+    data.settings.pinnedInject = { enabled: false, sequence: [] };
+  var pi = data.settings.pinnedInject;
+  if (!Array.isArray(pi.sequence)) pi.sequence = [];
+  var $p = setupPage("固定池管理", "固定注入池");
+  var _pexpGroups = new Set();
+  var _pexpSeries = new Set();
+  var _psearch = "";
+  var _pfilterTags = [];
+
+  function _pMatch(p) {
+    if (_psearch) {
+      var lq = _psearch.toLowerCase();
+      if (
+        !(p.title && p.title.toLowerCase().indexOf(lq) >= 0) &&
+        !(p.content && p.content.toLowerCase().indexOf(lq) >= 0) &&
+        !(p.author && p.author.toLowerCase().indexOf(lq) >= 0) &&
+        !(p.series && p.series.toLowerCase().indexOf(lq) >= 0)
+      )
+        return false;
+    }
+    if (_pfilterTags.length > 0) {
+      if (data.settings.filterTagMode === "and") {
+        if (
+          !p.tags ||
+          !_pfilterTags.every(function (tid) {
+            return p.tags.indexOf(tid) >= 0;
+          })
+        )
+          return false;
+      } else {
+        if (
+          !p.tags ||
+          !_pfilterTags.some(function (tid) {
+            return p.tags.indexOf(tid) >= 0;
+          })
+        )
+          return false;
+      }
+    }
+    return true;
+  }
+
+  function _pIsPinned(pid) {
+    return pi.sequence.some(function (it) {
+      return it && it.type === "pinned" && it.id === pid;
+    });
+  }
+
+  function _pToggleItem(pid) {
+    var idx = -1;
+    for (var i = 0; i < pi.sequence.length; i++) {
+      var it = pi.sequence[i];
+      if (it && it.type === "pinned" && it.id === pid) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx >= 0) pi.sequence.splice(idx, 1);
+    else pi.sequence.push({ type: "pinned", id: pid });
+    saveData();
+  }
+
+  function buildSeqHtml() {
+    var randomEnabled = !!(
+      data.settings.randomInject && data.settings.randomInject.enabled
+    );
+    var html =
+      '<div class="ms-section-label" style="padding-left:14px;">注入序列 <span style="font-weight:400;font-size:10px;opacity:0.6;text-transform:none;letter-spacing:0;">(从上到下依次注入，拖动手柄可排序)</span></div>';
+    if (pi.sequence.length === 0) {
+      html +=
+        '<div class="ms-empty" style="padding:18px;"><i class="fa-solid fa-thumbtack"></i>序列还是空的<br><span style="font-size:11px;opacity:0.6;margin-top:6px;display:block;">在下面勾选剧场即可加入</span></div>';
+    } else {
+      pi.sequence.forEach(function (it, i) {
+        if (!it) return;
+        if (it.type === "random") {
+          html +=
+            '<div class="ms-reorder-item" data-ridx="' +
+            i +
+            '"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-ridx="' +
+            i +
+            '"></i><i class="fa-solid fa-dice" style="color:var(--ms-accent);opacity:0.85;font-size:13px;flex-shrink:0;"></i><span class="ms-reorder-name" style="' +
+            (randomEnabled
+              ? ""
+              : "opacity:0.45;text-decoration:line-through;") +
+            '">随机 1 条' +
+            (randomEnabled
+              ? ""
+              : ' <span style="font-size:10px;">(随机注入已关，本项跳过)</span>') +
+            '</span><button class="ms-card-qbtn" data-pseq-del="' +
+            i +
+            '" title="移除"><i class="fa-solid fa-xmark"></i></button></div>';
+        } else {
+          var pr = getPrompt(it.id);
+          if (!pr) return;
+          var g = pr.groupId ? getGroup(pr.groupId) : null;
+          var dot =
+            '<span style="width:8px;height:8px;border-radius:50%;background:' +
+            (g ? g.color : "#666") +
+            ';flex-shrink:0;"></span>';
+          var srH =
+            pr.series && pr.series.trim()
+              ? '<span style="font-size:9px;color:var(--ms-accent);opacity:0.75;margin-left:5px;"><i class="fa-solid fa-layer-group" style="font-size:8px;margin-right:2px;"></i>' +
+                esc(pr.series.trim()) +
+                "</span>"
+              : "";
+          html +=
+            '<div class="ms-reorder-item" data-ridx="' +
+            i +
+            '"><i class="fa-solid fa-grip-vertical ms-reorder-grip" data-ridx="' +
+            i +
+            '"></i>' +
+            dot +
+            '<span class="ms-reorder-name">' +
+            esc(pr.title || "未命名") +
+            srH +
+            '</span><button class="ms-card-qbtn" data-pseq-del="' +
+            i +
+            '" title="移除"><i class="fa-solid fa-xmark"></i></button></div>';
+        }
+      });
+    }
+    html +=
+      '<div style="padding:8px 14px;"><button class="ms-tbtn" id="ms-pseq-add-random" style="width:100%;text-align:center;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-dice" style="margin-right:4px;"></i>加入一个随机占位</button></div>';
+    return html;
+  }
+
+  function buildPickHtml() {
+    var hasFilter = _psearch || _pfilterTags.length > 0;
+    var html =
+      '<div class="ms-section-label" style="padding-left:14px;">选择要固定的剧场</div>';
+    html += '<div style="padding:0 14px 6px;">';
+    html +=
+      '<div style="position:relative;display:flex;align-items:center;"><input class="ms-search" id="ms-ppool-search" type="text" placeholder="搜索标题、内容、作者、系列..." value="' +
+      esc(_psearch) +
+      '" style="flex:1;padding-right:24px;"><span id="ms-ppool-search-clear" style="position:absolute;right:8px;cursor:pointer;color:var(--SmartThemeQuoteColor,#666);font-size:11px;display:' +
+      (_psearch ? "block" : "none") +
+      ';line-height:1;">×</span></div>';
+    if (data.settings.definedTags.length > 0) {
+      var modeLabel =
+        data.settings.filterTagMode === "and" ? "全部匹配" : "任一匹配";
+      html +=
+        '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center;">';
+      html +=
+        '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;margin-right:2px;"><i class="fa-solid fa-tags" style="margin-right:2px;"></i></span>';
+      data.settings.definedTags.forEach(function (t) {
+        var isActive = _pfilterTags.indexOf(t.id) >= 0;
+        html +=
+          '<span class="ms-tag-toggle' +
+          (isActive ? " active" : "") +
+          '" data-ppool-filter-tag="' +
+          t.id +
+          '" style="font-size:10px;padding:2px 6px;' +
+          (isActive ? "background:" + t.color + ";" : "") +
+          '">' +
+          esc(t.name) +
+          "</span>";
+      });
+      if (_pfilterTags.length > 0) {
+        html +=
+          '<span style="font-size:10px;color:var(--ms-accent);cursor:pointer;margin-left:2px;" id="ms-ppool-clear-tags">× 清除</span>';
+        html +=
+          '<button class="ms-filter-mode-btn" id="ms-ppool-tag-mode" style="margin-left:4px;">' +
+          modeLabel +
+          "</button>";
+      }
+      html += "</div>";
+    }
+    html += "</div>";
+
+    function itemH(p) {
+      var on = _pIsPinned(p.id);
+      return (
+        '<div class="ms-rpool-item"><input type="checkbox" class="ms-ppool-pcb" data-pid="' +
+        p.id +
+        '"' +
+        (on ? " checked" : "") +
+        '><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
+        (on ? "color:var(--ms-accent);" : "") +
+        '">' +
+        (hasFilter && _psearch
+          ? highlightText(p.title, _psearch)
+          : esc(truncate(p.title, 30))) +
+        "</span></div>"
+      );
+    }
+
+    function buildGroupBlock(gid, gName, gColor, prompts) {
+      var list = hasFilter ? prompts.filter(_pMatch) : prompts;
+      if (list.length === 0) return "";
+      var isOpen = _pexpGroups.has(gid) || hasFilter;
+      var gObj = gid === "_ungrouped" ? null : getGroup(gid);
+      var useAvatar =
+        gObj &&
+        (isIPGroup(gObj) ||
+          (gObj.iconMode === "custom" && gObj.iconUrl) ||
+          (gObj.iconMode === "char" && gObj.iconCharKey));
+      var iconH = useAvatar
+        ? buildGroupAvatarHTML(gObj, 22)
+        : '<i class="fa-solid fa-folder" style="color:' +
+          gColor +
+          ';font-size:13px;"></i>';
+      var pinnedCnt = list.filter(function (p) {
+        return _pIsPinned(p.id);
+      }).length;
+      var h =
+        '<div class="ms-rpool-group"><div class="ms-rpool-group-header" data-ppool-gid="' +
+        gid +
+        '">' +
+        iconH +
+        '<span style="flex:1;font-size:13px;">' +
+        esc(gName) +
+        '</span><span style="font-size:11px;color:' +
+        (pinnedCnt > 0
+          ? "var(--ms-accent)"
+          : "var(--SmartThemeQuoteColor,#666)") +
+        ';">' +
+        (pinnedCnt > 0 ? "已固定 " + pinnedCnt + " / " : "") +
+        list.length +
+        ' 条</span><i class="fa-solid fa-angle-right ms-series-arrow' +
+        (isOpen ? " open" : "") +
+        '" style="font-size:10px;color:var(--SmartThemeQuoteColor,#555);flex-shrink:0;transition:transform 0.2s;"></i></div>';
+      h +=
+        '<div class="ms-rpool-group-body" style="display:' +
+        (isOpen ? "block" : "none") +
+        ';" data-ppool-body="' +
+        gid +
+        '">';
+      var seriesMap = {};
+      var noSeries = [];
+      list.forEach(function (p) {
+        var sn = (p.series || "").trim();
+        if (sn) {
+          if (!seriesMap[sn]) seriesMap[sn] = [];
+          seriesMap[sn].push(p);
+        } else {
+          noSeries.push(p);
+        }
+      });
+      Object.keys(seriesMap).forEach(function (sn) {
+        var sid = gid + "_s_" + simpleHash(sn);
+        var sOpen = _pexpSeries.has(sid) || hasFilter;
+        h +=
+          '<div class="ms-rpool-series-label" data-ppool-series-id="' +
+          sid +
+          '"><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:11px;"></i><span>' +
+          esc(sn) +
+          " (" +
+          seriesMap[sn].length +
+          ')</span><i class="fa-solid fa-angle-right ms-series-arrow' +
+          (sOpen ? " open" : "") +
+          '" style="font-size:9px;margin-left:auto;"></i></div>';
+        h +=
+          '<div class="ms-rpool-series-items" data-ppool-series-body="' +
+          sid +
+          '" style="display:' +
+          (sOpen ? "block" : "none") +
+          ';">';
+        seriesMap[sn].forEach(function (p) {
+          h += itemH(p);
+        });
+        h += "</div>";
+      });
+      noSeries.forEach(function (p) {
+        h += itemH(p);
+      });
+      h += "</div></div>";
+      return h;
+    }
+
+    var any = false;
+    data.groups.forEach(function (g) {
+      var gp = getPromptsInGroup(g.id);
+      if (gp.length === 0) return;
+      var block = buildGroupBlock(g.id, g.name, g.color, gp);
+      if (block) {
+        html += block;
+        any = true;
+      }
+    });
+    var un = getUngroupedPrompts();
+    if (un.length > 0) {
+      var b2 = buildGroupBlock("_ungrouped", "未分组", "#888", un);
+      if (b2) {
+        html += b2;
+        any = true;
+      }
+    }
+    if (data.prompts.length === 0) {
+      html +=
+        '<div class="ms-empty"><i class="fa-solid fa-thumbtack"></i>还没有剧场</div>';
+    } else if (hasFilter && !any) {
+      html +=
+        '<div class="ms-empty" style="padding:20px;"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的内容</div>';
+    }
+    return html;
+  }
+
+  function updateFooter() {
+    var pinnedCnt = 0;
+    var randCnt = 0;
+    pi.sequence.forEach(function (it) {
+      if (!it) return;
+      if (it.type === "pinned" && getPrompt(it.id)) pinnedCnt++;
+      else if (it.type === "random") randCnt++;
+    });
+    $p
+      .find("#ms-ppool-footer")
+      .html(
+        (pi.enabled
+          ? '<span style="color:var(--ms-accent);"><i class="fa-solid fa-circle-check" style="margin-right:3px;"></i>已启用</span>'
+          : '<span style="opacity:0.65;">未启用（去设置里打开）</span>') +
+          " · 固定 " +
+          pinnedCnt +
+          " 条 · 随机占位 " +
+          randCnt +
+          " 个",
+      );
+  }
+
+  function bindSeqDrag() {
+    bindReorderDrag($p.find("#ms-body"), function (fromEl, targetEl) {
+      var f = parseInt(fromEl.getAttribute("data-ridx"));
+      var t = parseInt(targetEl.getAttribute("data-ridx"));
+      if (isNaN(f) || isNaN(t)) return;
+      var moved = pi.sequence.splice(f, 1)[0];
+      var insertIdx = f < t ? t - 1 : t;
+      pi.sequence.splice(insertIdx, 0, moved);
+      saveData();
+      refreshAll();
+    });
+  }
+
+  function refreshAll() {
+    var st = $p.find("#ms-body").scrollTop();
+    var $old = $p.find("#ms-ppool-search");
+    var wasFocused = $old.is(":focus");
+    var caret = wasFocused && $old[0] ? $old[0].selectionStart || 0 : 0;
+    $p.find("#ms-body").html(buildSeqHtml() + buildPickHtml());
+    $p.find("#ms-body").scrollTop(st);
+    if (wasFocused) {
+      var $ns = $p.find("#ms-ppool-search");
+      $ns.focus();
+      try {
+        $ns[0].setSelectionRange(caret, caret);
+      } catch (e) {}
+    }
+    updateFooter();
+    bindSeqDrag();
+    updateInjectIndicator();
+  }
+
+  $p.find("#ms-body").html(buildSeqHtml() + buildPickHtml());
+  $p.find("#ms-footer").html('<span id="ms-ppool-footer"></span>').show();
+  bindAllEvents();
+  updateFooter();
+  bindSeqDrag();
+
+  $p.find("#ms-body").on("click.ms", "[data-pseq-del]", function (e) {
+    e.stopPropagation();
+    var i = parseInt($(this).attr("data-pseq-del"));
+    if (isNaN(i)) return;
+    pi.sequence.splice(i, 1);
+    saveData();
+    refreshAll();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-pseq-add-random", function () {
+    pi.sequence.push({ type: "random" });
+    saveData();
+    refreshAll();
+  });
+  $p.find("#ms-body").on("change.ms", ".ms-ppool-pcb", function (e) {
+    e.stopPropagation();
+    _pToggleItem($(this).data("pid"));
+    refreshAll();
+  });
+  $p.find("#ms-body").on("click.ms", ".ms-rpool-group-header", function (e) {
+    if ($(e.target).is("input[type='checkbox']")) return;
+    var gid = $(this).attr("data-ppool-gid");
+    if (!gid) return;
+    if (_pexpGroups.has(gid)) _pexpGroups.delete(gid);
+    else _pexpGroups.add(gid);
+    $(this).find(".ms-series-arrow").toggleClass("open");
+    $p.find('[data-ppool-body="' + gid + '"]').toggle();
+  });
+  $p.find("#ms-body").on("click.ms", ".ms-rpool-series-label", function () {
+    var sid = $(this).attr("data-ppool-series-id");
+    if (!sid) return;
+    $(this).find(".ms-series-arrow").toggleClass("open");
+    var $sb = $p.find('[data-ppool-series-body="' + sid + '"]');
+    $sb.toggle();
+    if ($sb.is(":visible")) _pexpSeries.add(sid);
+    else _pexpSeries.delete(sid);
+  });
+  $p.find("#ms-body").on("compositionstart.ms", "#ms-ppool-search", function () {
+    this._composing = true;
+  });
+  $p.find("#ms-body").on("compositionend.ms", "#ms-ppool-search", function () {
+    this._composing = false;
+    _psearch = $(this).val();
+    refreshAll();
+  });
+  $p.find("#ms-body").on("input.ms", "#ms-ppool-search", function () {
+    if (this._composing) return;
+    _psearch = $(this).val();
+    $p.find("#ms-ppool-search-clear").toggle(!!_psearch);
+    refreshAll();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-ppool-search-clear", function () {
+    _psearch = "";
+    $p.find("#ms-ppool-search").val("").focus();
+    $(this).hide();
+    refreshAll();
+  });
+  $p.find("#ms-body").on("click.ms", "[data-ppool-filter-tag]", function () {
+    var tid = $(this).attr("data-ppool-filter-tag");
+    var idx = _pfilterTags.indexOf(tid);
+    if (idx >= 0) _pfilterTags.splice(idx, 1);
+    else _pfilterTags.push(tid);
+    refreshAll();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-ppool-clear-tags", function () {
+    _pfilterTags = [];
+    refreshAll();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-ppool-tag-mode", function () {
+    data.settings.filterTagMode =
+      data.settings.filterTagMode === "and" ? "or" : "and";
+    saveData();
+    refreshAll();
   });
 }
 

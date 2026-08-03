@@ -1,4 +1,4 @@
-﻿function loadData() {
+function loadData() {
   try {
     const ctx = getCtx();
     if (ctx && ctx.s[STORAGE_KEY]) {
@@ -61,6 +61,16 @@
           multiEnabled: false,
           multiCount: 2,
         };
+      if (data.settings.collapseMode === undefined)
+        data.settings.collapseMode = "bar";
+      if (data.settings.ballPos === undefined) data.settings.ballPos = null;
+      if (
+        !data.settings.pinnedInject ||
+        typeof data.settings.pinnedInject !== "object"
+      )
+        data.settings.pinnedInject = { enabled: false, sequence: [] };
+      if (!Array.isArray(data.settings.pinnedInject.sequence))
+        data.settings.pinnedInject.sequence = [];
       if (
         data.settings.randomInject &&
         data.settings.randomInject.multiEnabled === undefined
@@ -438,17 +448,28 @@
     }
 
     try {
+      var validPromptIds = new Set(
+        data.prompts.map(function (p) {
+          return p.id;
+        }),
+      );
       if (Array.isArray(data.settings.stageSelectedIds)) {
-        var validPromptIds = new Set(
-          data.prompts.map(function (p) {
-            return p.id;
-          }),
-        );
         data.settings.stageSelectedIds = data.settings.stageSelectedIds.filter(
           function (sid) {
             return validPromptIds.has(sid);
           },
         );
+      }
+      if (
+        data.settings.pinnedInject &&
+        Array.isArray(data.settings.pinnedInject.sequence)
+      ) {
+        data.settings.pinnedInject.sequence =
+          data.settings.pinnedInject.sequence.filter(function (it) {
+            if (!it) return false;
+            if (it.type === "random") return true;
+            return it.type === "pinned" && validPromptIds.has(it.id);
+          });
       }
     } catch (e) {}
   } catch (e) {
@@ -1201,15 +1222,6 @@ function getDisplayableBdVersions(charKey) {
     return parseInt(b.year) - parseInt(a.year);
   });
   return result;
-}
-
-function hasAnyBdMsgVersion(charKey) {
-  var bdData = getCharBdData(charKey);
-  if (!bdData || !bdData.versions) return false;
-  return Object.keys(bdData.versions).some(function (y) {
-    var v = bdData.versions[y];
-    return v && (v.message || "").trim();
-  });
 }
 
 function hasAnyShowableBdVersion(charKey) {

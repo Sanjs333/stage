@@ -1,4 +1,4 @@
-﻿function renderList() {
+function renderList() {
   const $p = $("#" + PANEL_ID);
   $p.find("#ms-title").text("小剧场");
   $p.find("#ms-toolbar").html(
