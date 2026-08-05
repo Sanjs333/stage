@@ -2,7 +2,7 @@
 const STORAGE_KEY = "miniStage_data";
 const PANEL_ID = "mini-stage-panel";
 const STYLE_ID = "mini-stage-styles";
-const SCRIPT_VERSION = "3.7.4";
+const SCRIPT_VERSION = "3.7.5";
 const GROUP_COLORS = [
   "#D6A2A2",
   "#DDAA90",
@@ -25,7 +25,7 @@ const GROUP_COLORS = [
   "#8b5b8c",
 ];
 const TAG_COLORS = GROUP_COLORS;
-var GUIDE_VERSION = "3.7.4";
+var GUIDE_VERSION = "3.7.5";
 var GUIDE_REMOTE_URLS = {
   guide:
     "https://gist.githubusercontent.com/Sanjs333/c45460dc2bb5908ff53b5769088b122d/raw/guide.md",
@@ -321,12 +321,15 @@ function showModal(opts) {
     }
     var didExpandForModal = false;
     var savedPosForModal = null;
-    if (
-      $p.hasClass("ms-collapsed") &&
-      !$p.hasClass("ms-modal-expand-mode") &&
-      !$p.hasClass("ms-bd-editor-mode") &&
-      !$p.hasClass("ms-focus-mode")
-    ) {
+    function expandPanelForModal() {
+      if (didExpandForModal) return;
+      if (
+        $p.hasClass("ms-modal-expand-mode") ||
+        $p.hasClass("ms-bd-editor-mode") ||
+        $p.hasClass("ms-focus-mode") ||
+        $p.hasClass("ms-fs-editor-mode")
+      )
+        return;
       savedPosForModal = {
         left: $p[0].style.getPropertyValue("left"),
         top: $p[0].style.getPropertyValue("top"),
@@ -335,8 +338,19 @@ function showModal(opts) {
       $p[0].style.removeProperty("left");
       $p[0].style.removeProperty("top");
       $p[0].style.removeProperty("transform");
+      $p[0].style.removeProperty("width");
+      $p[0].style.removeProperty("max-width");
+      $p[0].style.removeProperty("height");
+      $p[0].style.removeProperty("max-height");
+      $p[0].style.removeProperty("zoom");
       $p.addClass("ms-modal-expand-mode");
       didExpandForModal = true;
+      if (setupKeyboardAdapt.refresh) {
+        setTimeout(setupKeyboardAdapt.refresh, 50);
+      }
+    }
+    if ($p.hasClass("ms-collapsed")) {
+      expandPanelForModal();
     }
     var iconMap = {
       info: "fa-circle-info",
@@ -392,6 +406,17 @@ function showModal(opts) {
     if (typeof opts.body === "function") {
       $overlay.find(".ms-modal-body").html(opts.body($overlay));
     }
+    if (!didExpandForModal) {
+      var _mEl = $overlay.find(".ms-modal")[0];
+      var _oEl = $overlay[0];
+      if (_mEl && _oEl && _oEl.offsetHeight > 0) {
+        var _mTop = _mEl.offsetTop;
+        var _mBottom = _mTop + _mEl.offsetHeight;
+        if (_mTop < 0 || _mBottom > _oEl.offsetHeight + 1) {
+          expandPanelForModal();
+        }
+      }
+    }
     setTimeout(function () {
       $overlay.addClass("visible");
     }, 20);
@@ -420,6 +445,10 @@ function showModal(opts) {
                 savedPosForModal.transform,
                 "important",
               );
+          }
+          applyUICustomization();
+          if (setupKeyboardAdapt.refresh) {
+            setTimeout(setupKeyboardAdapt.refresh, 50);
           }
         }
         resolve(result);

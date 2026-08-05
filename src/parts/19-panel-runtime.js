@@ -35,7 +35,13 @@ function resetPanelPosition() {
   toast("info", "面板已回到默认位置", 500);
 }
 var _ballRestoring = false;
+function ensurePanelStyles() {
+  if (!$("#" + STYLE_ID).length) {
+    $("head").append('<style id="' + STYLE_ID + '">' + getCSS() + "</style>");
+  }
+}
 function ensureFloatBall() {
+  ensurePanelStyles();
   var $b = $("#ms-float-ball");
   if ($b.length) return $b;
   $("body").append(
@@ -205,10 +211,9 @@ function makeBallDraggable($b) {
 
 function showPanel() {
   hideFloatBall();
+  ensurePanelStyles();
   let $p = $("#" + PANEL_ID);
   if ($p.length === 0) {
-    if (!$("#" + STYLE_ID).length)
-      $("head").append(`<style id="${STYLE_ID}">${getCSS()}</style>`);
     $("body").append(getPanelHTML());
     $p = $("#" + PANEL_ID);
     if (data.settings.collapsed) {
