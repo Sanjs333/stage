@@ -1,4 +1,4 @@
-﻿function renderGroups() {
+function renderGroups() {
   const $p = $("#" + PANEL_ID);
   $p.find("#ms-title").text("分组管理");
   $p.find("#ms-toolbar").html(
@@ -530,7 +530,7 @@ function renderGroupEdit(v) {
       (showCharSection ? "隐藏角色列表" : "设为 IP 分组（包含角色）") +
       "</button>";
 
-    return (
+    return stripZeroWidth(
       '<div class="ms-form">' +
       '<div class="ms-field"><label>名称</label><input type="text" id="ms-gedit-name" value="' +
       esc(g ? g.name : "") +
@@ -1769,8 +1769,17 @@ function showMappingMembersEditor(mid, onDone) {
 function renderTagManage() {
   const $p = $("#" + PANEL_ID);
   $p.find("#ms-title").text("标签管理");
+  var _dupTagGroups = getDuplicateTagGroups();
+  var _dupTagBtnStyle =
+    _dupTagGroups.length > 0
+      ? ' style="color:var(--ms-accent);border-color:var(--ms-accent);"'
+      : "";
+  var _dupTagBtnTitle =
+    _dupTagGroups.length > 0
+      ? "合并同名标签（发现 " + _dupTagGroups.length + " 组）"
+      : "合并同名标签";
   $p.find("#ms-toolbar").html(
-    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><div class="ms-toolbar-actions"><button class="ms-tbtn" id="ms-tag-mapping-mgr" title="管理标签映射组"><i class="fa-solid fa-link"></i></button><button class="ms-tbtn ${tagSelectMode ? "active" : ""}" id="ms-tag-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-tag-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-tag-add-btn"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
+    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><div class="ms-toolbar-actions"><button class="ms-tbtn" id="ms-tag-merge-dup" title="${escAttr(_dupTagBtnTitle)}"${_dupTagBtnStyle}><i class="fa-solid fa-object-group"></i></button><button class="ms-tbtn" id="ms-tag-mapping-mgr" title="管理标签映射组"><i class="fa-solid fa-link"></i></button><button class="ms-tbtn ${tagSelectMode ? "active" : ""}" id="ms-tag-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-tag-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-tag-add-btn"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
   );
   let expandedColorId = null;
   function buildTagsBody() {
@@ -1842,6 +1851,76 @@ function renderTagManage() {
   });
   $p.find("#ms-toolbar").on("click.ms", "#ms-tag-mapping-mgr", function () {
     navigateTo({ name: "tag-mappings" });
+  });
+  $p.find("#ms-toolbar").on("click.ms", "#ms-tag-merge-dup", function () {
+    var groups = getDuplicateTagGroups();
+    if (groups.length === 0) {
+      toast("info", "没有发现同名标签");
+      return;
+    }
+    var totalRemove = 0;
+    groups.forEach(function (grp) {
+      totalRemove += grp.length - 1;
+    });
+    var bodyH =
+      '<div style="font-size:12px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.7;margin-bottom:10px;">检测到 <strong>' +
+      groups.length +
+      "</strong> 组同名标签，共 <strong>" +
+      totalRemove +
+      '</strong> 个重复标签将被合并。<br><span style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);">保留每组中排在最前面的标签（含其颜色），其余标签在剧场、映射组、当前筛选条件中会被替换为保留项，随后删除。如需指定保留哪一个，可先用「调整顺序」把它移到同组最前面。</span></div>';
+    bodyH += '<div style="max-height:50vh;overflow-y:auto;">';
+    groups.forEach(function (grp) {
+      var keeper = grp[0];
+      bodyH +=
+        '<div style="padding:8px 10px;margin-bottom:6px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;background:rgba(255,255,255,0.02);">';
+      bodyH +=
+        '<div style="display:flex;align-items:center;gap:6px;font-size:12px;"><span class="ms-tag-chip" style="background:' +
+        keeper.color +
+        ';">' +
+        esc(keeper.name) +
+        '</span><span style="font-size:10px;color:var(--ms-success);">保留</span><span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-left:auto;">' +
+        countPromptsWithTag(keeper.id) +
+        " 条剧场</span></div>";
+      grp.slice(1).forEach(function (t) {
+        bodyH +=
+          '<div style="display:flex;align-items:center;gap:6px;font-size:11px;padding-left:14px;margin-top:4px;opacity:0.85;"><i class="fa-solid fa-arrow-turn-up" style="transform:rotate(90deg);font-size:9px;color:var(--SmartThemeQuoteColor,#888);"></i><span class="ms-tag-chip" style="background:' +
+          t.color +
+          ';">' +
+          esc(t.name) +
+          '</span><span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-left:auto;">' +
+          countPromptsWithTag(t.id) +
+          " 条剧场 · 合并后删除</span></div>";
+      });
+      bodyH += "</div>";
+    });
+    bodyH += "</div>";
+    showModal({
+      title: "合并同名标签",
+      iconType: "warning",
+      icon: "fa-object-group",
+      modalStyle: "min-width:360px;max-width:92vw;width:460px;",
+      body: bodyH,
+      buttons: [
+        { text: "取消", value: null },
+        {
+          text: "确认合并",
+          cls: "primary",
+          primary: true,
+          action: function () {
+            var r = mergeDuplicateTags();
+            toast(
+              "success",
+              "已合并 " + r.groups + " 组，删除 " + r.removed + " 个重复标签",
+            );
+            selectedTagIds.clear();
+            tagSelectMode = false;
+            renderTagManage();
+            return true;
+          },
+        },
+      ],
+      cancelValue: null,
+    });
   });
   $p.find("#ms-body").on("click.ms", ".ms-tag-source", function (e) {
     e.stopPropagation();

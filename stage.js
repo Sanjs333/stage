@@ -8,7 +8,7 @@
 const STORAGE_KEY = "miniStage_data";
 const PANEL_ID = "mini-stage-panel";
 const STYLE_ID = "mini-stage-styles";
-const SCRIPT_VERSION = "3.7.3";
+const SCRIPT_VERSION = "3.7.4";
 const GROUP_COLORS = [
   "#D6A2A2",
   "#DDAA90",
@@ -31,7 +31,7 @@ const GROUP_COLORS = [
   "#8b5b8c",
 ];
 const TAG_COLORS = GROUP_COLORS;
-var GUIDE_VERSION = "3.7.3";
+var GUIDE_VERSION = "3.7.4";
 var GUIDE_REMOTE_URLS = {
   guide:
     "https://gist.githubusercontent.com/Sanjs333/c45460dc2bb5908ff53b5769088b122d/raw/guide.md",
@@ -236,6 +236,12 @@ function escAttr(s) {
 function escAlreadyEscapedAttr(s) {
   if (!s) return "";
   return String(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function stripZeroWidth(html) {
+  return String(html === undefined || html === null ? "" : html).replace(
+    /[\u200B\uFEFF]/g,
+    "",
+  );
 }
 function sanitizeMdUrl(url, isImage) {
   var raw = String(url || "")
@@ -3564,6 +3570,128 @@ function deleteTag(id) {
   _tagOrderVersion++;
   saveData();
 }
+function normalizeTagName(name) {
+  return String(name === undefined || name === null ? "" : name)
+    .replace(/\u3000/g, " ")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function findTagByName(name) {
+  var key = normalizeTagName(name);
+  if (!key) return null;
+  for (var i = 0; i < data.settings.definedTags.length; i++) {
+    var t = data.settings.definedTags[i];
+    if (normalizeTagName(t.name) === key) return t;
+  }
+  return null;
+}
+
+function countPromptsWithTag(tagId) {
+  var cnt = 0;
+  data.prompts.forEach(function (p) {
+    if (p.tags && p.tags.indexOf(tagId) >= 0) cnt++;
+  });
+  return cnt;
+}
+
+function dedupePromptTags() {
+  var changed = 0;
+  data.prompts.forEach(function (p) {
+    if (!Array.isArray(p.tags) || p.tags.length < 2) return;
+    var out = [];
+    p.tags.forEach(function (tid) {
+      if (tid && out.indexOf(tid) < 0) out.push(tid);
+    });
+    if (out.length !== p.tags.length) {
+      p.tags = out;
+      changed++;
+    }
+  });
+  return changed;
+}
+
+function getDuplicateTagGroups() {
+  var buckets = {};
+  var order = [];
+  data.settings.definedTags.forEach(function (t) {
+    var key = normalizeTagName(t.name);
+    if (!key) return;
+    if (!buckets[key]) {
+      buckets[key] = [];
+      order.push(key);
+    }
+    buckets[key].push(t);
+  });
+  var result = [];
+  order.forEach(function (key) {
+    if (buckets[key].length > 1) result.push(buckets[key]);
+  });
+  return result;
+}
+
+function mergeDuplicateTags() {
+  var groups = getDuplicateTagGroups();
+  if (groups.length === 0) return { groups: 0, removed: 0, prompts: 0 };
+  var idMap = {};
+  var removedSet = new Set();
+  groups.forEach(function (grp) {
+    var keeper = grp[0];
+    grp.slice(1).forEach(function (t) {
+      idMap[t.id] = keeper.id;
+      removedSet.add(t.id);
+    });
+  });
+  var affected = 0;
+  data.prompts.forEach(function (p) {
+    if (!Array.isArray(p.tags) || p.tags.length === 0) return;
+    var out = [];
+    var changed = false;
+    p.tags.forEach(function (tid) {
+      var target = idMap[tid] || tid;
+      if (target !== tid) changed = true;
+      if (out.indexOf(target) < 0) out.push(target);
+      else changed = true;
+    });
+    if (changed) {
+      p.tags = out;
+      affected++;
+    }
+  });
+  (data.settings.tagMappings || []).forEach(function (m) {
+    if (!Array.isArray(m.tagIds)) return;
+    var out = [];
+    m.tagIds.forEach(function (tid) {
+      var target = idMap[tid] || tid;
+      if (out.indexOf(target) < 0) out.push(target);
+    });
+    m.tagIds = out;
+    if (m.primaryTagId && idMap[m.primaryTagId]) {
+      m.primaryTagId = idMap[m.primaryTagId];
+    }
+    if (!m.primaryTagId || m.tagIds.indexOf(m.primaryTagId) < 0) {
+      m.primaryTagId = m.tagIds.length > 0 ? m.tagIds[0] : null;
+    }
+  });
+  data.settings.definedTags = data.settings.definedTags.filter(function (t) {
+    return !removedSet.has(t.id);
+  });
+  function _remapFilterTags(arr) {
+    if (!Array.isArray(arr)) return [];
+    var out = [];
+    arr.forEach(function (tid) {
+      var target = idMap[tid] || tid;
+      if (!removedSet.has(target) && out.indexOf(target) < 0) out.push(target);
+    });
+    return out;
+  }
+  filterState.includeTags = _remapFilterTags(filterState.includeTags);
+  filterState.excludeTags = _remapFilterTags(filterState.excludeTags);
+  _tagOrderVersion++;
+  saveData();
+  return { groups: groups.length, removed: removedSet.size, prompts: affected };
+}
 
 function filterPrompts(list) {
   let r = list;
@@ -4626,16 +4754,17 @@ function executeImport(
     if (useTags && itags.length) {
       var _impTagNames = new Set(
         itags.map(function (t) {
-          return t.name;
+          return normalizeTagName(t.name);
         }),
       );
       var _removedTagIds = new Set();
       data.settings.definedTags.forEach(function (t) {
-        if (_impTagNames.has(t.name)) _removedTagIds.add(t.id);
+        if (_impTagNames.has(normalizeTagName(t.name)))
+          _removedTagIds.add(t.id);
       });
       data.settings.definedTags = data.settings.definedTags.filter(
         function (t) {
-          return !_impTagNames.has(t.name);
+          return !_impTagNames.has(normalizeTagName(t.name));
         },
       );
       if (_removedTagIds.size > 0) {
@@ -4749,7 +4878,7 @@ function executeImport(
     const tagIdMap = {};
     if (useTags && itags.length) {
       itags.forEach((t) => {
-        const ex = data.settings.definedTags.find((et) => et.name === t.name);
+        const ex = findTagByName(t.name);
         if (ex) tagIdMap[t.id] = ex.id;
         else {
           const nt = { ...t, id: uid() };
@@ -4831,6 +4960,11 @@ function executeImport(
     const tagIdMap = {};
     if (useTags && itags.length) {
       itags.forEach((t) => {
+        const ex = findTagByName(t.name);
+        if (ex) {
+          tagIdMap[t.id] = ex.id;
+          return;
+        }
         const nt = { ...t, id: uid() };
         data.settings.definedTags.push(nt);
         tagIdMap[t.id] = nt.id;
@@ -4997,6 +5131,7 @@ function executeImport(
       }
     });
   }
+  dedupePromptTags();
   _invalidateCharGroupCache();
   saveData();
   toast("success", importMsg);
@@ -12524,7 +12659,7 @@ function renderGroupEdit(v) {
       (showCharSection ? "隐藏角色列表" : "设为 IP 分组（包含角色）") +
       "</button>";
 
-    return (
+    return stripZeroWidth(
       '<div class="ms-form">' +
       '<div class="ms-field"><label>名称</label><input type="text" id="ms-gedit-name" value="' +
       esc(g ? g.name : "") +
@@ -13763,8 +13898,17 @@ function showMappingMembersEditor(mid, onDone) {
 function renderTagManage() {
   const $p = $("#" + PANEL_ID);
   $p.find("#ms-title").text("标签管理");
+  var _dupTagGroups = getDuplicateTagGroups();
+  var _dupTagBtnStyle =
+    _dupTagGroups.length > 0
+      ? ' style="color:var(--ms-accent);border-color:var(--ms-accent);"'
+      : "";
+  var _dupTagBtnTitle =
+    _dupTagGroups.length > 0
+      ? "合并同名标签（发现 " + _dupTagGroups.length + " 组）"
+      : "合并同名标签";
   $p.find("#ms-toolbar").html(
-    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><div class="ms-toolbar-actions"><button class="ms-tbtn" id="ms-tag-mapping-mgr" title="管理标签映射组"><i class="fa-solid fa-link"></i></button><button class="ms-tbtn ${tagSelectMode ? "active" : ""}" id="ms-tag-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-tag-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-tag-add-btn"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
+    `<button class="ms-hbtn" id="ms-go-back"><i class="fa-solid fa-angle-left"></i></button><div class="ms-toolbar-actions"><button class="ms-tbtn" id="ms-tag-merge-dup" title="${escAttr(_dupTagBtnTitle)}"${_dupTagBtnStyle}><i class="fa-solid fa-object-group"></i></button><button class="ms-tbtn" id="ms-tag-mapping-mgr" title="管理标签映射组"><i class="fa-solid fa-link"></i></button><button class="ms-tbtn ${tagSelectMode ? "active" : ""}" id="ms-tag-select" title="多选"><i class="fa-solid fa-check-double"></i></button><button class="ms-tbtn" id="ms-tag-reorder" title="调整顺序"><i class="fa-solid fa-arrows-up-down"></i></button><button class="ms-tbtn" id="ms-tag-add-btn"><i class="fa-solid fa-plus"></i> 新建</button></div>`,
   );
   let expandedColorId = null;
   function buildTagsBody() {
@@ -13836,6 +13980,76 @@ function renderTagManage() {
   });
   $p.find("#ms-toolbar").on("click.ms", "#ms-tag-mapping-mgr", function () {
     navigateTo({ name: "tag-mappings" });
+  });
+  $p.find("#ms-toolbar").on("click.ms", "#ms-tag-merge-dup", function () {
+    var groups = getDuplicateTagGroups();
+    if (groups.length === 0) {
+      toast("info", "没有发现同名标签");
+      return;
+    }
+    var totalRemove = 0;
+    groups.forEach(function (grp) {
+      totalRemove += grp.length - 1;
+    });
+    var bodyH =
+      '<div style="font-size:12px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.7;margin-bottom:10px;">检测到 <strong>' +
+      groups.length +
+      "</strong> 组同名标签，共 <strong>" +
+      totalRemove +
+      '</strong> 个重复标签将被合并。<br><span style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);">保留每组中排在最前面的标签（含其颜色），其余标签在剧场、映射组、当前筛选条件中会被替换为保留项，随后删除。如需指定保留哪一个，可先用「调整顺序」把它移到同组最前面。</span></div>';
+    bodyH += '<div style="max-height:50vh;overflow-y:auto;">';
+    groups.forEach(function (grp) {
+      var keeper = grp[0];
+      bodyH +=
+        '<div style="padding:8px 10px;margin-bottom:6px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;background:rgba(255,255,255,0.02);">';
+      bodyH +=
+        '<div style="display:flex;align-items:center;gap:6px;font-size:12px;"><span class="ms-tag-chip" style="background:' +
+        keeper.color +
+        ';">' +
+        esc(keeper.name) +
+        '</span><span style="font-size:10px;color:var(--ms-success);">保留</span><span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-left:auto;">' +
+        countPromptsWithTag(keeper.id) +
+        " 条剧场</span></div>";
+      grp.slice(1).forEach(function (t) {
+        bodyH +=
+          '<div style="display:flex;align-items:center;gap:6px;font-size:11px;padding-left:14px;margin-top:4px;opacity:0.85;"><i class="fa-solid fa-arrow-turn-up" style="transform:rotate(90deg);font-size:9px;color:var(--SmartThemeQuoteColor,#888);"></i><span class="ms-tag-chip" style="background:' +
+          t.color +
+          ';">' +
+          esc(t.name) +
+          '</span><span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-left:auto;">' +
+          countPromptsWithTag(t.id) +
+          " 条剧场 · 合并后删除</span></div>";
+      });
+      bodyH += "</div>";
+    });
+    bodyH += "</div>";
+    showModal({
+      title: "合并同名标签",
+      iconType: "warning",
+      icon: "fa-object-group",
+      modalStyle: "min-width:360px;max-width:92vw;width:460px;",
+      body: bodyH,
+      buttons: [
+        { text: "取消", value: null },
+        {
+          text: "确认合并",
+          cls: "primary",
+          primary: true,
+          action: function () {
+            var r = mergeDuplicateTags();
+            toast(
+              "success",
+              "已合并 " + r.groups + " 组，删除 " + r.removed + " 个重复标签",
+            );
+            selectedTagIds.clear();
+            tagSelectMode = false;
+            renderTagManage();
+            return true;
+          },
+        },
+      ],
+      cancelValue: null,
+    });
   });
   $p.find("#ms-body").on("click.ms", ".ms-tag-source", function (e) {
     e.stopPropagation();
@@ -14599,7 +14813,7 @@ function renderStats() {
 function renderSettings() {
   const $p = setupPage("设置");
   $p.find("#ms-body").html(
-    `<div class="ms-form"><div class="ms-field"><label>默认作者署名</label><input type="text" id="ms-default-author" placeholder="新建时自动填入" value="${esc(data.settings.defaultAuthor || "")}"></div><div class="ms-section-label">注入设置</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-inject-enabled-toggle" ${data.settings.stageInjectEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">启用注入功能</span></div><div style="padding:4px 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);line-height:1.5;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>选中剧场后，内容会随下一次发送注入到AI提示词中</div><div id="ms-inject-details" style="${data.settings.stageInjectEnabled ? "" : "display:none;"}"><div class="ms-inject-settings-row"><label class="ms-inject-radio${data.settings.stageInjectMode === "depth" ? " active" : ""}" data-mode="depth"><input type="radio" name="ms-inject-mode" value="depth" ${data.settings.stageInjectMode === "depth" ? "checked" : ""}><i class="fa-solid fa-layer-group" style="margin-right:3px;font-size:11px;"></i>深度注入</label><label class="ms-inject-radio${data.settings.stageInjectMode === "macro" ? " active" : ""}" data-mode="macro"><input type="radio" name="ms-inject-mode" value="macro" ${data.settings.stageInjectMode === "macro" ? "checked" : ""}><i class="fa-solid fa-code" style="margin-right:3px;font-size:11px;"></i>自定义宏 {{stage}}</label></div><div class="ms-macro-info">
+    stripZeroWidth(`<div class="ms-form"><div class="ms-field"><label>默认作者署名</label><input type="text" id="ms-default-author" placeholder="新建时自动填入" value="${esc(data.settings.defaultAuthor || "")}"></div><div class="ms-section-label">注入设置</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-inject-enabled-toggle" ${data.settings.stageInjectEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">启用注入功能</span></div><div style="padding:4px 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);line-height:1.5;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>选中剧场后，内容会随下一次发送注入到AI提示词中</div><div id="ms-inject-details" style="${data.settings.stageInjectEnabled ? "" : "display:none;"}"><div class="ms-inject-settings-row"><label class="ms-inject-radio${data.settings.stageInjectMode === "depth" ? " active" : ""}" data-mode="depth"><input type="radio" name="ms-inject-mode" value="depth" ${data.settings.stageInjectMode === "depth" ? "checked" : ""}><i class="fa-solid fa-layer-group" style="margin-right:3px;font-size:11px;"></i>深度注入</label><label class="ms-inject-radio${data.settings.stageInjectMode === "macro" ? " active" : ""}" data-mode="macro"><input type="radio" name="ms-inject-mode" value="macro" ${data.settings.stageInjectMode === "macro" ? "checked" : ""}><i class="fa-solid fa-code" style="margin-right:3px;font-size:11px;"></i>自定义宏 {{stage}}</label></div><div class="ms-macro-info">
   <div class="ms-macro-info-title"><i class="fa-solid fa-wand-magic-sparkles" style="margin-right:4px;color:var(--ms-accent);"></i>可用宏</div>
   
   <div style="font-size:10px;color:var(--ms-accent);font-weight:600;margin:4px 0 2px;opacity:0.85;">全局宏（预设、世界书、聊天历史等任何地方都能用）</div>
@@ -14620,7 +14834,7 @@ function renderSettings() {
       data.prompts.filter(function (p) {
         return p.history && p.history.length > 0;
       }).length
-    } 条)</button><button class="ms-tbtn" id="ms-clean-lost-chars" style="width:100%;text-align:center;margin-bottom:6px;"><i class="fa-solid fa-user-slash"></i> 处理失联角色（重绑/解绑）</button><button class="ms-tbtn danger" id="ms-clear-all-history" style="width:100%;text-align:center;"><i class="fa-solid fa-broom"></i> 清空全部版本历史</button><button class="ms-tbtn danger" id="ms-wipe-all-data" style="width:100%;text-align:center;margin-top:6px;background:rgba(var(--ms-danger-rgb),0.12);border-color:var(--ms-danger);"><i class="fa-solid fa-skull-crossbones"></i> 彻底清空所有本地数据</button><div style="padding:6px 14px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);" id="ms-data-size-info"></div></div>`,
+    } 条)</button><button class="ms-tbtn" id="ms-clean-lost-chars" style="width:100%;text-align:center;margin-bottom:6px;"><i class="fa-solid fa-user-slash"></i> 处理失联角色（重绑/解绑）</button><button class="ms-tbtn danger" id="ms-clear-all-history" style="width:100%;text-align:center;"><i class="fa-solid fa-broom"></i> 清空全部版本历史</button><button class="ms-tbtn danger" id="ms-wipe-all-data" style="width:100%;text-align:center;margin-top:6px;background:rgba(var(--ms-danger-rgb),0.12);border-color:var(--ms-danger);"><i class="fa-solid fa-skull-crossbones"></i> 彻底清空所有本地数据</button><div style="padding:6px 14px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);" id="ms-data-size-info"></div></div>`),
   );
   $p.find("#ms-footer").hide();
   bindAllEvents();
@@ -18196,9 +18410,7 @@ function renderReorderPrompts(v) {
     var tagIdMap = {};
     if (sub.importTags && itags.length) {
       itags.forEach(function (t) {
-        var ex = data.settings.definedTags.find(function (et) {
-          return et.name === t.name;
-        });
+        var ex = findTagByName(t.name);
         if (ex) {
           tagIdMap[t.id] = ex.id;
           if (sub.updateExisting !== false && t.color !== undefined) {
@@ -18508,6 +18720,7 @@ function renderReorderPrompts(v) {
         },
       );
     })();
+    dedupePromptTags();
     _invalidateCharGroupCache();
     saveData();
     return {

@@ -346,16 +346,17 @@ function executeImport(
     if (useTags && itags.length) {
       var _impTagNames = new Set(
         itags.map(function (t) {
-          return t.name;
+          return normalizeTagName(t.name);
         }),
       );
       var _removedTagIds = new Set();
       data.settings.definedTags.forEach(function (t) {
-        if (_impTagNames.has(t.name)) _removedTagIds.add(t.id);
+        if (_impTagNames.has(normalizeTagName(t.name)))
+          _removedTagIds.add(t.id);
       });
       data.settings.definedTags = data.settings.definedTags.filter(
         function (t) {
-          return !_impTagNames.has(t.name);
+          return !_impTagNames.has(normalizeTagName(t.name));
         },
       );
       if (_removedTagIds.size > 0) {
@@ -469,7 +470,7 @@ function executeImport(
     const tagIdMap = {};
     if (useTags && itags.length) {
       itags.forEach((t) => {
-        const ex = data.settings.definedTags.find((et) => et.name === t.name);
+        const ex = findTagByName(t.name);
         if (ex) tagIdMap[t.id] = ex.id;
         else {
           const nt = { ...t, id: uid() };
@@ -551,6 +552,11 @@ function executeImport(
     const tagIdMap = {};
     if (useTags && itags.length) {
       itags.forEach((t) => {
+        const ex = findTagByName(t.name);
+        if (ex) {
+          tagIdMap[t.id] = ex.id;
+          return;
+        }
         const nt = { ...t, id: uid() };
         data.settings.definedTags.push(nt);
         tagIdMap[t.id] = nt.id;
@@ -717,6 +723,7 @@ function executeImport(
       }
     });
   }
+  dedupePromptTags();
   _invalidateCharGroupCache();
   saveData();
   toast("success", importMsg);

@@ -237,6 +237,128 @@ function deleteTag(id) {
   _tagOrderVersion++;
   saveData();
 }
+function normalizeTagName(name) {
+  return String(name === undefined || name === null ? "" : name)
+    .replace(/\u3000/g, " ")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
+function findTagByName(name) {
+  var key = normalizeTagName(name);
+  if (!key) return null;
+  for (var i = 0; i < data.settings.definedTags.length; i++) {
+    var t = data.settings.definedTags[i];
+    if (normalizeTagName(t.name) === key) return t;
+  }
+  return null;
+}
+
+function countPromptsWithTag(tagId) {
+  var cnt = 0;
+  data.prompts.forEach(function (p) {
+    if (p.tags && p.tags.indexOf(tagId) >= 0) cnt++;
+  });
+  return cnt;
+}
+
+function dedupePromptTags() {
+  var changed = 0;
+  data.prompts.forEach(function (p) {
+    if (!Array.isArray(p.tags) || p.tags.length < 2) return;
+    var out = [];
+    p.tags.forEach(function (tid) {
+      if (tid && out.indexOf(tid) < 0) out.push(tid);
+    });
+    if (out.length !== p.tags.length) {
+      p.tags = out;
+      changed++;
+    }
+  });
+  return changed;
+}
+
+function getDuplicateTagGroups() {
+  var buckets = {};
+  var order = [];
+  data.settings.definedTags.forEach(function (t) {
+    var key = normalizeTagName(t.name);
+    if (!key) return;
+    if (!buckets[key]) {
+      buckets[key] = [];
+      order.push(key);
+    }
+    buckets[key].push(t);
+  });
+  var result = [];
+  order.forEach(function (key) {
+    if (buckets[key].length > 1) result.push(buckets[key]);
+  });
+  return result;
+}
+
+function mergeDuplicateTags() {
+  var groups = getDuplicateTagGroups();
+  if (groups.length === 0) return { groups: 0, removed: 0, prompts: 0 };
+  var idMap = {};
+  var removedSet = new Set();
+  groups.forEach(function (grp) {
+    var keeper = grp[0];
+    grp.slice(1).forEach(function (t) {
+      idMap[t.id] = keeper.id;
+      removedSet.add(t.id);
+    });
+  });
+  var affected = 0;
+  data.prompts.forEach(function (p) {
+    if (!Array.isArray(p.tags) || p.tags.length === 0) return;
+    var out = [];
+    var changed = false;
+    p.tags.forEach(function (tid) {
+      var target = idMap[tid] || tid;
+      if (target !== tid) changed = true;
+      if (out.indexOf(target) < 0) out.push(target);
+      else changed = true;
+    });
+    if (changed) {
+      p.tags = out;
+      affected++;
+    }
+  });
+  (data.settings.tagMappings || []).forEach(function (m) {
+    if (!Array.isArray(m.tagIds)) return;
+    var out = [];
+    m.tagIds.forEach(function (tid) {
+      var target = idMap[tid] || tid;
+      if (out.indexOf(target) < 0) out.push(target);
+    });
+    m.tagIds = out;
+    if (m.primaryTagId && idMap[m.primaryTagId]) {
+      m.primaryTagId = idMap[m.primaryTagId];
+    }
+    if (!m.primaryTagId || m.tagIds.indexOf(m.primaryTagId) < 0) {
+      m.primaryTagId = m.tagIds.length > 0 ? m.tagIds[0] : null;
+    }
+  });
+  data.settings.definedTags = data.settings.definedTags.filter(function (t) {
+    return !removedSet.has(t.id);
+  });
+  function _remapFilterTags(arr) {
+    if (!Array.isArray(arr)) return [];
+    var out = [];
+    arr.forEach(function (tid) {
+      var target = idMap[tid] || tid;
+      if (!removedSet.has(target) && out.indexOf(target) < 0) out.push(target);
+    });
+    return out;
+  }
+  filterState.includeTags = _remapFilterTags(filterState.includeTags);
+  filterState.excludeTags = _remapFilterTags(filterState.excludeTags);
+  _tagOrderVersion++;
+  saveData();
+  return { groups: groups.length, removed: removedSet.size, prompts: affected };
+}
 
 function filterPrompts(list) {
   let r = list;

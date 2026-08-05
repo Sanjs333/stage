@@ -1,4 +1,4 @@
-﻿  function computeSubscriptionHash(imported) {
+  function computeSubscriptionHash(imported) {
     var stableContent = JSON.stringify({
       prompts: (imported.prompts || [])
         .map(function (p) {
@@ -200,9 +200,7 @@
     var tagIdMap = {};
     if (sub.importTags && itags.length) {
       itags.forEach(function (t) {
-        var ex = data.settings.definedTags.find(function (et) {
-          return et.name === t.name;
-        });
+        var ex = findTagByName(t.name);
         if (ex) {
           tagIdMap[t.id] = ex.id;
           if (sub.updateExisting !== false && t.color !== undefined) {
@@ -512,6 +510,7 @@
         },
       );
     })();
+    dedupePromptTags();
     _invalidateCharGroupCache();
     saveData();
     return {
