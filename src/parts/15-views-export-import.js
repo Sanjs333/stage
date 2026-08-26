@@ -1,4 +1,4 @@
-﻿  function renderExport() {
+  function renderExport() {
     const $p = $("#" + PANEL_ID);
     $p.find("#ms-title").text("导出");
     $p.find("#ms-toolbar").html(
@@ -48,6 +48,48 @@
         });
         return h;
       }
+      function _renderExpSubGroups(items, gid, baseIndent) {
+        var gObj = gid === "_ungrouped" ? null : getGroup(gid);
+        if (!isSubGroupEnabled(gObj) || getSubGroups(gObj).length === 0) {
+          return _renderExpPromptList(items, gid, baseIndent);
+        }
+        var buckets = {};
+        var noneList = [];
+        items.forEach(function (p) {
+          if (p.subGroupId && getSubGroup(gid, p.subGroupId)) {
+            if (!buckets[p.subGroupId]) buckets[p.subGroupId] = [];
+            buckets[p.subGroupId].push(p);
+          } else {
+            noneList.push(p);
+          }
+        });
+        var h = "";
+        getSubGroups(gObj).forEach(function (sg) {
+          var b = buckets[sg.id];
+          if (!b || b.length === 0) return;
+          h +=
+            '<div style="font-size:10px;color:' +
+            sg.color +
+            ";padding:4px 0 2px " +
+            (baseIndent || 0) +
+            'px;font-weight:600;"><i class="fa-solid fa-folder-open" style="font-size:9px;margin-right:3px;"></i>' +
+            esc(sg.name) +
+            " (" +
+            b.length +
+            ")</div>";
+          h += _renderExpPromptList(b, gid, (baseIndent || 0) + 14);
+        });
+        if (noneList.length > 0) {
+          h +=
+            '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);padding:4px 0 2px ' +
+            (baseIndent || 0) +
+            'px;font-weight:600;"><i class="fa-solid fa-inbox" style="font-size:9px;margin-right:3px;opacity:0.7;"></i>未分类 (' +
+            noneList.length +
+            ")</div>";
+          h += _renderExpPromptList(noneList, gid, (baseIndent || 0) + 14);
+        }
+        return h;
+      }
       data.groups.forEach((g) => {
         const items = grouped[g.id] || [];
         if (items.length === 0) return;
@@ -80,7 +122,7 @@
               '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);padding:4px 0 2px;font-weight:600;"><i class="fa-solid fa-scroll" style="margin-right:3px;color:var(--ms-accent);"></i>通用剧场 (' +
               general.length +
               ")</div>";
-            html += _renderExpPromptList(general, gid, 0);
+            html += _renderExpSubGroups(general, gid, 0);
           }
           var order = getCharDisplayOrder(g);
           var sortedCharKeys = [];
@@ -106,10 +148,10 @@
               " (" +
               ps.length +
               ")</div>";
-            html += _renderExpPromptList(ps, gid, 14);
+            html += _renderExpSubGroups(ps, gid, 14);
           });
         } else {
-          html += _renderExpPromptList(items, gid, 0);
+          html += _renderExpSubGroups(items, gid, 0);
         }
         html += `</div></div>`;
       });
@@ -365,6 +407,49 @@
         });
         return h;
       }
+      function _renderExpgSubGroups(items, baseIndent) {
+        var _gid = v.groupId;
+        var gObj = getGroup(_gid);
+        if (!isSubGroupEnabled(gObj) || getSubGroups(gObj).length === 0) {
+          return _renderExpgPromptList(items, baseIndent);
+        }
+        var buckets = {};
+        var noneList = [];
+        items.forEach(function (p) {
+          if (p.subGroupId && getSubGroup(_gid, p.subGroupId)) {
+            if (!buckets[p.subGroupId]) buckets[p.subGroupId] = [];
+            buckets[p.subGroupId].push(p);
+          } else {
+            noneList.push(p);
+          }
+        });
+        var h = "";
+        getSubGroups(gObj).forEach(function (sg) {
+          var b = buckets[sg.id];
+          if (!b || b.length === 0) return;
+          h +=
+            '<div style="font-size:10px;color:' +
+            sg.color +
+            ";padding:4px 0 2px " +
+            (baseIndent || 0) +
+            'px;font-weight:600;"><i class="fa-solid fa-folder-open" style="font-size:9px;margin-right:3px;"></i>' +
+            esc(sg.name) +
+            " (" +
+            b.length +
+            ")</div>";
+          h += _renderExpgPromptList(b, (baseIndent || 0) + 14);
+        });
+        if (noneList.length > 0) {
+          h +=
+            '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);padding:4px 0 2px ' +
+            (baseIndent || 0) +
+            'px;font-weight:600;"><i class="fa-solid fa-inbox" style="font-size:9px;margin-right:3px;opacity:0.7;"></i>未分类 (' +
+            noneList.length +
+            ")</div>";
+          h += _renderExpgPromptList(noneList, (baseIndent || 0) + 14);
+        }
+        return h;
+      }
       var _expgG = getGroup(v.groupId);
       if (_expgG && isIPGroup(_expgG)) {
         var general = [];
@@ -382,7 +467,7 @@
             '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);padding:4px 0 2px;font-weight:600;"><i class="fa-solid fa-scroll" style="margin-right:3px;color:var(--ms-accent);"></i>通用剧场 (' +
             general.length +
             ")</div>";
-          listH += _renderExpgPromptList(general, 0);
+          listH += _renderExpgSubGroups(general, 0);
         }
         var order = getCharDisplayOrder(_expgG);
         var sortedCharKeys = [];
@@ -408,10 +493,10 @@
             " (" +
             ps.length +
             ")</div>";
-          listH += _renderExpgPromptList(ps, 14);
+          listH += _renderExpgSubGroups(ps, 14);
         });
       } else {
-        listH += _renderExpgPromptList(allPrompts, 0);
+        listH += _renderExpgSubGroups(allPrompts, 0);
       }
       listH += `</div></div>`;
       return `<div class="ms-form">${infoH}${listH}<div class="ms-divider"></div><div class="ms-export-opts-tight">
@@ -573,6 +658,48 @@
       });
       return h;
     }
+    function _renderBatchWithSub(items, gid, baseIndent) {
+      var gObj = gid === "_ungrouped" ? null : getGroup(gid);
+      if (!isSubGroupEnabled(gObj) || getSubGroups(gObj).length === 0) {
+        return _renderBatchSubSeries(items, baseIndent);
+      }
+      var buckets = {};
+      var noneList = [];
+      items.forEach(function (p) {
+        if (p.subGroupId && getSubGroup(gid, p.subGroupId)) {
+          if (!buckets[p.subGroupId]) buckets[p.subGroupId] = [];
+          buckets[p.subGroupId].push(p);
+        } else {
+          noneList.push(p);
+        }
+      });
+      var h = "";
+      getSubGroups(gObj).forEach(function (sg) {
+        var b = buckets[sg.id];
+        if (!b || b.length === 0) return;
+        h +=
+          '<div style="font-size:9px;color:' +
+          sg.color +
+          ";padding:2px 0 1px " +
+          baseIndent +
+          'px;"><i class="fa-solid fa-folder-open" style="font-size:8px;margin-right:2px;"></i>' +
+          esc(sg.name) +
+          " (" +
+          b.length +
+          ")</div>";
+        h += _renderBatchSubSeries(b, baseIndent + 12);
+      });
+      if (noneList.length > 0) {
+        h +=
+          '<div style="font-size:9px;color:var(--SmartThemeQuoteColor,#888);padding:2px 0 1px ' +
+          baseIndent +
+          'px;"><i class="fa-solid fa-inbox" style="font-size:8px;margin-right:2px;"></i>未分类 (' +
+          noneList.length +
+          ")</div>";
+        h += _renderBatchSubSeries(noneList, baseIndent + 12);
+      }
+      return h;
+    }
     orderedGids.forEach(function (gid) {
       var gObj = gid === "_ungrouped" ? null : getGroup(gid);
       var gpItems = psByGroup[gid];
@@ -606,7 +733,7 @@
             '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);padding:2px 0 1px 14px;"><i class="fa-solid fa-scroll" style="margin-right:3px;font-size:9px;color:var(--ms-accent);"></i>通用 (' +
             general.length +
             ")</div>";
-          listH += _renderBatchSubSeries(general, 24);
+          listH += _renderBatchWithSub(general, gid, 24);
         }
         var order = getCharDisplayOrder(gObj);
         var sortedCharKeys = [];
@@ -632,10 +759,10 @@
             " (" +
             cps.length +
             ")</div>";
-          listH += _renderBatchSubSeries(cps, 24);
+          listH += _renderBatchWithSub(cps, gid, 24);
         });
       } else {
-        listH += _renderBatchSubSeries(gpItems, 12);
+        listH += _renderBatchWithSub(gpItems, gid, 12);
       }
     });
     listH += `</div></div>`;
@@ -709,6 +836,32 @@
       previewH += `<div class="ms-imp-preview"><div class="ms-imp-preview-title"><i class="fa-solid fa-folder" style="margin-right:4px;"></i>包含 ${ig.length} 个分组</div><div class="ms-imp-preview-list">${ig.map((g) => `<span style="background:${g.color || "#666"};">${esc(g.name)}</span>`).join("")}</div></div>`;
     if (itags.length > 0)
       previewH += `<div class="ms-imp-preview"><div class="ms-imp-preview-title"><i class="fa-solid fa-tags" style="margin-right:4px;"></i>包含 ${itags.length} 个标签</div><div class="ms-imp-preview-list">${itags.map((t) => `<span style="background:${t.color || "#666"};">${esc(t.name)}</span>`).join("")}</div></div>`;
+    var _impSgCount = 0;
+    var _impSgNames = [];
+    [].concat(ig, icgs).forEach(function (x) {
+      if (!x || !Array.isArray(x.subGroups)) return;
+      x.subGroups.forEach(function (sg) {
+        if (!sg || !sg.name) return;
+        _impSgCount++;
+        if (_impSgNames.indexOf(sg.name) < 0) _impSgNames.push(sg.name);
+      });
+    });
+    if (_impSgCount > 0) {
+      previewH +=
+        '<div class="ms-imp-preview"><div class="ms-imp-preview-title"><i class="fa-solid fa-folder-open" style="margin-right:4px;"></i>包含 ' +
+        _impSgCount +
+        ' 个文件夹</div><div class="ms-imp-preview-list">' +
+        _impSgNames
+          .map(function (n) {
+            return (
+              '<span style="background:var(--SmartThemeQuoteColor,#666);">' +
+              esc(n) +
+              "</span>"
+            );
+          })
+          .join("") +
+        "</div></div>";
+    }
     var ibdMsgCount = Object.keys(v.importedBdMessages || {}).length;
     var ibdDateCount = Object.keys(v.importedBdDates || {}).length;
     if (ibdMsgCount > 0 || ibdDateCount > 0) {
@@ -807,8 +960,8 @@
       <div class="ms-field" id="ms-imp-target-wrap" style="display:none;padding:0 14px;"><label>放入分组</label><select id="ms-imp-target">${groupOpts}</select></div>
       <div class="ms-divider"></div><div class="ms-section-label">导入方式</div>
       <div class="ms-import-opt" data-mode="merge"><div class="ms-import-opt-title"><i class="fa-solid fa-code-merge"></i> 合并更新 <span style="font-size:10px;color:#c9957a;font-weight:normal;">推荐</span></div><div class="ms-import-opt-desc">智能检测 — 新内容添加，作者修改过的自动更新，完全相同的跳过</div></div>
-      <div class="ms-import-opt" data-mode="append"><div class="ms-import-opt-title"><i class="fa-solid fa-plus"></i> 全部追加</div><div class="ms-import-opt-desc">不做任何检查，全部作为新内容添加（可能产生重复）</div></div>
-      <div class="ms-import-opt" data-mode="replace"><div class="ms-import-opt-title"><i class="fa-solid fa-rotate"></i> 覆盖替换（范围内）</div><div class="ms-import-opt-desc"><i class="fa-solid fa-triangle-exclamation" style="color:#e55;margin-right:3px;"></i>只替换导入涉及的范围——同名分组里的本地剧场会被清空再填入，<strong>其他分组和剧场保留</strong>；同名标签、涉及角色的生日/祝福也会被替换</div></div>
+      <div class="ms-import-opt" data-mode="append"><div class="ms-import-opt-title"><i class="fa-solid fa-plus"></i> 全部追加</div><div class="ms-import-opt-desc">不做任何检查，全部作为新内容添加（可能产生重复）。若内容指定了酒馆里已有的分组，这里也会另建一个同名分组</div></div>
+      <div class="ms-import-opt" data-mode="replace"><div class="ms-import-opt-title"><i class="fa-solid fa-rotate"></i> 覆盖替换（范围内）</div><div class="ms-import-opt-desc"><i class="fa-solid fa-triangle-exclamation" style="color:#e55;margin-right:3px;"></i>只替换导入涉及的范围——同名分组里的本地剧场会被清空再填入，<strong>其他分组和剧场保留</strong>；同名标签会更新颜色等属性、但不影响本地已有的标签引用；涉及角色的生日/祝福会被替换</div></div>
       <button class="ms-btn" id="ms-import-cancel" style="width:100%;">取消</button></div>`);
     $p.find("#ms-footer").hide();
     bindAllEvents();

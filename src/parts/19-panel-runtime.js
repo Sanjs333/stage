@@ -323,6 +323,28 @@ function showPanel() {
       e.stopImmediatePropagation();
       e.stopPropagation();
       e.preventDefault();
+      /* 全屏编辑浮层不是 .ms-modal-overlay，走不到上面的模态放行分支，
+         再往下就会一路退到 navigateBack()——浮层还压在最上面，背后的页面
+         却已经换掉了，此时点浮层里的「保存」会写进一个游离节点。 */
+      var $fsOverlay = $pp.find(".ms-fs-editor-overlay");
+      if ($fsOverlay.length) {
+        var $fsCancel = $fsOverlay.find("#ms-fs-cancel");
+        if ($fsCancel.length) $fsCancel.trigger("click");
+        else $fsOverlay.remove();
+        return;
+      }
+      var $msPopup = $pp.find(
+        "#ms-gp-popup, #ms-sp-popup, #ms-char-search-popup",
+      );
+      if ($msPopup.length) {
+        $msPopup.remove();
+        $pp.off(
+          "pointerdown.ms-gp keydown.ms-gp pointerdown.ms-sp keydown.ms-sp pointerdown.ms-char-search-close",
+        );
+        $pp.find("#ms-body").off("scroll.ms-gp scroll.ms-sp");
+        $pp.find(".ms-gp-trigger").removeClass("open");
+        return;
+      }
       var $findBar = $pp.find("#ms-find-bar");
       if ($findBar.is(":visible")) {
         $findBar.hide();
@@ -433,6 +455,7 @@ function showPanel() {
       excludeTags: [],
       tagSelectMode: "include",
       groupId: null,
+      subGroupId: null,
       onlyCurrentChar: false,
     };
   }

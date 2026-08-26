@@ -1,4 +1,4 @@
-﻿function bindAllEvents() {
+function bindAllEvents() {
   const $p = $("#" + PANEL_ID);
   $p.find("#ms-body, #ms-toolbar, #ms-footer, #ms-filter-panel")
     .off(".ms")
@@ -247,7 +247,7 @@
       msg =
         "确定删除「" +
         g.name +
-        "」分组吗？\n\n这是内置使用指南，里面的说明文档会一起删除。\n删除后可在「设置 → 重新生成使用说明」里恢复。";
+        "」分组吗？\n\n这是内置使用指南，里面的说明文档会一起删除。\n删除后可在「设置 → 关于与更新 → 重新生成使用说明」里恢复。";
     } else if (cnt > 0) {
       msg =
         "确定删除「" +
@@ -639,6 +639,17 @@
       pid = $(this).data("pid");
     if (action === "send") sendToInput(pid);
     else if (action === "send-gen") sendAndGenerate(pid);
+    else if (action === "preview") {
+      var vis = getVisiblePromptIds();
+      var sibs = vis;
+      if (selectMode && selectedIds.has(pid)) {
+        var picked = vis.filter(function (x) {
+          return selectedIds.has(x);
+        });
+        if (picked.length > 1) sibs = picked;
+      }
+      navigateTo({ name: "preview", promptId: pid, _siblingIds: sibs });
+    }
   });
   $footer.on("click.ms", "[data-action='manage-groups']", () =>
     navigateTo({ name: "groups" }),
@@ -808,6 +819,7 @@ function bindFilterEvents($p) {
       filterState.includeTags = [];
       filterState.excludeTags = [];
       filterState.groupId = null;
+      filterState.subGroupId = null;
       $p.find("#ms-filter-panel").html(buildFilterPanel());
       bindFilterEvents($p);
       renderBodyOnly();
@@ -815,6 +827,14 @@ function bindFilterEvents($p) {
     .on("click.msf", "[data-filter-group]", function () {
       var gid = $(this).data("filter-group") || null;
       filterState.groupId = filterState.groupId === gid ? null : gid;
+      filterState.subGroupId = null;
+      $p.find("#ms-filter-panel").html(buildFilterPanel());
+      bindFilterEvents($p);
+      renderBodyOnly();
+    })
+    .on("click.msf", "[data-filter-subgroup]", function () {
+      var sgid = $(this).attr("data-filter-subgroup") || null;
+      filterState.subGroupId = filterState.subGroupId === sgid ? null : sgid;
       $p.find("#ms-filter-panel").html(buildFilterPanel());
       bindFilterEvents($p);
       renderBodyOnly();

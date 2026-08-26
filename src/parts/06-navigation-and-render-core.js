@@ -1,4 +1,4 @@
-﻿  function currentView() {
+  function currentView() {
     return viewStack[viewStack.length - 1];
   }
 
@@ -80,6 +80,7 @@
       excludeTags: [],
       tagSelectMode: "include",
       groupId: null,
+      subGroupId: null,
       onlyCurrentChar: false,
     };
     shiftKeyActive = false;
@@ -144,6 +145,7 @@
       excludeTags: [],
       tagSelectMode: "include",
       groupId: null,
+      subGroupId: null,
       onlyCurrentChar: false,
     };
     shiftKeyActive = false;

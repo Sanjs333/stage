@@ -31,7 +31,16 @@ function renderGroups() {
         if (groupSelectMode) {
           html += `<div class="ms-gitem ${isSel ? "ms-gitem-selected" : ""}" data-gid="${g.id}"><div class="ms-gitem-check"><i class="fa-solid fa-check"></i></div>${iconH}<span class="ms-gitem-name">${esc(g.name)}${ipBadge}${g.note ? "<br><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#555);font-style:italic;'>" + esc(truncate(g.note, 30)) + "</span>" : ""}</span><span class="ms-gitem-cnt">${cnt}</span></div>`;
         } else {
-          html += `<div class="ms-gitem">${iconH}<span class="ms-gitem-name">${esc(g.name)}${ipBadge}${g.note ? "<br><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#555);font-style:italic;'>" + esc(truncate(g.note, 30)) + "</span>" : ""}</span><span class="ms-gitem-cnt">${cnt}</span><button class="ms-gitem-btn" data-action="rename" data-gid="${g.id}"><i class="fa-solid fa-pen"></i></button><button class="ms-gitem-btn danger" data-action="delete-group" data-gid="${g.id}"><i class="fa-solid fa-trash"></i></button></div>`;
+          var _sgCntG =
+            isSubGroupEnabled(g) && Array.isArray(g.subGroups)
+              ? g.subGroups.length
+              : 0;
+          var _sgBadgeG = _sgCntG
+            ? '<span style="display:inline-block;margin-left:4px;padding:1px 5px;background:rgba(var(--ms-accent-rgb),0.12);color:var(--ms-accent);border-radius:3px;font-size:9px;vertical-align:middle;"><i class="fa-solid fa-folder-open" style="font-size:8px;margin-right:2px;"></i>' +
+              _sgCntG +
+              "</span>"
+            : "";
+          html += `<div class="ms-gitem">${iconH}<span class="ms-gitem-name">${esc(g.name)}${ipBadge}${_sgBadgeG}${g.note ? "<br><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#555);font-style:italic;'>" + esc(truncate(g.note, 30)) + "</span>" : ""}</span><span class="ms-gitem-cnt">${cnt}</span><button class="ms-gitem-btn" data-action="subgroups" data-gid="${g.id}" title="管理文件夹"><i class="fa-solid fa-folder-open"></i></button><button class="ms-gitem-btn" data-action="rename" data-gid="${g.id}"><i class="fa-solid fa-pen"></i></button><button class="ms-gitem-btn danger" data-action="delete-group" data-gid="${g.id}"><i class="fa-solid fa-trash"></i></button></div>`;
           if (expandedColorId === g.id) {
             html += buildColorPickerHTML(g.color, "data-gid", g.id);
           }
@@ -121,6 +130,8 @@ function renderGroups() {
       const a = $(this).data("action"),
         gid = $(this).data("gid");
       if (a === "rename") navigateTo({ name: "group-edit", groupId: gid });
+      else if (a === "subgroups")
+        navigateTo({ name: "group-subgroups", groupId: gid });
       else if (a === "delete-group") {
         const cnt = getPromptsInGroup(gid).length;
         msConfirm(
@@ -186,8 +197,6 @@ function renderGroupEdit(v) {
     ? GROUP_COLORS[data.groups.length % GROUP_COLORS.length]
     : g.color;
   var editIconMode = isNew ? "group" : g.iconMode || "group";
-  var editIconFallbackMode =
-    editIconMode && editIconMode !== "custom" ? editIconMode : "group";
   var editIconUrl = isNew ? "" : g.iconUrl || "";
   var editIconCharKey = isNew ? "" : g.iconCharKey || "";
   var showCharSection = !isNew && editCharKeys.length > 0;
@@ -424,104 +433,60 @@ function renderGroupEdit(v) {
       }
       charSectionH += "</div>";
     }
-    var multiPrefixSectionH = "";
+    var advSectionH = "";
     if (!isNew && v.groupId) {
-      var groupPrompts = getPromptsInGroup(v.groupId);
-      var multiPrefixEnabled = g && g.multiPrefixEnabled;
-      var prefixTemplates =
-        g && Array.isArray(g.prefixTemplates) ? g.prefixTemplates : [];
-      var prefixAssignments = (g && g.prefixAssignments) || {};
-      multiPrefixSectionH +=
-        '<div class="ms-section-label" style="display:flex;align-items:center;gap:8px;padding:8px 14px 4px;">' +
-        '<label class="ms-switch" style="margin:0;"><input type="checkbox" id="ms-gedit-multi-prefix-toggle" ' +
-        (multiPrefixEnabled ? "checked" : "") +
-        '><span class="ms-switch-slider"></span></label>' +
-        '<span style="font-weight:600;text-transform:none;letter-spacing:0;font-size:11px;color:var(--SmartThemeQuoteColor,#888);">多前缀模式</span>' +
-        '<span style="font-size:9px;font-weight:normal;opacity:0.6;text-transform:none;letter-spacing:0;">(创建多套前缀模板，适用于分组内多条剧场不同前缀)</span>' +
-        "</div>";
-      if (multiPrefixEnabled) {
-        var tplToPrompts = {};
-        Object.keys(prefixAssignments).forEach(function (pid) {
-          var tid = prefixAssignments[pid];
-          if (!tplToPrompts[tid]) tplToPrompts[tid] = [];
-          tplToPrompts[tid].push(pid);
-        });
-        multiPrefixSectionH +=
-          '<div style="padding:4px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;line-height:1.6;">' +
-          '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>没被任何模板勾选的剧场，会自动用上方「注入前缀指令」作为分组默认' +
-          "</div>";
-        multiPrefixSectionH +=
-          '<div style="padding:4px 14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
-          '<button class="ms-tbtn" id="ms-gedit-add-template" style="font-size:11px;padding:4px 10px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:3px;"></i>添加前缀模板</button>' +
-          '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">' +
-          prefixTemplates.length +
-          " 个模板，" +
-          groupPrompts.length +
-          " 条剧场</span>" +
-          "</div>";
-        if (prefixTemplates.length === 0) {
-          multiPrefixSectionH +=
-            '<div class="ms-empty" style="padding:14px;font-size:11px;"><i class="fa-solid fa-file-lines"></i>还没有模板，点上面「添加前缀模板」开始创建</div>';
-        } else {
-          multiPrefixSectionH +=
-            '<div id="ms-gedit-template-list" style="padding:0 14px;display:flex;flex-direction:column;gap:10px;">';
-          prefixTemplates.forEach(function (tpl, tplIdx) {
-            var assignedIds = tplToPrompts[tpl.id] || [];
-            multiPrefixSectionH +=
-              '<div class="ms-prefix-tpl-item" data-tpl-id="' +
-              tpl.id +
-              '" style="padding:6px 0 10px;border-bottom:1px dashed rgba(255,255,255,0.06);">' +
-              '<div style="display:flex;align-items:center;gap:4px;margin-bottom:5px;">' +
-              '<span style="font-size:10px;color:var(--ms-accent);font-weight:600;flex-shrink:0;min-width:28px;">#' +
-              (tplIdx + 1) +
-              "</span>" +
-              '<input type="text" class="ms-prefix-tpl-name" data-tpl-id="' +
-              tpl.id +
-              '" value="' +
-              esc(tpl.name || "未命名模板") +
-              '" placeholder="模板名" style="flex:1;min-width:0;padding:3px 8px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:4px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:12px;outline:none;">' +
-              '<i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-tpl-content-' +
-              tpl.id +
-              '" data-fs-title="编辑模板「' +
-              esc(truncate(tpl.name || "未命名模板", 20)) +
-              '」" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
-              '<i class="fa-solid fa-trash ms-prefix-tpl-del" data-tpl-id="' +
-              tpl.id +
-              '" title="删除模板" style="cursor:pointer;color:var(--ms-danger);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
-              "</div>" +
-              '<textarea class="ms-prefix-tpl-content" id="ms-tpl-content-' +
-              tpl.id +
-              '" data-tpl-id="' +
-              tpl.id +
-              '" style="min-height:54px;width:100%;font-family:Consolas,monospace;font-size:11px;line-height:1.5;resize:vertical;box-sizing:border-box;margin-bottom:6px;" placeholder="模板内容，可用 {\u200B{stage}}、{\u200B{stage_title}} 等宏">' +
-              esc(tpl.content || "") +
-              "</textarea>";
-            if (groupPrompts.length === 0) {
-              multiPrefixSectionH +=
-                '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;padding-left:32px;">本分组还没有剧场</div>';
-            } else {
-              multiPrefixSectionH +=
-                '<button class="ms-tbtn ms-prefix-tpl-config" data-tpl-id="' +
-                tpl.id +
-                '" style="width:100%;text-align:center;font-size:11px;padding:5px 10px;display:flex;align-items:center;justify-content:center;gap:6px;">' +
-                '<i class="fa-solid fa-list-check" style="color:var(--ms-accent);"></i>' +
-                "<span>配置适用剧场</span>" +
-                (assignedIds.length > 0
-                  ? '<span style="font-size:11px;color:var(--ms-accent);font-weight:600;">已选 ' +
-                    assignedIds.length +
-                    " 条</span>"
-                  : '<span style="font-size:10px;opacity:0.55;">未配置</span>') +
-                "</button>";
-            }
-            multiPrefixSectionH += "</div>";
-          });
-          multiPrefixSectionH += "</div>";
-        }
-        if (groupPrompts.length === 0 && prefixTemplates.length > 0) {
-          multiPrefixSectionH +=
-            '<div class="ms-empty" style="padding:14px;font-size:11px;margin:6px 14px 0;"><i class="fa-solid fa-folder-open"></i>本分组还没有剧场，添加剧场后再来分配模板</div>';
-        }
+      var _gAdv = getGroup(v.groupId) || g;
+      var _advPrompts = getPromptsInGroup(v.groupId);
+      var _sgCntAdv = Array.isArray(_gAdv.subGroups)
+        ? _gAdv.subGroups.length
+        : 0;
+      var _sgClassified = 0;
+      _advPrompts.forEach(function (p) {
+        if (p.subGroupId && getSubGroup(v.groupId, p.subGroupId))
+          _sgClassified++;
+      });
+      var _pfxOn = !!_gAdv.multiPrefixEnabled;
+      var _pfxCntAdv = Array.isArray(_gAdv.prefixTemplates)
+        ? _gAdv.prefixTemplates.length
+        : 0;
+      var _pfxAssigned = 0;
+      if (_gAdv.prefixAssignments) {
+        _pfxAssigned = Object.keys(_gAdv.prefixAssignments).filter(
+          function (pid) {
+            var _pp = getPrompt(pid);
+            return _pp && _pp.groupId === v.groupId;
+          },
+        ).length;
       }
+      var _sgDesc =
+        _sgCntAdv === 0
+          ? "还没有文件夹 · 在分组与系列之间增加一层归类"
+          : _sgCntAdv + " 个文件夹 · " + _sgClassified + " 条已归类";
+      var _pfxDesc = !_pfxOn
+        ? "未启用 · 分组内不同剧场使用不同前缀"
+        : _pfxCntAdv === 0
+          ? "已启用 · 还没有创建模板"
+          : _pfxCntAdv + " 个模板 · " + _pfxAssigned + " 条已分配";
+      advSectionH += '<div class="ms-section-label">高级设置</div>';
+      advSectionH +=
+        '<div class="ms-adv-entry" data-adv-nav="subgroups">' +
+        '<div class="ms-adv-entry-icon"><i class="fa-solid fa-folder-open"></i></div>' +
+        '<div class="ms-adv-entry-info"><div class="ms-adv-entry-title">分组文件夹</div>' +
+        '<div class="ms-adv-entry-desc">' +
+        esc(_sgDesc) +
+        "</div></div>" +
+        '<i class="fa-solid fa-angle-right ms-adv-entry-chevron"></i></div>';
+      advSectionH +=
+        '<div class="ms-adv-entry" data-adv-nav="prefixes">' +
+        '<div class="ms-adv-entry-icon"><i class="fa-solid fa-file-lines"></i></div>' +
+        '<div class="ms-adv-entry-info"><div class="ms-adv-entry-title">多前缀模式</div>' +
+        '<div class="ms-adv-entry-desc">' +
+        esc(_pfxDesc) +
+        "</div></div>" +
+        '<div class="ms-adv-switch-wrap" data-adv-switch="1"><label class="ms-switch" style="margin:0;"><input type="checkbox" id="ms-adv-pfx-toggle"' +
+        (_pfxOn ? " checked" : "") +
+        '><span class="ms-switch-slider"></span></label></div>' +
+        '<i class="fa-solid fa-angle-right ms-adv-entry-chevron"></i></div>';
     }
     var toggleCharSectionH =
       '<button class="ms-tbtn" id="ms-gedit-toggle-charsection" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-' +
@@ -549,7 +514,7 @@ function renderGroupEdit(v) {
       '<div class="ms-field"><label>多条外壳模板（本组）<span style="font-weight:350;opacity:0.5;">(选多条本组剧场时的整体结构，留空使用全局默认；用 {\u200B{stage_count}} 表示数量、{\u200B{stage_tasks}} 表示所有任务块)</span> <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-gedit-multi-shell" data-fs-title="编辑分组多条外壳模板" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-gedit-multi-shell" style="min-height:60px;resize:vertical;" placeholder="留空使用全局默认；多条剧场全在本组时才生效">' +
       esc(g ? g.multiStagePrefix || "" : "") +
       "</textarea></div>" +
-      multiPrefixSectionH +
+      advSectionH +
       toggleCharSectionH +
       charSectionH +
       (!isNew
@@ -582,7 +547,6 @@ function renderGroupEdit(v) {
     if (!$name.length) return false;
     var name = ($name.val() || "").trim();
     if (!name) return false;
-    _collectMultiPrefixFromUI();
     var stagePrefix = $p.find("#ms-gedit-prefix").val() || "";
     var multiStagePrefix = $p.find("#ms-gedit-multi-shell").val() || "";
     var finalIconUrl = $p.find("#ms-gedit-icon-url").length
@@ -599,9 +563,6 @@ function renderGroupEdit(v) {
       iconUrl: editIconMode === "custom" ? finalIconUrl : "",
       iconCharKey: editIconMode === "char" ? editIconCharKey : "",
       charKeys: editCharKeys.slice(),
-      multiPrefixEnabled: editMultiPrefixEnabled,
-      prefixTemplates: editPrefixTemplates,
-      prefixAssignments: editPrefixAssignments,
     };
     data.groups.forEach(function (og) {
       if (og.id === v.groupId) return;
@@ -640,7 +601,7 @@ function renderGroupEdit(v) {
     );
     $p.find("#ms-body").on(
       "click.ms-gd",
-      "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-custom-icon-toggle, #ms-gedit-toggle-charsection, #ms-gedit-add-template, .ms-prefix-tpl-del, .ms-gedit-char-cb",
+      "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-toggle-charsection, .ms-gedit-char-cb",
       function () {
         groupEditDirty = true;
       },
@@ -669,7 +630,7 @@ function renderGroupEdit(v) {
     });
     $p.find("#ms-body").on(
       "click.ms-gd",
-      "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-custom-icon-toggle, #ms-gedit-add-template, .ms-prefix-tpl-del, .ms-gedit-char-cb",
+      "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], .ms-gedit-char-cb",
       function () {
         setTimeout(_saveGroupEditNow, 0);
       },
@@ -685,6 +646,7 @@ function renderGroupEdit(v) {
     var noteVal = $p.find("#ms-gedit-note").val();
     var authorVal = $p.find("#ms-gedit-author").val();
     var prefixVal = $p.find("#ms-gedit-prefix").val();
+    var multiShellVal = $p.find("#ms-gedit-multi-shell").val();
     var iconUrlVal = $p.find("#ms-gedit-icon-url").length
       ? $p.find("#ms-gedit-icon-url").val()
       : undefined;
@@ -701,6 +663,8 @@ function renderGroupEdit(v) {
     if (noteVal !== undefined) $p.find("#ms-gedit-note").val(noteVal);
     if (authorVal !== undefined) $p.find("#ms-gedit-author").val(authorVal);
     if (prefixVal !== undefined) $p.find("#ms-gedit-prefix").val(prefixVal);
+    if (multiShellVal !== undefined)
+      $p.find("#ms-gedit-multi-shell").val(multiShellVal);
     if (iconUrlVal !== undefined && $p.find("#ms-gedit-icon-url").length) {
       $p.find("#ms-gedit-icon-url").val(iconUrlVal);
     }
@@ -722,395 +686,31 @@ function renderGroupEdit(v) {
       }
     });
   }
-  var editMultiPrefixEnabled = !isNew && g && g.multiPrefixEnabled;
-  var editPrefixTemplates =
-    !isNew && g && Array.isArray(g.prefixTemplates)
-      ? JSON.parse(JSON.stringify(g.prefixTemplates))
-      : [];
-  var editPrefixAssignments =
-    !isNew && g && g.prefixAssignments
-      ? Object.assign({}, g.prefixAssignments)
-      : {};
-  function _collectMultiPrefixFromUI() {
-    $p.find(".ms-prefix-tpl-name").each(function () {
-      var tid = $(this).data("tpl-id");
-      var tpl = editPrefixTemplates.find(function (t) {
-        return t.id === tid;
-      });
-      if (tpl) tpl.name = $(this).val();
-    });
-    $p.find(".ms-prefix-tpl-content").each(function () {
-      var tid = $(this).data("tpl-id");
-      var tpl = editPrefixTemplates.find(function (t) {
-        return t.id === tid;
-      });
-      if (tpl) tpl.content = $(this).val();
-    });
-  }
-  function _syncMultiPrefixToGroup() {
-    if (!g) return;
-    g.multiPrefixEnabled = editMultiPrefixEnabled;
-    g.prefixTemplates = editPrefixTemplates;
-    g.prefixAssignments = editPrefixAssignments;
-  }
-  function _refreshMultiPrefixUI() {
-    _collectMultiPrefixFromUI();
-    var $body = $p.find("#ms-body");
-    var sc = $body.scrollTop();
-    _syncMultiPrefixToGroup();
-    $body.html(buildBody());
-    $body.scrollTop(sc);
-  }
-  $p.find("#ms-body").on(
-    "change.ms",
-    "#ms-gedit-multi-prefix-toggle",
-    function () {
-      editMultiPrefixEnabled = $(this).is(":checked");
-      _refreshMultiPrefixUI();
-    },
-  );
-  $p.find("#ms-body").on("click.ms", "#ms-gedit-add-template", function () {
-    _collectMultiPrefixFromUI();
-    var newTpl = {
-      id: uid(),
-      name: "模板 " + (editPrefixTemplates.length + 1),
-      content: "",
-    };
-    editPrefixTemplates.push(newTpl);
-    _refreshMultiPrefixUI();
-  });
-  $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-name", function () {
-    var tid = $(this).data("tpl-id");
-    var tpl = editPrefixTemplates.find(function (t) {
-      return t.id === tid;
-    });
-    if (tpl) tpl.name = $(this).val();
-  });
-  $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-content", function () {
-    var tid = $(this).data("tpl-id");
-    var tpl = editPrefixTemplates.find(function (t) {
-      return t.id === tid;
-    });
-    if (tpl) tpl.content = $(this).val();
-  });
-  $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-del", function () {
-    var tid = $(this).data("tpl-id");
-    var tpl = editPrefixTemplates.find(function (t) {
-      return t.id === tid;
-    });
-    if (!tpl) return;
-    var usedCount = 0;
-    Object.keys(editPrefixAssignments).forEach(function (pid) {
-      if (editPrefixAssignments[pid] === tid) usedCount++;
-    });
-    var msg =
-      usedCount > 0
-        ? "确定删除模板「" +
-          (tpl.name || "未命名") +
-          "」吗？\n\n有 " +
-          usedCount +
-          " 条剧场分配了这个模板，删除后会自动改用分组默认前缀。"
-        : "确定删除模板「" + (tpl.name || "未命名") + "」吗？";
-    msConfirm(msg, {
-      title: "删除模板",
-      dangerous: true,
-      okText: "删除",
-    }).then(function (ok) {
-      if (!ok) return;
-      editPrefixTemplates = editPrefixTemplates.filter(function (t) {
-        return t.id !== tid;
-      });
-      Object.keys(editPrefixAssignments).forEach(function (pid) {
-        if (editPrefixAssignments[pid] === tid)
-          delete editPrefixAssignments[pid];
-      });
-      _refreshMultiPrefixUI();
-    });
-  });
-  $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-config", function () {
-    var tid = $(this).data("tpl-id");
-    if (!tid) return;
-    var tpl = editPrefixTemplates.find(function (t) {
-      return t.id === tid;
-    });
-    if (!tpl) return;
-    _collectMultiPrefixFromUI();
-    var groupPromptsForCfg = getPromptsInGroup(v.groupId);
-    var workingAssignments = Object.assign({}, editPrefixAssignments);
-    var cfgSearchKw = "";
-
-    function buildTplCfgModalBody() {
-      var lkw = cfgSearchKw.toLowerCase();
-      var filtered = groupPromptsForCfg.filter(function (p) {
-        if (!lkw) return true;
-        return (
-          (p.title || "").toLowerCase().indexOf(lkw) >= 0 ||
-          (p.content || "").toLowerCase().indexOf(lkw) >= 0
-        );
-      });
-      var assignedToThisCount = 0;
-      var occupiedByOthersCount = 0;
-      groupPromptsForCfg.forEach(function (p) {
-        if (workingAssignments[p.id] === tid) assignedToThisCount++;
-        else if (workingAssignments[p.id]) occupiedByOthersCount++;
-      });
-      var html = "";
-      html +=
-        '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;line-height:1.6;">';
-      html +=
-        '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>';
-      html +=
-        "勾选要使用「<strong>" +
-        esc(tpl.name || "未命名") +
-        "</strong>」前缀的剧场。被其他模板占用的会显示灰色，可点击以更改至当前模板。";
-      html += "</div>";
-      html +=
-        '<input type="text" class="ms-modal-search" id="ms-tpl-cfg-search" placeholder="搜索剧场..." value="' +
-        esc(cfgSearchKw) +
-        '">';
-      html +=
-        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px;flex-wrap:wrap;">';
-      html +=
-        '<span style="color:var(--SmartThemeQuoteColor,#888);flex:1;min-width:0;">共 ' +
-        groupPromptsForCfg.length +
-        ' 条 · 当前模板已选 <strong style="color:var(--ms-accent);">' +
-        assignedToThisCount +
-        "</strong> 条" +
-        (occupiedByOthersCount > 0
-          ? ' · <span style="color:var(--ms-accent);opacity:0.85;">' +
-            occupiedByOthersCount +
-            " 条被其他模板占用</span>"
-          : "") +
-        "</span>";
-      html +=
-        '<button class="ms-tbtn" data-tpl-cfg-action="select-free" style="font-size:10px;padding:3px 8px;flex-shrink:0;" title="只勾选未被任何模板占用的剧场">勾选空闲</button>';
-      html +=
-        '<button class="ms-tbtn" data-tpl-cfg-action="clear" style="font-size:10px;padding:3px 8px;color:var(--ms-danger);border-color:var(--ms-danger);flex-shrink:0;" title="把当前模板下的剧场全部释放">清空</button>';
-      html += "</div>";
-      if (filtered.length === 0) {
-        html +=
-          '<div class="ms-empty" style="padding:20px;font-size:11px;"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的剧场</div>';
-      } else {
-        html +=
-          '<div id="ms-tpl-cfg-list" style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:3px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;padding:6px;">';
-        filtered.forEach(function (p) {
-          var assignedTo = workingAssignments[p.id];
-          var isAssignedToThis = assignedTo === tid;
-          var isAssignedToOther = assignedTo && assignedTo !== tid;
-          var otherTpl = isAssignedToOther
-            ? editPrefixTemplates.find(function (t) {
-                return t.id === assignedTo;
-              })
-            : null;
-          var rowBg = isAssignedToThis
-            ? "background:rgba(var(--ms-accent-rgb),0.12);"
-            : isAssignedToOther
-              ? "background:rgba(255,255,255,0.02);opacity:0.6;"
-              : "";
-          var checkBg = isAssignedToThis
-            ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
-            : "";
-          var noteH = "";
-          if (isAssignedToOther && otherTpl) {
-            noteH =
-              '<span style="font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.12);padding:1px 6px;border-radius:3px;flex-shrink:0;" title="点击会更改到当前模板">已属于「' +
-              esc(truncate(otherTpl.name || "未命名", 12)) +
-              "」</span>";
-          }
-          var seriesH = "";
-          if (p.series && String(p.series).trim()) {
-            seriesH =
-              '<div style="font-size:9px;color:var(--ms-accent);opacity:0.75;display:flex;align-items:center;gap:3px;line-height:1.3;margin-bottom:2px;"><i class="fa-solid fa-layer-group" style="font-size:8px;"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
-              esc(String(p.series).trim()) +
-              "</span></div>";
-          }
-          html +=
-            '<div class="ms-tpl-cfg-row" data-pid="' +
-            p.id +
-            '" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;transition:background 0.12s;' +
-            rowBg +
-            '">';
-          html +=
-            '<div class="ms-gitem-check" style="' +
-            checkBg +
-            '"><i class="fa-solid fa-check"></i></div>';
-          html += '<div style="flex:1;min-width:0;overflow:hidden;">';
-          html += seriesH;
-          html +=
-            '<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--SmartThemeBodyColor,#ddd);">' +
-            esc(p.title || "未命名") +
-            "</div>";
-          html += "</div>";
-          html += noteH;
-          html +=
-            '<button class="ms-card-qbtn ms-tpl-cfg-preview" data-pid="' +
-            p.id +
-            '" title="预览剧场内容" style="flex-shrink:0;width:24px;height:24px;font-size:10px;"><i class="fa-solid fa-eye"></i></button>';
-          html += "</div>";
-        });
-        html += "</div>";
-      }
-      return html;
-    }
-
-    function refreshTplCfgBody($overlay, keepFocus) {
-      var $oldInput = $overlay.find("#ms-tpl-cfg-search");
-      var caretPos = -1;
-      if (keepFocus && $oldInput.is(":focus") && $oldInput[0]) {
-        caretPos = $oldInput[0].selectionStart || 0;
-      }
-      var $oldList = $overlay.find("#ms-tpl-cfg-list");
-      var savedScroll = $oldList.length ? $oldList[0].scrollTop : 0;
-      $overlay.find(".ms-modal-body").html(buildTplCfgModalBody());
-      var $newList = $overlay.find("#ms-tpl-cfg-list");
-      if ($newList.length && savedScroll > 0) {
-        $newList[0].scrollTop = savedScroll;
-      }
-      if (caretPos >= 0) {
-        var $newInput = $overlay.find("#ms-tpl-cfg-search");
-        if ($newInput.length) {
-          $newInput.focus();
-          try {
-            $newInput[0].setSelectionRange(caretPos, caretPos);
-          } catch (e) {}
-        }
-      }
-    }
-
-    showModal({
-      title: "配置「" + truncate(tpl.name || "未命名", 18) + "」的适用剧场",
-      iconType: "info",
-      icon: "fa-list-check",
-      modalStyle: "min-width:380px;max-width:94vw;width:520px;",
-      body: buildTplCfgModalBody(),
-      buttons: [
-        { text: "取消", value: null },
-        {
-          text: "保存",
-          cls: "primary",
-          primary: true,
-          action: function () {
-            editPrefixAssignments = workingAssignments;
-            _refreshMultiPrefixUI();
-            groupEditDirty = true;
-            return true;
-          },
-        },
-      ],
-      cancelValue: null,
-      onShow: function ($overlay) {
-        $overlay.on("input", "#ms-tpl-cfg-search", function () {
-          cfgSearchKw = $(this).val();
-          refreshTplCfgBody($overlay, true);
-        });
-        $overlay.on("click", ".ms-tpl-cfg-preview", function (e) {
-          e.stopPropagation();
-          var pid = $(this).data("pid");
-          if (!pid) return;
-          var pp = getPrompt(pid);
-          if (!pp) return;
-          showModal({
-            title: "预览：" + truncate(pp.title || "未命名", 24),
-            iconType: "info",
-            icon: "fa-eye",
-            modalStyle:
-              "min-width:340px;max-width:92vw;width:480px;max-height:80vh;",
-            body:
-              '<div class="ms-preview-content" style="padding:0;font-size:13px;">' +
-              renderMd(pp.content || "") +
-              "</div>",
-            buttons: [
-              { text: "关闭", cls: "primary", primary: true, value: true },
-            ],
-          });
-        });
-        $overlay.on("click", ".ms-tpl-cfg-row", function () {
-          var pid = $(this).data("pid");
-          if (!pid) return;
-          if (workingAssignments[pid] === tid) {
-            delete workingAssignments[pid];
-          } else {
-            workingAssignments[pid] = tid;
-          }
-          refreshTplCfgBody($overlay, false);
-        });
-        $overlay.on(
-          "click",
-          '[data-tpl-cfg-action="select-free"]',
-          function () {
-            groupPromptsForCfg.forEach(function (p) {
-              if (!workingAssignments[p.id]) {
-                workingAssignments[p.id] = tid;
-              }
-            });
-            refreshTplCfgBody($overlay, false);
-          },
-        );
-        $overlay.on("click", '[data-tpl-cfg-action="clear"]', function () {
-          groupPromptsForCfg.forEach(function (p) {
-            if (workingAssignments[p.id] === tid) {
-              delete workingAssignments[p.id];
-            }
-          });
-          refreshTplCfgBody($overlay, false);
-        });
-      },
-    });
-  });
-  $p.find("#ms-body").on("change.ms", ".ms-prefix-assign-sel", function () {
-    var pid = $(this).data("pid");
-    var val = $(this).val();
-    if (val) editPrefixAssignments[pid] = val;
-    else delete editPrefixAssignments[pid];
-    var tid = val;
-    var $row = $(this).closest(".ms-prefix-assign-item");
-    $row.css(
-      "background",
-      val ? "rgba(var(--ms-accent-rgb),0.06)" : "rgba(255,255,255,0.02)",
-    );
-    var $tplList = $p.find("#ms-gedit-template-list");
-    if ($tplList.length) {
-      editPrefixTemplates.forEach(function (tpl) {
-        var usedCount = 0;
-        Object.keys(editPrefixAssignments).forEach(function (ppid) {
-          if (editPrefixAssignments[ppid] === tpl.id) usedCount++;
-        });
-        var $badge = $tplList
-          .find('.ms-prefix-tpl-item[data-tpl-id="' + tpl.id + '"] span')
-          .first();
-        if ($badge.length) {
-          $badge.text(usedCount > 0 ? "已用 " + usedCount : "未使用");
-          $badge.css(
-            "color",
-            usedCount > 0
-              ? "var(--ms-accent)"
-              : "var(--SmartThemeQuoteColor,#666)",
-          );
-          $badge.css(
-            "background",
-            "rgba(var(--ms-accent-rgb)," +
-              (usedCount > 0 ? "0.12" : "0.04") +
-              ")",
-          );
-        }
-      });
-    }
-  });
-  $p.find("#ms-body").on("click.ms", "[data-bulk-assign]", function () {
-    var target = $(this).data("bulk-assign");
-    var groupPrompts = getPromptsInGroup(v.groupId);
-    if (target === "default") {
-      groupPrompts.forEach(function (p) {
-        delete editPrefixAssignments[p.id];
-      });
-    } else {
-      groupPrompts.forEach(function (p) {
-        editPrefixAssignments[p.id] = target;
-      });
-    }
-    _refreshMultiPrefixUI();
-  });
   $p.find("#ms-body").on("click.ms", "#ms-gedit-cancel", navigateBack);
+  $p.find("#ms-body").on("click.ms", "[data-adv-switch]", function (e) {
+    e.stopPropagation();
+  });
+  $p.find("#ms-body").on("change.ms", "#ms-adv-pfx-toggle", function (e) {
+    e.stopPropagation();
+    if (!v.groupId) return;
+    var gg = getGroup(v.groupId);
+    if (!gg) return;
+    gg.multiPrefixEnabled = $(this).is(":checked");
+    if (!Array.isArray(gg.prefixTemplates)) gg.prefixTemplates = [];
+    if (!gg.prefixAssignments || typeof gg.prefixAssignments !== "object")
+      gg.prefixAssignments = {};
+    saveData();
+    refreshBody();
+  });
+  $p.find("#ms-body").on("click.ms", "[data-adv-nav]", function (e) {
+    if ($(e.target).closest("[data-adv-switch]").length) return;
+    var nav = $(this).attr("data-adv-nav");
+    if (!v.groupId) return;
+    if (nav === "subgroups")
+      navigateTo({ name: "group-subgroups", groupId: v.groupId });
+    else if (nav === "prefixes")
+      navigateTo({ name: "group-prefixes", groupId: v.groupId });
+  });
 
   $p.find("#ms-body").on("click.ms", "[data-gedit-color]", function () {
     editColor = $(this).data("gedit-color");
@@ -1129,7 +729,6 @@ function renderGroupEdit(v) {
 
   $p.find("#ms-body").on("click.ms", "[data-gedit-iconmode]", function () {
     editIconMode = $(this).data("gedit-iconmode");
-    if (editIconMode !== "custom") editIconFallbackMode = editIconMode;
     refreshBody();
   });
 
@@ -1208,7 +807,6 @@ function renderGroupEdit(v) {
     var finalIconUrl = $p.find("#ms-gedit-icon-url").length
       ? $p.find("#ms-gedit-icon-url").val().trim()
       : editIconUrl;
-    _collectMultiPrefixFromUI();
     var payload = {
       name: n,
       note: note,
@@ -1220,9 +818,6 @@ function renderGroupEdit(v) {
       iconUrl: editIconMode === "custom" ? finalIconUrl : "",
       iconCharKey: editIconMode === "char" ? editIconCharKey : "",
       charKeys: editCharKeys.slice(),
-      multiPrefixEnabled: editMultiPrefixEnabled,
-      prefixTemplates: editPrefixTemplates,
-      prefixAssignments: editPrefixAssignments,
     };
     data.groups.forEach(function (og) {
       if (v.groupId && og.id === v.groupId) return;
@@ -2528,6 +2123,79 @@ function renderStats() {
     html += `</div>`;
   }
 
+  var _sgStats = [];
+  data.groups.forEach(function (g) {
+    if (!isSubGroupEnabled(g) || getSubGroups(g).length === 0) return;
+    var _sgc = {};
+    var _sgNone = 0;
+    getPromptsInGroup(g.id).forEach(function (p) {
+      if (p.subGroupId && getSubGroup(g.id, p.subGroupId))
+        _sgc[p.subGroupId] = (_sgc[p.subGroupId] || 0) + 1;
+      else _sgNone++;
+    });
+    getSubGroups(g).forEach(function (sg) {
+      _sgStats.push({
+        name: sg.name,
+        color: sg.color,
+        groupName: g.name,
+        count: _sgc[sg.id] || 0,
+      });
+    });
+    if (_sgNone > 0) {
+      _sgStats.push({
+        name: "未分类",
+        color: "#888",
+        groupName: g.name,
+        count: _sgNone,
+      });
+    }
+  });
+  if (_sgStats.length > 0) {
+    _sgStats.sort(function (a, b) {
+      return b.count - a.count;
+    });
+    var _sgTop = _sgStats.slice(0, 8);
+    var _sgMax = _sgTop[0].count || 1;
+    var _sgTotal = 0;
+    _sgStats.forEach(function (x) {
+      _sgTotal += x.count;
+    });
+    html +=
+      '<div class="ms-stats-section">文件夹分布 TOP ' +
+      _sgTop.length +
+      "</div>";
+    html += '<div class="ms-stats-rank">';
+    _sgTop.forEach(function (s, i) {
+      var posCls =
+        i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "normal";
+      var barW = Math.max((s.count / _sgMax) * 100, 4);
+      html +=
+        '<div class="ms-stats-rank-item"><span class="ms-stats-rank-pos ' +
+        posCls +
+        '">' +
+        (i + 1) +
+        '</span><div class="ms-stats-rank-info"><div class="ms-stats-rank-name"><i class="fa-solid fa-folder-open" style="color:' +
+        s.color +
+        ';font-size:10px;margin-right:4px;"></i>' +
+        esc(s.name) +
+        '</div><div class="ms-stats-rank-meta">' +
+        esc(s.groupName) +
+        '</div></div><div class="ms-stats-rank-bar-wrap"><div class="ms-stats-rank-bar" style="width:' +
+        barW +
+        "%;background:" +
+        s.color +
+        ';"></div></div><span class="ms-stats-rank-count">' +
+        s.count +
+        " 条</span></div>";
+    });
+    html += "</div>";
+    html +=
+      '<div style="padding:2px 14px 8px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);">共 ' +
+      _sgStats.length +
+      " 个文件夹分区 · " +
+      _sgTotal +
+      " 条剧场已按文件夹归类</div>";
+    }
   if (totalTags > 0 && totalPrompts > 0) {
     var tagStats = data.settings.definedTags
       .map(function (t) {

@@ -2,7 +2,8 @@
 const STORAGE_KEY = "miniStage_data";
 const PANEL_ID = "mini-stage-panel";
 const STYLE_ID = "mini-stage-styles";
-const SCRIPT_VERSION = "3.7.5";
+const SUBGROUP_NONE = "_nosub";
+const SCRIPT_VERSION = "3.8.0";
 const GROUP_COLORS = [
   "#D6A2A2",
   "#DDAA90",
@@ -25,7 +26,7 @@ const GROUP_COLORS = [
   "#8b5b8c",
 ];
 const TAG_COLORS = GROUP_COLORS;
-var GUIDE_VERSION = "3.7.5";
+var GUIDE_VERSION = "3.8.0";
 var GUIDE_REMOTE_URLS = {
   guide:
     "https://gist.githubusercontent.com/Sanjs333/c45460dc2bb5908ff53b5769088b122d/raw/guide.md",
@@ -41,7 +42,7 @@ var GUIDE_REMOTE_URLS = {
     "https://gist.githubusercontent.com/Sanjs333/03421197514de4c5295608d9beab3496/raw/changelog.md",
 };
 var BUILTIN_GUIDE_CONTENT =
-  "# 小剧场 使用说明\n\n正在从云端加载完整使用说明...\n\n如果长时间未加载，请检查网络或手动前往设置页「重新生成使用说明」。";
+  "# 小剧场 使用说明\n\n正在从云端加载完整使用说明...\n\n如果长时间未加载，请检查网络，或前往「设置 → 关于与更新 → 重新生成使用说明」。";
 var BUILTIN_INJECT_GUIDE_CONTENT =
   "# 小剧场 · 注入功能指南\n\n正在从云端加载完整注入指南...\n\n如果长时间未加载，请检查网络。";
 var BUILTIN_CHAR_BIND_GUIDE_CONTENT =
@@ -70,6 +71,7 @@ let filterState = {
   excludeTags: [],
   tagSelectMode: "include",
   groupId: null,
+  subGroupId: null,
   onlyCurrentChar: false,
 };
 let panelVisible = false;
@@ -1143,6 +1145,56 @@ function parseColorToRGBA(colorStr) {
   return null;
 }
 
+function _msColorLuminance(colorStr) {
+  var s = String(colorStr || "").trim();
+  var r, g, b;
+  var m = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (m) {
+    var hex = m[1];
+    if (hex.length === 3) {
+      r = parseInt(hex[0] + hex[0], 16);
+      g = parseInt(hex[1] + hex[1], 16);
+      b = parseInt(hex[2] + hex[2], 16);
+    } else {
+      r = parseInt(hex.substring(0, 2), 16);
+      g = parseInt(hex.substring(2, 4), 16);
+      b = parseInt(hex.substring(4, 6), 16);
+    }
+  } else {
+    var c = parseColorToRGBA(s);
+    if (!c) return null;
+    r = parseInt(c.r, 10);
+    g = parseInt(c.g, 10);
+    b = parseInt(c.b, 10);
+  }
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return null;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+function getThemeBindingInputStyle(binding) {
+  if (!binding) return null;
+  if (binding.bgMode !== "color" && binding.bgMode !== "image") return null;
+  var lum = null;
+  if (binding.bgMode === "color" && binding.bgColor) {
+    var _op = binding.bgOpacity === undefined ? 1 : binding.bgOpacity;
+    /* 半透明背景下宿主底色仍占主导，bgColor 判不出面板的真实亮度。这里只是
+       放弃用 bgColor 推导，不直接 return——下面还有一层用 textColor 反推的兜底，
+       绑了文字色的主题仍然应该拿到匹配的输入框配色。 */
+    if (_op >= 0.6) lum = _msColorLuminance(binding.bgColor);
+  }
+  if (lum === null && binding.textColor) {
+    var tl = _msColorLuminance(binding.textColor);
+    if (tl !== null) lum = tl > 0.5 ? 0.12 : 0.88;
+  }
+  if (lum === null) return null;
+  var isLight = lum > 0.5;
+  return {
+    bg: isLight ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.07)",
+    border:
+      "1px solid " + (isLight ? "rgba(0,0,0,0.18)" : "rgba(255,255,255,0.16)"),
+    color: isLight ? "#1a1a1a" : "#e8e8e8",
+  };
+}
 function getThemeSelectDocs() {
   var docs = [];
   try {
@@ -1697,6 +1749,16 @@ function syncThemeColors() {
     }
   } catch (e) {
     clearThemeInputStyleVars($p);
+  }
+  var _tbcInput = getThemeBindingInputStyle(_tbc);
+  if (_tbcInput) {
+    $p[0].style.setProperty("--ms-themed-input-bg", _tbcInput.bg);
+    $p[0].style.setProperty("--ms-themed-input-border", _tbcInput.border);
+    $p[0].style.setProperty("--ms-themed-input-shadow", "none");
+    // 底色被换掉后，宿主采样来的文字色可能与新底色同明度，需一并推导
+    if (!hasBoundText && _tbcInput.color) {
+      $p[0].style.setProperty("--ms-themed-input-color", _tbcInput.color);
+    }
   }
 }
 

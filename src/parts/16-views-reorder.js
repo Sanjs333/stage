@@ -1,4 +1,4 @@
-﻿function renderReorderList(opts) {
+function renderReorderList(opts) {
   const $p = setupPage(opts.title);
   let multiMode = false;
   const multiSelected = new Set();
@@ -402,6 +402,27 @@ function renderReorderTags() {
     },
   });
 }
+function renderReorderSubGroups(v) {
+  var g = getGroup(v.groupId);
+  if (!g || !Array.isArray(g.subGroups) || g.subGroups.length < 2) {
+    navigateBack();
+    return;
+  }
+  renderReorderList({
+    title: "调整文件夹顺序",
+    getList: function () {
+      var gg = getGroup(v.groupId);
+      return gg && Array.isArray(gg.subGroups) ? gg.subGroups : [];
+    },
+    renderIcon: function (sg) {
+      return (
+        '<i class="fa-solid fa-folder-open" style="color:' +
+        sg.color +
+        ';font-size:13px;flex-shrink:0;"></i>'
+      );
+    },
+  });
+}
 
 function renderReorderPrompts(v) {
   if (data.settings.sortMode !== "custom") {
@@ -410,10 +431,38 @@ function renderReorderPrompts(v) {
   }
   var g = getGroup(v.groupId);
   var title = g ? g.name : "条目";
+  if (v.subGroupId) {
+    var _roSg =
+      v.subGroupId === SUBGROUP_NONE
+        ? null
+        : getSubGroup(v.groupId, v.subGroupId);
+    title += " / " + (_roSg ? _roSg.name : "未分类");
+  }
+  if (v.charScope) {
+    title +=
+      " / " +
+      (v.charScope === "_general" ? "通用" : getCharDisplayName(v.charScope));
+  }
   var $p = setupPage("调整条目顺序", "调整 " + esc(title) + " 内顺序");
-  var groupPrompts = data.prompts.filter(function (p) {
-    return p.groupId === v.groupId;
-  });
+  function _roMatchScope(p) {
+    if (p.groupId !== v.groupId) return false;
+    if (v.subGroupId) {
+      if (v.subGroupId === SUBGROUP_NONE) {
+        if (p.subGroupId && getSubGroup(v.groupId, p.subGroupId)) return false;
+      } else if (p.subGroupId !== v.subGroupId) {
+        return false;
+      }
+    }
+    if (v.charScope === "_general") {
+      /* 其余四处判「通用」都是 !p.character。这里若只排除「有 character 且 key
+         有效」的，绑定了已失效角色的剧场就只在排序页冒出来，拖动还会连带改它。 */
+      if (p.character) return false;
+    } else if (v.charScope) {
+      if (p.character !== v.charScope) return false;
+    }
+    return true;
+  }
+  var groupPrompts = data.prompts.filter(_roMatchScope);
 
   function buildItemBody(p, anchorBadge, smaller, hideSeries, hideCharacter) {
     anchorBadge = anchorBadge || "";
@@ -425,6 +474,18 @@ function renderReorderPrompts(v) {
         "</div>"
       : "";
     var metaParts = [];
+    if (!v.subGroupId && p.subGroupId) {
+      var _sgRo = getSubGroup(v.groupId, p.subGroupId);
+      if (_sgRo) {
+        metaParts.push(
+          '<span style="color:' +
+            _sgRo.color +
+            ';display:inline-flex;align-items:center;gap:2px;font-size:9px;"><i class="fa-solid fa-folder-open" style="font-size:8px;"></i>' +
+            esc(_sgRo.name) +
+            "</span>",
+        );
+      }
+    }
     if (!hideSeries && p.series && p.series.trim()) {
       metaParts.push(
         '<span style="color:var(--ms-accent);opacity:0.75;display:inline-flex;align-items:center;gap:2px;font-size:9px;"><i class="fa-solid fa-layer-group" style="font-size:8px;"></i>' +
@@ -513,7 +574,12 @@ function renderReorderPrompts(v) {
       "</div>",
   );
 
-  var isIP = g && isIPGroup(g);
+  var isIP = g && isIPGroup(g) && !v.charScope;
+  var hasSub =
+    g &&
+    !v.subGroupId &&
+    isSubGroupEnabled(g) &&
+    getSubGroups(g).length > 0;
   var expandedSeries = new Set(v._reorderExpandedSeries || []);
   var collapsedSections = new Set(v._reorderCollapsedSections || []);
 
@@ -539,6 +605,24 @@ function renderReorderPrompts(v) {
     return { general: general, byChar: byChar, orderedChars: orderedChars };
   }
 
+  function partitionBySubgroup(list) {
+    var bySubgroup = {};
+    var none = [];
+    var orderedSgids = [];
+    if (g && Array.isArray(g.subGroups)) {
+      orderedSgids = g.subGroups.map(function (sg) { return sg.id; });
+    }
+    list.forEach(function (p) {
+      var sgid = p.subGroupId && getSubGroup(v.groupId, p.subGroupId) ? p.subGroupId : null;
+      if (sgid) {
+        if (!bySubgroup[sgid]) bySubgroup[sgid] = [];
+        bySubgroup[sgid].push(p);
+      } else {
+        none.push(p);
+      }
+    });
+    return { bySubgroup: bySubgroup, none: none, orderedSgids: orderedSgids };
+  }
   function buildBlocksFromList(list) {
     var blocks = [];
     var rendered = new Set();
@@ -574,16 +658,23 @@ function renderReorderPrompts(v) {
     if (scope.indexOf("::series::") >= 0) {
       var parts = scope.split("::series::");
       var section = parts[0];
-      var sn = parts[1];
-      var sectionLabel =
-        section === "_general"
-          ? "通用剧场"
-          : section.indexOf("char_") === 0
-            ? "角色「" + getCharDisplayName(section.substring(5)) + "」"
-            : section;
-      return sectionLabel + " · 系列「" + sn + "」内";
+      var sn = parts.slice(1).join("::series::");
+      return getScopeLabel(section) + " · 系列「" + sn + "」内";
     }
     if (scope === "_general") return "通用剧场";
+    if (scope.indexOf("::sub_") >= 0) {
+      var _slIdx = scope.indexOf("::sub_");
+      var _slParent = getScopeLabel(scope.substring(0, _slIdx));
+      var _slSub = scope.substring(_slIdx + 6);
+      if (_slSub === "none") return _slParent + " / 未分类";
+      var _slSg = getSubGroup(v.groupId, _slSub);
+      return _slParent + " / 文件夹「" + (_slSg ? _slSg.name : _slSub) + "」";
+    }
+    if (scope.indexOf("sub_") === 0) {
+      if (scope === "sub_none") return "未分类";
+      var _slSg2 = getSubGroup(v.groupId, scope.substring(4));
+      return "文件夹「" + (_slSg2 ? _slSg2.name : scope.substring(4)) + "」";
+    }
     if (scope.indexOf("char_") === 0) {
       return "角色「" + getCharDisplayName(scope.substring(5)) + "」";
     }
@@ -596,8 +687,9 @@ function renderReorderPrompts(v) {
     if (scope.indexOf("::series::") >= 0) {
       var partsS = scope.split("::series::");
       var sectionListS = getListForSection(partsS[0]);
+      var seriesNameS = partsS.slice(1).join("::series::");
       sectionListS.forEach(function (p) {
-        if (p.series && p.series.trim() === partsS[1]) {
+        if (p.series && p.series.trim() === seriesNameS) {
           result.push("c_" + p.id);
         }
       });
@@ -870,6 +962,105 @@ function renderReorderPrompts(v) {
     return html;
   }
 
+  function buildSubSections(list, parentKey) {
+    var subParts = partitionBySubgroup(list);
+    var html = "";
+    var canReorderFolders = !parentKey && !multiMode;
+    var visibleSgids = subParts.orderedSgids.filter(function (sid) {
+      if (!getSubGroup(v.groupId, sid)) return false;
+      if (parentKey && (subParts.bySubgroup[sid] || []).length === 0)
+        return false;
+      return true;
+    });
+    visibleSgids.forEach(function (sgid, visIdx) {
+      var sg = getSubGroup(v.groupId, sgid);
+      if (!sg) return;
+      var sectionKey = parentKey
+        ? parentKey + "::sub_" + sgid
+        : "sub_" + sgid;
+      var items = subParts.bySubgroup[sgid] || [];
+      var isCollapsed = collapsedSections.has(sectionKey);
+      var realIdx = subParts.orderedSgids.indexOf(sgid);
+      var gripH = canReorderFolders
+        ? '<i class="fa-solid fa-grip-vertical ms-sub-section-grip" data-sub-idx="' +
+          realIdx +
+          '" style="cursor:grab;color:var(--SmartThemeQuoteColor,#888);font-size:12px;flex-shrink:0;" title="拖动调整文件夹顺序"></i>'
+        : "";
+      var arrowsH = canReorderFolders
+        ? '<div class="ms-reorder-arrows"><button data-sub-dir="up" data-sub-idx="' +
+          realIdx +
+          '"' +
+          (visIdx === 0 ? " disabled style='opacity:0.3;'" : "") +
+          '><i class="fa-solid fa-angle-up"></i></button><button data-sub-dir="down" data-sub-idx="' +
+          realIdx +
+          '"' +
+          (visIdx === visibleSgids.length - 1
+            ? " disabled style='opacity:0.3;'"
+            : "") +
+          '><i class="fa-solid fa-angle-down"></i></button></div>'
+        : "";
+      var indentCss = parentKey ? "padding-left:24px;" : "";
+      html +=
+        '<div class="ms-reorder-section-header ms-sub-section-header" data-section-key="' +
+        escAttr(sectionKey) +
+        '" data-sub-idx="' +
+        realIdx +
+        '" style="display:flex;align-items:center;gap:8px;padding:7px 14px;' +
+        indentCss +
+        "background:" +
+        sg.color +
+        '14;border-top:1px solid rgba(255,255,255,0.05);border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;user-select:none;">' +
+        gripH +
+        '<i class="fa-solid fa-angle-' +
+        (isCollapsed ? "right" : "down") +
+        '" style="font-size:10px;color:' +
+        sg.color +
+        ';width:12px;flex-shrink:0;"></i>' +
+        '<i class="fa-solid fa-folder-open" style="color:' +
+        sg.color +
+        ';font-size:11px;flex-shrink:0;"></i>' +
+        '<span style="flex:1;min-width:0;font-size:12px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+        esc(sg.name) +
+        ' <span style="font-weight:400;font-size:10px;color:var(--SmartThemeQuoteColor,#888);">(' +
+        items.length +
+        " 条)</span></span>" +
+        arrowsH +
+        "</div>";
+      if (!isCollapsed) {
+        if (items.length === 0) {
+          html +=
+            '<div style="padding:8px 14px 8px ' +
+            (parentKey ? "38" : "26") +
+            'px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);font-style:italic;">该文件夹暂无内容</div>';
+        } else {
+          html += renderBlocks(buildBlocksFromList(items), sectionKey);
+        }
+      }
+    });
+    var noneItems = subParts.none;
+    if (noneItems.length > 0) {
+      var noneKey = parentKey ? parentKey + "::sub_none" : "sub_none";
+      var noneCollapsed = collapsedSections.has(noneKey);
+      var noneIndent = parentKey ? "padding-left:24px;" : "";
+      html +=
+        '<div class="ms-reorder-section-header" data-section-key="' +
+        escAttr(noneKey) +
+        '" style="display:flex;align-items:center;gap:8px;padding:7px 14px;' +
+        noneIndent +
+        'background:rgba(255,255,255,0.03);border-top:1px solid rgba(255,255,255,0.05);border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;user-select:none;">' +
+        '<i class="fa-solid fa-angle-' +
+        (noneCollapsed ? "right" : "down") +
+        '" style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);width:12px;flex-shrink:0;"></i>' +
+        '<i class="fa-solid fa-inbox" style="color:var(--SmartThemeQuoteColor,#888);font-size:11px;flex-shrink:0;"></i>' +
+        '<span style="flex:1;min-width:0;font-size:12px;font-weight:600;color:var(--SmartThemeBodyColor,#bbb);">未分类 <span style="font-weight:400;font-size:10px;color:var(--SmartThemeQuoteColor,#888);">(' +
+        noneItems.length +
+        ' 条)</span></span><span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;">固定置底</span></div>';
+      if (!noneCollapsed) {
+        html += renderBlocks(buildBlocksFromList(noneItems), noneKey);
+      }
+    }
+    return html;
+  }
   function buildReorderBody() {
     if (groupPrompts.length === 0) {
       return '<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>该分组没有条目</div>';
@@ -903,6 +1094,9 @@ function renderReorderPrompts(v) {
         "</div>";
     }
     if (!isIP) {
+      if (hasSub) {
+        return prefix + buildSubSections(groupPrompts, null);
+      }
       var blocks = buildBlocksFromList(groupPrompts);
       return prefix + renderBlocks(blocks, "_all");
     }
@@ -917,8 +1111,12 @@ function renderReorderPrompts(v) {
         parts.general.length +
         " 条)</span><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#666);'>固定置顶</span></div>";
       if (!generalCollapsed) {
-        var blocks2 = buildBlocksFromList(parts.general);
-        html += renderBlocks(blocks2, "_general");
+        if (hasSub) {
+          html += buildSubSections(parts.general, "_general");
+        } else {
+          var blocks2 = buildBlocksFromList(parts.general);
+          html += renderBlocks(blocks2, "_general");
+        }
       }
     }
     parts.orderedChars.forEach(function (k, ci) {
@@ -973,8 +1171,12 @@ function renderReorderPrompts(v) {
         charArrowsHtml +
         "</div>";
       if (!isCollapsed) {
-        var blocks3 = buildBlocksFromList(ps);
-        html += renderBlocks(blocks3, sectionKey);
+        if (hasSub) {
+          html += buildSubSections(ps, sectionKey);
+        } else {
+          var blocks3 = buildBlocksFromList(ps);
+          html += renderBlocks(blocks3, sectionKey);
+        }
       }
     });
     return html;
@@ -983,7 +1185,7 @@ function renderReorderPrompts(v) {
   function syncGroupPrompts() {
     var positions = [];
     data.prompts.forEach(function (p, i) {
-      if (p.groupId === v.groupId) positions.push(i);
+      if (_roMatchScope(p)) positions.push(i);
     });
     positions.forEach(function (pos, i) {
       data.prompts[pos] = groupPrompts[i];
@@ -991,7 +1193,27 @@ function renderReorderPrompts(v) {
   }
 
   function getListForSection(sectionKey) {
-    if (!isIP || sectionKey === "_all") return groupPrompts;
+    if (!sectionKey) return groupPrompts;
+    if (sectionKey === "_all") return groupPrompts;
+    if (hasSub && sectionKey.indexOf("sub_") === 0) {
+      var sgid = sectionKey === "sub_none" ? null : sectionKey.substring(4);
+      return groupPrompts.filter(function (p) {
+        var pSgid = p.subGroupId && getSubGroup(v.groupId, p.subGroupId) ? p.subGroupId : null;
+        return sgid === null ? pSgid === null : pSgid === sgid;
+      });
+    }
+    if (hasSub && sectionKey.indexOf("::sub_") >= 0) {
+      var colonIdx = sectionKey.indexOf("::sub_");
+      var parentKey = sectionKey.substring(0, colonIdx);
+      var subPart = sectionKey.substring(colonIdx + 6);
+      var sgid2 = subPart === "none" ? null : subPart;
+      var parentList = getListForSection(parentKey);
+      return parentList.filter(function (p) {
+        var pSgid2 = p.subGroupId && getSubGroup(v.groupId, p.subGroupId) ? p.subGroupId : null;
+        return sgid2 === null ? pSgid2 === null : pSgid2 === sgid2;
+      });
+    }
+    if (!isIP) return groupPrompts;
     if (sectionKey === "_general") {
       return groupPrompts.filter(function (p) {
         return !(p.character && isLocalCharKey(p.character));
@@ -1007,6 +1229,47 @@ function renderReorderPrompts(v) {
   }
 
   function applySectionList(sectionKey, newList) {
+    if (hasSub && sectionKey && sectionKey.indexOf("sub_") === 0) {
+      var sgidA = sectionKey === "sub_none" ? null : sectionKey.substring(4);
+      var subPartsA = partitionBySubgroup(groupPrompts);
+      if (sgidA === null) subPartsA.none = newList;
+      else subPartsA.bySubgroup[sgidA] = newList;
+      var mergedA = [];
+      subPartsA.orderedSgids.forEach(function (sid) {
+        (subPartsA.bySubgroup[sid] || []).forEach(function (p) {
+          mergedA.push(p);
+        });
+      });
+      subPartsA.none.forEach(function (p) {
+        mergedA.push(p);
+      });
+      groupPrompts.length = 0;
+      mergedA.forEach(function (p) {
+        groupPrompts.push(p);
+      });
+      return;
+    }
+    if (hasSub && sectionKey && sectionKey.indexOf("::sub_") >= 0) {
+      var colonIdxB = sectionKey.indexOf("::sub_");
+      var parentKeyB = sectionKey.substring(0, colonIdxB);
+      var subPartB = sectionKey.substring(colonIdxB + 6);
+      var sgidB = subPartB === "none" ? null : subPartB;
+      var parentListB = getListForSection(parentKeyB);
+      var subPartsB = partitionBySubgroup(parentListB);
+      if (sgidB === null) subPartsB.none = newList;
+      else subPartsB.bySubgroup[sgidB] = newList;
+      var newParentListB = [];
+      subPartsB.orderedSgids.forEach(function (sid) {
+        (subPartsB.bySubgroup[sid] || []).forEach(function (p) {
+          newParentListB.push(p);
+        });
+      });
+      subPartsB.none.forEach(function (p) {
+        newParentListB.push(p);
+      });
+      applySectionList(parentKeyB, newParentListB);
+      return;
+    }
     if (!isIP || sectionKey === "_all") {
       groupPrompts.length = 0;
       newList.forEach(function (p) {
@@ -1091,6 +1354,31 @@ function renderReorderPrompts(v) {
 
   var $body = $p.find("#ms-body");
   function refreshPrompts() {
+    if (v._lastViewedId) {
+      var _lastViewedPrompt = getPrompt(v._lastViewedId);
+      if (_lastViewedPrompt) {
+        var _lastViewedParentKey = null;
+        if (isIP) {
+          _lastViewedParentKey =
+            _lastViewedPrompt.character &&
+            isLocalCharKey(_lastViewedPrompt.character)
+              ? "char_" + _lastViewedPrompt.character
+              : "_general";
+          collapsedSections.delete(_lastViewedParentKey);
+        }
+        if (hasSub) {
+          var _lastViewedSubKey =
+            _lastViewedPrompt.subGroupId &&
+            getSubGroup(v.groupId, _lastViewedPrompt.subGroupId)
+              ? "sub_" + _lastViewedPrompt.subGroupId
+              : "sub_none";
+          var _lastViewedSectionKey = _lastViewedParentKey
+            ? _lastViewedParentKey + "::" + _lastViewedSubKey
+            : _lastViewedSubKey;
+          collapsedSections.delete(_lastViewedSectionKey);
+        }
+      }
+    }
     $body.html(buildReorderBody());
     $p.find("#ms-footer").html(buildFooter()).show();
     $p.find("#ms-reorder-prompts-multi").toggleClass("active", multiMode);
@@ -1232,13 +1520,31 @@ function renderReorderPrompts(v) {
       var block = fromBlocks[fromIdx2];
       var fromItems =
         block.type === "single" ? [block.item] : block.items.slice();
+      var fromParentSection = fromSection;
+      var targetParentSection = targetSection;
+      var fromSubSection = null;
+      var targetSubSection = null;
+      var fromSubIdx = fromSection ? fromSection.indexOf("::sub_") : -1;
+      var targetSubIdx = targetSection ? targetSection.indexOf("::sub_") : -1;
+      if (fromSubIdx >= 0) {
+        fromParentSection = fromSection.substring(0, fromSubIdx);
+        fromSubSection = fromSection.substring(fromSubIdx + 2);
+      }
+      if (targetSubIdx >= 0) {
+        targetParentSection = targetSection.substring(0, targetSubIdx);
+        targetSubSection = targetSection.substring(targetSubIdx + 2);
+      }
+      if (hasSub && fromSubSection !== targetSubSection) return;
       var targetCharKey = null;
       var targetLabel = "";
-      if (targetSection === "_general") {
+      if (targetParentSection === "_general") {
         targetCharKey = "";
         targetLabel = "通用剧场（解除角色绑定）";
-      } else if (targetSection && targetSection.indexOf("char_") === 0) {
-        targetCharKey = targetSection.substring(5);
+      } else if (
+        targetParentSection &&
+        targetParentSection.indexOf("char_") === 0
+      ) {
+        targetCharKey = targetParentSection.substring(5);
         targetLabel = "角色「" + getCharDisplayName(targetCharKey) + "」";
       } else {
         return;
@@ -1385,7 +1691,9 @@ function renderReorderPrompts(v) {
     ".ms-reorder-section-header",
     function (e) {
       if (
-        $(e.target).closest(".ms-reorder-arrows, .ms-char-section-grip").length
+        $(e.target).closest(
+          ".ms-reorder-arrows, .ms-char-section-grip, .ms-sub-section-grip",
+        ).length
       )
         return;
       var key = $(this).data("section-key");
@@ -1395,6 +1703,20 @@ function renderReorderPrompts(v) {
     },
   );
 
+  $p.find("#ms-body").on("click.ms", "[data-sub-dir]", function (e) {
+    e.stopPropagation();
+    var dir = $(this).data("sub-dir");
+    var si = parseInt($(this).data("sub-idx"));
+    var gg = getGroup(v.groupId);
+    if (!gg || !Array.isArray(gg.subGroups) || isNaN(si)) return;
+    var swapIdx = dir === "up" ? si - 1 : si + 1;
+    if (swapIdx < 0 || swapIdx >= gg.subGroups.length) return;
+    var tmp = gg.subGroups[si];
+    gg.subGroups[si] = gg.subGroups[swapIdx];
+    gg.subGroups[swapIdx] = tmp;
+    saveData();
+    refreshPrompts();
+  });
   $p.find("#ms-body").on("click.ms", "[data-char-dir]", function (e) {
     e.stopPropagation();
     var dir = $(this).data("char-dir");
@@ -1413,6 +1735,60 @@ function renderReorderPrompts(v) {
     refreshPrompts();
   });
 
+  $p.find("#ms-body").on(
+    "pointerdown.msdrag3",
+    ".ms-sub-section-grip",
+    function (e) {
+      if (multiMode) return;
+      var oe = e.originalEvent || e;
+      if (oe.pointerType === "mouse" && oe.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var fromIdx = parseInt($(this).data("sub-idx"));
+      if (isNaN(fromIdx)) return;
+      var gripEl = this;
+      var dragging = true;
+      var panelEl2 = $("#" + PANEL_ID)[0];
+      var ownerDoc2 = panelEl2 ? panelEl2.ownerDocument : document;
+      try {
+        gripEl.setPointerCapture(oe.pointerId);
+      } catch (ex) {}
+      function onMove2(ev) {
+        if (!dragging) return;
+        ev.preventDefault();
+        var el = ownerDoc2.elementFromPoint(ev.clientX, ev.clientY);
+        var targetHdr = el ? el.closest(".ms-sub-section-header") : null;
+        $body.find(".ms-sub-section-header").removeClass("ms-drag-over");
+        if (targetHdr) targetHdr.classList.add("ms-drag-over");
+      }
+      function onEnd2(ev) {
+        if (!dragging) return;
+        dragging = false;
+        $body.find(".ms-sub-section-header").removeClass("ms-drag-over");
+        gripEl.removeEventListener("pointermove", onMove2);
+        gripEl.removeEventListener("pointerup", onEnd2);
+        gripEl.removeEventListener("pointercancel", onEnd2);
+        gripEl.removeEventListener("lostpointercapture", onEnd2);
+        if (!ev || ev.type === "lostpointercapture") return;
+        var el2 = ownerDoc2.elementFromPoint(ev.clientX, ev.clientY);
+        var targetHdr2 = el2 ? el2.closest(".ms-sub-section-header") : null;
+        if (!targetHdr2) return;
+        var targetIdx = parseInt(targetHdr2.getAttribute("data-sub-idx"));
+        if (isNaN(targetIdx) || targetIdx === fromIdx) return;
+        var gg = getGroup(v.groupId);
+        if (!gg || !Array.isArray(gg.subGroups)) return;
+        var moved = gg.subGroups.splice(fromIdx, 1)[0];
+        var insertIdx = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
+        gg.subGroups.splice(insertIdx, 0, moved);
+        saveData();
+        refreshPrompts();
+      }
+      gripEl.addEventListener("pointermove", onMove2);
+      gripEl.addEventListener("pointerup", onEnd2);
+      gripEl.addEventListener("pointercancel", onEnd2);
+      gripEl.addEventListener("lostpointercapture", onEnd2);
+    },
+  );
   $p.find("#ms-body").on(
     "pointerdown.msdrag2",
     ".ms-char-section-grip",

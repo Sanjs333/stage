@@ -1,4 +1,4 @@
-﻿function renderEdit(v) {
+function renderEdit(v) {
   if (v.promptId && !getPrompt(v.promptId)) {
     toast("warning", "这条剧场不存在了，可能已被删除");
     navigateBack();
@@ -10,6 +10,8 @@
     content = isNew ? "" : pr.content;
   const groupId = isNew ? v.defaultGroupId || "" : pr.groupId || "";
   const g = groupId ? getGroup(groupId) : null;
+  var editSubGroupId = isNew ? v.defaultSubGroupId || null : pr.subGroupId || null;
+  var _lastEditGid = groupId;
   const author = isNew
     ? g && g.defaultAuthor
       ? g.defaultAuthor
@@ -51,6 +53,7 @@
     series,
     tags: promptTags,
     character: isNew ? v.defaultCharacter || "" : pr.character || "",
+    subGroupId: editSubGroupId,
   });
   var $p = setupPage(
     isNew ? "新建小剧场" : "编辑",
@@ -65,10 +68,6 @@
   );
   var editCharacter = isNew ? v.defaultCharacter || "" : pr.character || "";
   var editCharacterIsLost = editCharacter && !isLocalCharKey(editCharacter);
-  let groupOpts = `<option value="">未分组</option>`;
-  data.groups.forEach((gg) => {
-    groupOpts += `<option value="${gg.id}" ${groupId === gg.id ? "selected" : ""}>${esc(gg.name)}</option>`;
-  });
   function buildCharBindUI() {
     var curKey = getCurrentCharKeySafe();
     var curName = curKey ? getCharDisplayName(curKey) : "";
@@ -144,6 +143,851 @@
     return h;
   }
 
+  function getEditGid() {
+    return $p.find("#ms-edit-group").val() || "";
+  }
+
+  function _gpCollectCounts() {
+    var byGroup = Object.create(null),
+      bySub = Object.create(null),
+      ungrouped = 0;
+    data.prompts.forEach(function (p) {
+      var gid = p.groupId || "";
+      if (!gid) {
+        ungrouped++;
+        return;
+      }
+      byGroup[gid] = (byGroup[gid] || 0) + 1;
+      if (p.subGroupId) {
+        var k = gid + "|" + p.subGroupId;
+        bySub[k] = (bySub[k] || 0) + 1;
+      }
+    });
+    return { byGroup: byGroup, bySub: bySub, ungrouped: ungrouped };
+  }
+
+  function _gpGroupStat(g, counts) {
+    var subs = getSubGroups(g);
+    var total = counts.byGroup[g.id] || 0;
+    var inFolders = 0;
+    subs.forEach(function (sg) {
+      inFolders += counts.bySub[g.id + "|" + sg.id] || 0;
+    });
+    return {
+      total: total,
+      folders: subs.length,
+      loose: Math.max(0, total - inFolders),
+    };
+  }
+
+  function buildGroupTriggerHTML() {
+    var gid = getEditGid();
+    var g = gid ? getGroup(gid) : null;
+    var sg = g && editSubGroupId ? getSubGroup(gid, editSubGroupId) : null;
+    var h = g
+      ? '<span class="ms-gp-trig-dot" style="background:' +
+        escAttr(g.color || "#888") +
+        ';"></span>'
+      : '<span class="ms-gp-trig-dot none"></span>';
+    h +=
+      '<span class="ms-gp-trig-main"><span class="ms-gp-trig-name">' +
+      esc(g ? g.name : "未分组") +
+      "</span>";
+    if (sg) {
+      h +=
+        '<span class="ms-gp-trig-sub" title="文件夹：' +
+        escAttr(sg.name) +
+        '"><i class="fa-solid fa-folder"></i><span>' +
+        esc(sg.name) +
+        "</span></span>";
+    }
+    h += '</span><i class="fa-solid fa-angle-down ms-gp-trig-chev"></i>';
+    return h;
+  }
+
+  function refreshGroupTrigger() {
+    $p.find("#ms-edit-group-trigger").html(buildGroupTriggerHTML());
+  }
+
+  function applyGroupPick(gid, sgid) {
+    var $h = $p.find("#ms-edit-group");
+    var prev = $h.val() || "";
+    gid = gid || "";
+    sgid = sgid || null;
+    var same = prev === gid && editSubGroupId === sgid;
+    $h.val(gid);
+    if (prev !== gid) {
+      _lastEditGid = gid;
+      $h.trigger("change");
+    }
+    editSubGroupId = sgid;
+    refreshGroupTrigger();
+    if (!same) markDirty();
+  }
+
+  var _gpExpanded = new Set();
+  var _gpKw = "";
+
+  function closeGroupPicker() {
+    if (!$p.find("#ms-gp-popup").length) return;
+    $p.find("#ms-gp-popup").remove();
+    $p.off("pointerdown.ms-gp");
+    $p.off("keydown.ms-gp");
+    $p.find("#ms-body").off("scroll.ms-gp");
+    $p.find("#ms-edit-group-trigger").removeClass("open");
+  }
+
+  function _gpRenderList() {
+    var $list = $p.find("#ms-gp-list");
+    if (!$list.length) return;
+    var counts = _gpCollectCounts();
+    var lkw = _gpKw.trim().toLowerCase();
+    var curGid = getEditGid();
+    var totalFolders = 0;
+    data.groups.forEach(function (g) {
+      totalFolders += getSubGroups(g).length;
+    });
+    $p.find("#ms-gp-summary").text(
+      data.groups.length + " 组 · " + totalFolders + " 文件夹",
+    );
+    var h = "";
+    var matched = 0;
+    if (!lkw || "未分组".indexOf(lkw) >= 0) {
+      matched++;
+      var noneSel = !curGid;
+      h +=
+        '<div class="ms-gp-row' +
+        (noneSel ? " sel" : "") +
+        '" data-gp-gid="">' +
+        '<div class="ms-gp-ico"><i class="fa-solid fa-inbox"></i></div>' +
+        '<div class="ms-gp-info"><div class="ms-gp-name">未分组</div>' +
+        '<div class="ms-gp-meta"><span><i class="fa-solid fa-masks-theater"></i>' +
+        counts.ungrouped +
+        " 条剧场</span></div></div>" +
+        (noneSel ? '<i class="fa-solid fa-check ms-gp-check"></i>' : "") +
+        "</div>";
+    }
+    data.groups.forEach(function (g) {
+      var subs = getSubGroups(g);
+      var gHit = !lkw || (g.name || "").toLowerCase().indexOf(lkw) >= 0;
+      var subHits = subs.filter(function (sg) {
+        return !lkw || (sg.name || "").toLowerCase().indexOf(lkw) >= 0;
+      });
+      if (lkw && !gHit && subHits.length === 0) return;
+      matched++;
+      var st = _gpGroupStat(g, counts);
+      var isCurG = curGid === g.id;
+      var expanded = _gpExpanded.has(g.id) || (!!lkw && subHits.length > 0);
+      h +=
+        '<div class="ms-gp-row' +
+        (isCurG ? " sel" : "") +
+        '" data-gp-gid="' +
+        escAttr(g.id) +
+        '">' +
+        buildGroupAvatarHTML(g, 26) +
+        '<div class="ms-gp-info"><div class="ms-gp-name" title="' +
+        escAttr(g.name) +
+        '">' +
+        esc(g.name) +
+        "</div>" +
+        '<div class="ms-gp-meta"><span><i class="fa-solid fa-masks-theater"></i>' +
+        st.total +
+        " 条</span>" +
+        (st.folders > 0
+          ? '<span class="ms-gp-m-fold"><i class="fa-solid fa-folder"></i>' +
+            st.folders +
+            " 个文件夹</span>"
+          : '<span style="opacity:0.6;"><i class="fa-regular fa-folder-open"></i>无文件夹</span>') +
+        (isIPGroup(g) ? '<span class="ms-gp-ipbadge">IP</span>' : "") +
+        "</div></div>" +
+        (isCurG && !editSubGroupId
+          ? '<i class="fa-solid fa-check ms-gp-check"></i>'
+          : "") +
+        (lkw
+          ? ""
+          : '<button type="button" class="ms-gp-exp' +
+            (expanded ? " open" : "") +
+            '" data-gp-exp="' +
+            escAttr(g.id) +
+            '" title="展开/收起文件夹"><i class="fa-solid fa-angle-right"></i></button>') +
+        "</div>";
+      if (!expanded) return;
+      h += '<div class="ms-gp-subs">';
+      subHits.forEach(function (sg) {
+        var c = counts.bySub[g.id + "|" + sg.id] || 0;
+        var sSel = isCurG && editSubGroupId === sg.id;
+        h +=
+          '<div class="ms-gp-srow' +
+          (sSel ? " sel" : "") +
+          '" data-gp-gid="' +
+          escAttr(g.id) +
+          '" data-gp-sgid="' +
+          escAttr(sg.id) +
+          '">' +
+          '<i class="fa-solid fa-folder ms-gp-sico"' +
+          (sg.color ? ' style="color:' + escAttr(sg.color) + ';"' : "") +
+          "></i>" +
+          '<div class="ms-gp-sname" title="' +
+          escAttr(sg.name) +
+          '">' +
+          esc(sg.name) +
+          "</div>" +
+          '<span class="ms-gp-scnt">' +
+          c +
+          "</span>" +
+          '<div class="ms-gp-sacts">' +
+          '<button type="button" class="ms-gp-sbtn" data-gp-ren="' +
+          escAttr(sg.id) +
+          '" data-gp-g="' +
+          escAttr(g.id) +
+          '" title="重命名文件夹"><i class="fa-solid fa-pen"></i></button>' +
+          '<button type="button" class="ms-gp-sbtn del" data-gp-del="' +
+          escAttr(sg.id) +
+          '" data-gp-g="' +
+          escAttr(g.id) +
+          '" title="删除文件夹"><i class="fa-solid fa-trash"></i></button>' +
+          "</div>" +
+          (sSel ? '<i class="fa-solid fa-check ms-gp-check"></i>' : "") +
+          "</div>";
+      });
+      if (!lkw) {
+        var looseSel = isCurG && !editSubGroupId;
+        h +=
+          '<div class="ms-gp-srow none' +
+          (looseSel ? " sel" : "") +
+          '" data-gp-gid="' +
+          escAttr(g.id) +
+          '" data-gp-sgid="">' +
+          '<i class="fa-solid fa-folder-open ms-gp-sico"></i>' +
+          '<div class="ms-gp-sname">未分类</div>' +
+          '<span class="ms-gp-scnt">' +
+          st.loose +
+          "</span>" +
+          (looseSel ? '<i class="fa-solid fa-check ms-gp-check"></i>' : "") +
+          "</div>";
+        h +=
+          '<button type="button" class="ms-gp-addfold" data-gp-addfold="' +
+          escAttr(g.id) +
+          '"><i class="fa-solid fa-folder-plus"></i>在此分组新建文件夹</button>';
+      }
+      h += "</div>";
+    });
+    if (matched === 0) {
+      h +=
+        '<div class="ms-gp-empty"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的分组或文件夹</div>';
+    } else if (!lkw && data.groups.length === 0) {
+      h +=
+        '<div class="ms-gp-empty" style="padding:12px 10px;"><i class="fa-regular fa-folder-open"></i>还没有任何分组，点下方按钮新建</div>';
+    }
+    $list.html(h);
+  }
+
+  function _gpPosition() {
+    var $pop = $p.find("#ms-gp-popup");
+    var $trig = $p.find("#ms-edit-group-trigger");
+    if (!$pop.length || !$trig.length) return;
+    var tr = $trig[0].getBoundingClientRect();
+    var pr = $p[0].getBoundingClientRect();
+    var $list = $pop.find("#ms-gp-list");
+    // 面板本身 overflow:hidden，浮层必须夹在面板可视区内，否则会被裁掉
+    $list.css("max-height", "");
+    /* rect 是视口像素（已乘过面板的 zoom），而 offsetHeight/offsetWidth 和写回
+       css 的 top/left 都是布局像素。两者混用会让浮层在开了「自定义字号与尺寸」
+       （zoom ≠ 1）时整体偏移，所以先把 rect 换算回布局像素。 */
+    var _z = 1;
+    try {
+      _z = parseFloat(getComputedStyle($p[0]).zoom) || 1;
+    } catch (e) {}
+    var trTop = (tr.top - pr.top) / _z;
+    var trBottom = (tr.bottom - pr.top) / _z;
+    var trLeft = (tr.left - pr.left) / _z;
+    var prH = pr.height / _z;
+    var prW = pr.width / _z;
+    var below = prH - trBottom - 11;
+    var above = trTop - 11;
+    var openUp = false;
+    if ($pop[0].offsetHeight > below && above > below) openUp = true;
+    var room = Math.max(96, openUp ? above : below);
+    var chrome = $pop[0].offsetHeight - ($list[0].offsetHeight || 0);
+    if ($pop[0].offsetHeight > room) {
+      $list.css("max-height", Math.max(64, room - chrome) + "px");
+    }
+    var popH = $pop[0].offsetHeight;
+    var popW = $pop[0].offsetWidth || 296;
+    var left = trLeft;
+    var maxLeft = prW - popW - 8;
+    if (left > maxLeft) left = maxLeft;
+    if (left < 8) left = 8;
+    var top = openUp ? trTop - popH - 5 : trBottom + 5;
+    if (top < 6) top = 6;
+    $pop.css({ top: top + "px", left: left + "px" });
+  }
+
+  function openGroupPicker() {
+    closeGroupPicker();
+    closeSeriesPicker();
+    $p.find("#ms-char-search-popup").remove();
+    _gpKw = "";
+    var curGid = getEditGid();
+    if (curGid) _gpExpanded.add(curGid);
+    $p.append(
+      '<div id="ms-gp-popup">' +
+        '<div class="ms-gp-head"><div class="ms-gp-head-t"><i class="fa-solid fa-layer-group"></i>选择分组 / 文件夹</div>' +
+        '<span class="ms-gp-head-n" id="ms-gp-summary"></span>' +
+        '<button type="button" class="ms-gp-x" id="ms-gp-close" title="关闭"><i class="fa-solid fa-xmark"></i></button></div>' +
+        '<div class="ms-gp-searchwrap"><input type="text" class="ms-gp-search" id="ms-gp-search" placeholder="搜索分组或文件夹..."></div>' +
+        '<div class="ms-gp-list" id="ms-gp-list"></div>' +
+        '<div class="ms-gp-foot"><button type="button" class="ms-gp-newgroup" id="ms-gp-newgroup"><i class="fa-solid fa-plus"></i>新建分组</button></div>' +
+        "</div>",
+    );
+    $p.find("#ms-edit-group-trigger").addClass("open");
+    _gpRenderList();
+    _gpPosition();
+    var $pop = $p.find("#ms-gp-popup");
+    $pop.addClass("visible");
+    var $selRow = $pop.find(".ms-gp-row.sel").first();
+    if ($selRow.length) {
+      var lEl = $pop.find("#ms-gp-list")[0];
+      var off = $selRow[0].offsetTop - 40;
+      if (off > 0) lEl.scrollTop = off;
+    }
+    $pop.on("click", "#ms-gp-close", function () {
+      closeGroupPicker();
+    });
+    $pop.on("input", "#ms-gp-search", function () {
+      _gpKw = $(this).val() || "";
+      _gpRenderList();
+      _gpPosition();
+    });
+    $pop.on("click", "[data-gp-exp]", function (e) {
+      e.stopPropagation();
+      var gid = $(this).attr("data-gp-exp");
+      if (_gpExpanded.has(gid)) _gpExpanded.delete(gid);
+      else _gpExpanded.add(gid);
+      _gpRenderList();
+      _gpPosition();
+    });
+    $pop.on("click", ".ms-gp-srow", function (e) {
+      e.stopPropagation();
+      applyGroupPick(
+        $(this).attr("data-gp-gid") || "",
+        $(this).attr("data-gp-sgid") || null,
+      );
+      closeGroupPicker();
+    });
+    $pop.on("click", ".ms-gp-row", function () {
+      applyGroupPick($(this).attr("data-gp-gid") || "", null);
+      closeGroupPicker();
+    });
+    $pop.on("click", "[data-gp-ren]", function (e) {
+      e.stopPropagation();
+      var sgid = $(this).attr("data-gp-ren");
+      var gid = $(this).attr("data-gp-g");
+      var sg = getSubGroup(gid, sgid);
+      if (!sg) return;
+      msPrompt("", {
+        title: "重命名文件夹",
+        defaultValue: sg.name || "",
+        placeholder: "文件夹名称",
+        validate: function (val) {
+          if (!val || !val.trim()) return "名称不能为空";
+          return null;
+        },
+      }).then(function (name) {
+        if (!name || !name.trim()) return;
+        updateSubGroup(gid, sgid, { name: name.trim() });
+        _gpRenderList();
+        _gpPosition();
+        refreshGroupTrigger();
+        toast("success", "已重命名");
+      });
+    });
+    $pop.on("click", "[data-gp-del]", function (e) {
+      e.stopPropagation();
+      var sgid = $(this).attr("data-gp-del");
+      var gid = $(this).attr("data-gp-g");
+      var sg = getSubGroup(gid, sgid);
+      if (!sg) return;
+      var cnt = getPromptsInSubGroup(gid, sgid).length;
+      msConfirm(
+        cnt > 0
+          ? "其中 " +
+              cnt +
+              " 条剧场会移出文件夹，变为「未分类」，剧场本身不会被删除。"
+          : "这个空文件夹将被删除。",
+        {
+          title: "删除文件夹「" + truncate(sg.name, 14) + "」？",
+          type: "danger",
+          dangerous: true,
+          okText: "删除",
+        },
+      ).then(function (ok) {
+        if (!ok) return;
+        deleteSubGroup(gid, sgid, "none");
+        if (editSubGroupId === sgid) {
+          editSubGroupId = null;
+          refreshGroupTrigger();
+          markDirty();
+        }
+        _gpRenderList();
+        _gpPosition();
+        toast("success", "已删除文件夹");
+      });
+    });
+    $pop.on("click", "[data-gp-addfold]", function (e) {
+      e.stopPropagation();
+      var gid = $(this).attr("data-gp-addfold");
+      msPrompt("", {
+        title: "新建文件夹",
+        placeholder: "例如：日常 / 剧情 / 节日",
+        validate: function (val) {
+          if (!val || !val.trim()) return "名称不能为空";
+          return null;
+        },
+      }).then(function (name) {
+        if (!name || !name.trim()) return;
+        var sg = createSubGroup(gid, name.trim());
+        if (!sg) return;
+        _gpExpanded.add(gid);
+        applyGroupPick(gid, sg.id);
+        _gpRenderList();
+        _gpPosition();
+        toast("success", "已新建文件夹并选中");
+      });
+    });
+    $pop.on("click", "#ms-gp-newgroup", function (e) {
+      e.stopPropagation();
+      msPrompt("", {
+        title: "新建分组",
+        placeholder: "分组名称",
+        validate: function (val) {
+          if (!val || !val.trim()) return "名称不能为空";
+          return null;
+        },
+      }).then(function (name) {
+        if (!name || !name.trim()) return;
+        var g = createGroup(name.trim());
+        if (!g) return;
+        _gpExpanded.add(g.id);
+        applyGroupPick(g.id, null);
+        _gpRenderList();
+        _gpPosition();
+        toast("success", "已新建分组并选中");
+      });
+    });
+    setTimeout(function () {
+      $p.on("pointerdown.ms-gp", function (ev) {
+        if (
+          $(ev.target).closest(
+            "#ms-gp-popup, #ms-edit-group-trigger, .ms-modal-overlay",
+          ).length
+        )
+          return;
+        closeGroupPicker();
+      });
+      $p.find("#ms-body").on("scroll.ms-gp", function () {
+        closeGroupPicker();
+      });
+      $p.on("keydown.ms-gp", function (ev) {
+        if (ev.key === "Escape" || ev.key === "Esc") {
+          ev.stopPropagation();
+          closeGroupPicker();
+          $p.find("#ms-edit-group-trigger").focus();
+        }
+      });
+    }, 50);
+  }
+  var _spKw = "";
+
+  function getEditSeries() {
+    return $p.find("#ms-edit-series").val() || "";
+  }
+
+  function _spCollectSeries() {
+    var gid = getEditGid();
+    // 裸对象会让「constructor」「toString」这类系列名命中原型属性，于是
+    // map[sn] 判真但从未初始化，下一行读 undefined.subs 会直接抛 TypeError
+    var map = Object.create(null);
+    var order = [];
+    data.prompts.forEach(function (p) {
+      if ((p.groupId || "") !== gid) return;
+      var sn = String(p.series || "").trim();
+      if (!sn) return;
+      if (!map[sn]) {
+        map[sn] = { name: sn, count: 0, subs: {} };
+        order.push(sn);
+      }
+      map[sn].count++;
+      var sgk =
+        p.subGroupId && getSubGroup(gid, p.subGroupId) ? p.subGroupId : "";
+      map[sn].subs[sgk] = (map[sn].subs[sgk] || 0) + 1;
+    });
+    return { map: map, order: order };
+  }
+
+  function _spSubLabel(gid, subs) {
+    var keys = Object.keys(subs || {});
+    if (keys.length === 0) return "";
+    var names = keys.map(function (k) {
+      if (!k) return "未分类";
+      var sg = getSubGroup(gid, k);
+      return sg ? sg.name : "未分类";
+    });
+    if (names.length <= 2) return names.join("、");
+    return names.slice(0, 2).join("、") + " 等 " + names.length + " 处";
+  }
+
+  function buildSeriesTriggerHTML() {
+    var cur = getEditSeries();
+    if (!cur) {
+      return (
+        '<span class="ms-gp-trig-dot none"></span>' +
+        '<span class="ms-gp-trig-main"><span class="ms-gp-trig-name" style="opacity:0.7;">无系列</span></span>' +
+        '<i class="fa-solid fa-angle-down ms-gp-trig-chev"></i>'
+      );
+    }
+    var gid = getEditGid();
+    var info = _spCollectSeries();
+    var item = info.map[cur];
+    var badge = item
+      ? '<span class="ms-gp-trig-sub" title="本组内共 ' +
+        escAttr(String(item.count)) +
+        ' 条使用这个系列"><i class="fa-solid fa-masks-theater"></i><span>' +
+        item.count +
+        " 条</span></span>"
+      : '<span class="ms-gp-trig-sub" title="本组内还没有其它剧场用这个系列名"><i class="fa-solid fa-plus"></i><span>新系列</span></span>';
+    return (
+      '<span class="ms-gp-trig-dot" style="background:var(--ms-accent);"></span>' +
+      '<span class="ms-gp-trig-main"><span class="ms-gp-trig-name" title="' +
+      escAttr(cur) +
+      '">' +
+      esc(cur) +
+      "</span>" +
+      badge +
+      '</span><i class="fa-solid fa-angle-down ms-gp-trig-chev"></i>'
+    );
+  }
+
+  function refreshSeriesTrigger() {
+    $p.find("#ms-edit-series-trigger").html(buildSeriesTriggerHTML());
+  }
+
+  function applySeriesPick(name) {
+    var next = String(name || "").trim();
+    var prev = getEditSeries();
+    $p.find("#ms-edit-series").val(next);
+    refreshSeriesTrigger();
+    if (next !== prev) markDirty();
+  }
+
+  function closeSeriesPicker() {
+    if (!$p.find("#ms-sp-popup").length) return;
+    $p.find("#ms-sp-popup").remove();
+    $p.off("pointerdown.ms-sp");
+    $p.off("keydown.ms-sp");
+    $p.find("#ms-body").off("scroll.ms-sp");
+    $p.find("#ms-edit-series-trigger").removeClass("open");
+  }
+
+  function _spRenderList() {
+    var $list = $p.find("#ms-sp-list");
+    if (!$list.length) return;
+    var gid = getEditGid();
+    var g = gid ? getGroup(gid) : null;
+    var info = _spCollectSeries();
+    var cur = getEditSeries();
+    var names = info.order.slice();
+    if (cur && names.indexOf(cur) < 0) names.push(cur);
+    names.sort(function (a, b) {
+      if (a === cur) return -1;
+      if (b === cur) return 1;
+      var ca = info.map[a] ? info.map[a].count : 0;
+      var cb = info.map[b] ? info.map[b].count : 0;
+      if (ca !== cb) return cb - ca;
+      return a.localeCompare(b, "zh-CN");
+    });
+    $p.find("#ms-sp-summary").text(
+      (g ? truncate(g.name, 8) : "未分组") +
+        " · " +
+        info.order.length +
+        " 个系列",
+    );
+    var lkw = _spKw.trim().toLowerCase();
+    var h = "";
+    var matched = 0;
+    if (!lkw || "无系列".indexOf(lkw) >= 0) {
+      matched++;
+      var noneSel = !cur;
+      h +=
+        '<div class="ms-gp-row' +
+        (noneSel ? " sel" : "") +
+        '" data-sp-name="">' +
+        '<div class="ms-gp-ico"><i class="fa-solid fa-ban"></i></div>' +
+        '<div class="ms-gp-info"><div class="ms-gp-name">无系列</div>' +
+        '<div class="ms-gp-meta"><span>不归入任何系列，在列表里单独显示</span></div></div>' +
+        (noneSel ? '<i class="fa-solid fa-check ms-gp-check"></i>' : "") +
+        "</div>";
+    }
+    names.forEach(function (sn) {
+      if (lkw && sn.toLowerCase().indexOf(lkw) < 0) return;
+      matched++;
+      var item = info.map[sn];
+      var cnt = item ? item.count : 0;
+      var isSel = cur === sn;
+      var subLabel = item ? _spSubLabel(gid, item.subs) : "";
+      h +=
+        '<div class="ms-gp-row' +
+        (isSel ? " sel" : "") +
+        '" data-sp-name="' +
+        escAttr(sn) +
+        '">' +
+        '<div class="ms-gp-ico" style="color:var(--ms-accent);"><i class="fa-solid fa-layer-group"></i></div>' +
+        '<div class="ms-gp-info"><div class="ms-gp-name" title="' +
+        escAttr(sn) +
+        '">' +
+        esc(sn) +
+        "</div>" +
+        '<div class="ms-gp-meta">' +
+        (cnt > 0
+          ? '<span><i class="fa-solid fa-masks-theater"></i>' +
+            cnt +
+            " 条</span>"
+          : '<span style="opacity:0.7;"><i class="fa-solid fa-plus"></i>新系列</span>') +
+        (subLabel
+          ? '<span class="ms-gp-m-fold"><i class="fa-solid fa-folder"></i>' +
+            esc(subLabel) +
+            "</span>"
+          : "") +
+        "</div></div>" +
+        (cnt > 0
+          ? '<div class="ms-gp-sacts">' +
+            '<button type="button" class="ms-gp-sbtn" data-sp-ren="' +
+            escAttr(sn) +
+            '" title="重命名本组内的这个系列"><i class="fa-solid fa-pen"></i></button>' +
+            '<button type="button" class="ms-gp-sbtn del" data-sp-clr="' +
+            escAttr(sn) +
+            '" title="移除本组内的这个系列"><i class="fa-solid fa-trash"></i></button>' +
+            "</div>"
+          : "") +
+        (isSel ? '<i class="fa-solid fa-check ms-gp-check"></i>' : "") +
+        "</div>";
+    });
+    if (matched === 0) {
+      h +=
+        '<div class="ms-gp-empty"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的系列' +
+        (lkw
+          ? '<br><span style="font-size:10px;opacity:0.8;">按回车即可用这个名字新建</span>'
+          : "") +
+        "</div>";
+    } else if (!lkw && info.order.length === 0) {
+      h +=
+        '<div class="ms-gp-empty" style="padding:12px 10px;"><i class="fa-solid fa-layer-group"></i>本组还没有任何系列，点下方按钮新建</div>';
+    }
+    $list.html(h);
+  }
+
+  function _spPosition() {
+    var $pop = $p.find("#ms-sp-popup");
+    var $trig = $p.find("#ms-edit-series-trigger");
+    if (!$pop.length || !$trig.length) return;
+    var tr = $trig[0].getBoundingClientRect();
+    var pr = $p[0].getBoundingClientRect();
+    var $list = $pop.find("#ms-sp-list");
+    $list.css("max-height", "");
+    /* rect 是视口像素（已乘过面板的 zoom），而 offsetHeight/offsetWidth 和写回
+       css 的 top/left 都是布局像素。两者混用会让浮层在开了「自定义字号与尺寸」
+       （zoom ≠ 1）时整体偏移，所以先把 rect 换算回布局像素。 */
+    var _z = 1;
+    try {
+      _z = parseFloat(getComputedStyle($p[0]).zoom) || 1;
+    } catch (e) {}
+    var trTop = (tr.top - pr.top) / _z;
+    var trBottom = (tr.bottom - pr.top) / _z;
+    var trLeft = (tr.left - pr.left) / _z;
+    var prH = pr.height / _z;
+    var prW = pr.width / _z;
+    var below = prH - trBottom - 11;
+    var above = trTop - 11;
+    var openUp = false;
+    if ($pop[0].offsetHeight > below && above > below) openUp = true;
+    var room = Math.max(96, openUp ? above : below);
+    var chrome = $pop[0].offsetHeight - ($list[0].offsetHeight || 0);
+    if ($pop[0].offsetHeight > room) {
+      $list.css("max-height", Math.max(64, room - chrome) + "px");
+    }
+    var popH = $pop[0].offsetHeight;
+    var popW = $pop[0].offsetWidth || 296;
+    var left = trLeft;
+    var maxLeft = prW - popW - 8;
+    if (left > maxLeft) left = maxLeft;
+    if (left < 8) left = 8;
+    var top = openUp ? trTop - popH - 5 : trBottom + 5;
+    if (top < 6) top = 6;
+    $pop.css({ top: top + "px", left: left + "px" });
+  }
+
+  function openSeriesPicker() {
+    closeSeriesPicker();
+    closeGroupPicker();
+    $p.find("#ms-char-search-popup").remove();
+    _spKw = "";
+    $p.append(
+      '<div id="ms-sp-popup">' +
+        '<div class="ms-gp-head"><div class="ms-gp-head-t"><i class="fa-solid fa-layer-group"></i>选择系列</div>' +
+        '<span class="ms-gp-head-n" id="ms-sp-summary"></span>' +
+        '<button type="button" class="ms-gp-x" id="ms-sp-close" title="关闭"><i class="fa-solid fa-xmark"></i></button></div>' +
+        '<div class="ms-gp-searchwrap"><input type="text" class="ms-gp-search" id="ms-sp-search" placeholder="搜索本组系列，或输入新名称后回车..."></div>' +
+        '<div class="ms-gp-list" id="ms-sp-list"></div>' +
+        '<div class="ms-gp-foot"><button type="button" class="ms-gp-newgroup" id="ms-sp-newseries"><i class="fa-solid fa-plus"></i>新建系列</button></div>' +
+        "</div>",
+    );
+    $p.find("#ms-edit-series-trigger").addClass("open");
+    _spRenderList();
+    _spPosition();
+    var $pop = $p.find("#ms-sp-popup");
+    $pop.addClass("visible");
+    var $selRow = $pop.find(".ms-gp-row.sel").first();
+    if ($selRow.length) {
+      var lEl = $pop.find("#ms-sp-list")[0];
+      var off = $selRow[0].offsetTop - 40;
+      if (off > 0) lEl.scrollTop = off;
+    }
+    $pop.on("click", "#ms-sp-close", function () {
+      closeSeriesPicker();
+    });
+    $pop.on("input", "#ms-sp-search", function () {
+      _spKw = $(this).val() || "";
+      _spRenderList();
+      _spPosition();
+    });
+    $pop.on("keydown", "#ms-sp-search", function (ev) {
+      if (ev.key !== "Enter") return;
+      ev.preventDefault();
+      var kw = ($(this).val() || "").trim();
+      if (!kw) return;
+      /* 列表过滤是不区分大小写的子串匹配，直接拿输入去新建会造出「衣柜」和
+         「衣柜大公开」这种裂开的两个系列，所以回车先往已有系列上靠。 */
+      var _spOrder = _spCollectSeries().order || [];
+      var _kwLow = kw.toLowerCase();
+      var _exact = null;
+      var _subHits = [];
+      _spOrder.forEach(function (sn) {
+        var _low = String(sn).toLowerCase();
+        if (_low === _kwLow) _exact = sn;
+        else if (_low.indexOf(_kwLow) >= 0) _subHits.push(sn);
+      });
+      applySeriesPick(
+        _exact || (_subHits.length === 1 ? _subHits[0] : kw),
+      );
+      closeSeriesPicker();
+    });
+    $pop.on("click", ".ms-gp-row", function () {
+      applySeriesPick($(this).attr("data-sp-name") || "");
+      closeSeriesPicker();
+    });
+    $pop.on("click", "[data-sp-ren]", function (e) {
+      e.stopPropagation();
+      var src = $(this).attr("data-sp-ren");
+      var gid = getEditGid();
+      msPrompt("把「" + src + "」重命名为：", {
+        title: "重命名系列",
+        icon: "fa-layer-group",
+        defaultValue: src,
+        placeholder: "新的系列名",
+        validate: function (val) {
+          if (!val || !val.trim()) return "名称不能为空";
+          return null;
+        },
+      }).then(function (name) {
+        if (!name || !name.trim()) return;
+        var next = name.trim();
+        if (next === src) return;
+        var changed = 0;
+        data.prompts.forEach(function (pp) {
+          if ((pp.groupId || "") !== gid) return;
+          if (String(pp.series || "").trim() !== src) return;
+          pp.series = next;
+          _invalidateLc(pp);
+          changed++;
+        });
+        if (changed > 0) saveData();
+        if (getEditSeries() === src) applySeriesPick(next);
+        _spRenderList();
+        _spPosition();
+        toast("success", "已重命名 " + changed + " 条");
+      });
+    });
+    $pop.on("click", "[data-sp-clr]", function (e) {
+      e.stopPropagation();
+      var src = $(this).attr("data-sp-clr");
+      var gid = getEditGid();
+      var affected = data.prompts.filter(function (pp) {
+        return (
+          (pp.groupId || "") === gid && String(pp.series || "").trim() === src
+        );
+      });
+      msConfirm(
+        "本组内 " +
+          affected.length +
+          " 条剧场会移出这个系列，变成「无系列」。剧场内容不会被删除。",
+        {
+          title: "移除系列「" + truncate(src, 14) + "」？",
+          type: "danger",
+          dangerous: true,
+          okText: "移除",
+        },
+      ).then(function (ok) {
+        if (!ok) return;
+        affected.forEach(function (pp) {
+          pp.series = "";
+          _invalidateLc(pp);
+        });
+        saveData();
+        if (getEditSeries() === src) applySeriesPick("");
+        _spRenderList();
+        _spPosition();
+        toast("success", "已移除系列");
+      });
+    });
+    $pop.on("click", "#ms-sp-newseries", function (e) {
+      e.stopPropagation();
+      msPrompt("", {
+        title: "新建系列",
+        icon: "fa-layer-group",
+        defaultValue: _spKw.trim(),
+        placeholder: "例如：衣柜大公开",
+        validate: function (val) {
+          if (!val || !val.trim()) return "名称不能为空";
+          return null;
+        },
+      }).then(function (name) {
+        if (!name || !name.trim()) return;
+        applySeriesPick(name.trim());
+        closeSeriesPicker();
+      });
+    });
+    setTimeout(function () {
+      $p.on("pointerdown.ms-sp", function (ev) {
+        if (
+          $(ev.target).closest(
+            "#ms-sp-popup, #ms-edit-series-trigger, .ms-modal-overlay",
+          ).length
+        )
+          return;
+        closeSeriesPicker();
+      });
+      $p.find("#ms-body").on("scroll.ms-sp", function () {
+        closeSeriesPicker();
+      });
+      $p.on("keydown.ms-sp", function (ev) {
+        if (ev.key === "Escape" || ev.key === "Esc") {
+          ev.stopPropagation();
+          closeSeriesPicker();
+          $p.find("#ms-edit-series-trigger").focus();
+        }
+      });
+    }, 50);
+  }
   let editTags = [...promptTags];
   const stats = countStats(content);
   let _editTagTab = "used";
@@ -311,8 +1155,19 @@
       series: $p.find("#ms-edit-series").val() || "",
       tags: editTags,
       character: editCharacter,
+      subGroupId: editSubGroupId,
     });
     editDirty = cur !== editSnapshot;
+    /* 原先只有正文的 input 会排草稿。改系列/文件夹/标签/角色后若页面被关掉，
+       恢复出来的草稿会把这些字段退回改动之前，而 banner 只说「已恢复草稿」。
+       必须带 dirty 判断：markDirty 也会在「从子页面返回」这类净无改动的场合被
+       调用，无条件排草稿会留下一份幽灵草稿，下次进来白弹一个恢复横幅。 */
+    if (editDirty) {
+      scheduleDraftSave();
+    } else if (_editDraftTimer) {
+      clearTimeout(_editDraftTimer);
+      _editDraftTimer = null;
+    }
   }
   var _draftBannerH = "";
   if (v._pendingDraft) {
@@ -331,8 +1186,8 @@
       '</span><button class="ms-tbtn" id="ms-draft-restore" style="padding:3px 10px;font-size:11px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-rotate-left" style="margin-right:3px;"></i>恢复</button><button class="ms-tbtn" id="ms-draft-discard" style="padding:3px 10px;font-size:11px;"><i class="fa-solid fa-xmark" style="margin-right:3px;"></i>丢弃</button></div>';
   }
   $p.find("#ms-body").html(`<div class="ms-form-edit">${_draftBannerH}
-      <div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>标题</label><input type="text" id="ms-edit-title" placeholder="小剧场名字" value="${esc(title)}"></div><div class="ms-field" style="flex:1;"><label>系列 <span style="font-weight:350;opacity:0.5;">(同系列自动聚合)</span></label><input type="text" id="ms-edit-series" placeholder="如：「衣柜大公开」" value="${esc(series)}"></div></div>
-      <div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>分组</label><select id="ms-edit-group">${groupOpts}</select></div><div class="ms-field" style="flex:1;"><label>作者</label><input type="text" id="ms-edit-author" placeholder="署名" value="${esc(author)}"></div></div>
+      <div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>标题</label><input type="text" id="ms-edit-title" placeholder="小剧场名字" value="${esc(title)}"></div><div class="ms-field" style="flex:1;"><label>系列 <span style="font-weight:350;opacity:0.5;">(同系列自动聚合)</span></label><input type="hidden" id="ms-edit-series" value="${escAttr(series)}"><div class="ms-gp-trigger" id="ms-edit-series-trigger" tabindex="0" role="button" title="点击选择或新建系列"></div></div></div>
+      <div class="ms-form-row ms-row-nowrap"><div class="ms-field" style="flex:1.35;"><label>分组 / 文件夹</label><input type="hidden" id="ms-edit-group" value="${escAttr(groupId || "")}"><div class="ms-gp-trigger" id="ms-edit-group-trigger" tabindex="0" role="button" title="点击选择分组或文件夹"></div></div><div class="ms-field ms-field-author" style="flex:1;"><label>作者</label><input type="text" id="ms-edit-author" placeholder="署名" value="${esc(author)}"></div></div>
       <div class="ms-field"><label>绑定角色 <span style="font-weight:350;opacity:0.5;">(可选，绑定后会出现在角色专属页)</span></label><div id="ms-edit-char-wrap" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;"></div></div>
       <div class="ms-field"><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;"><label style="margin:0;">标签</label><div id="ms-edit-tags-tabs" style="display:flex;gap:4px;">${buildTagsTabsHTML()}</div></div><div class="ms-tag-row" id="ms-edit-tags">${buildTagsUI()}</div></div>
       <div class="ms-field ms-content-field">
@@ -390,6 +1245,11 @@
   if (isMobile) {
     $p.find("#ms-body").on("focus.ms", "#ms-edit-content", function () {
       const ta = this;
+      if (setupKeyboardAdapt.refresh) {
+        [80, 300, 600, 1000, 1500].forEach(function (ms) {
+          setTimeout(setupKeyboardAdapt.refresh, ms);
+        });
+      }
       setTimeout(() => {
         ta.scrollIntoView({ behavior: "smooth", block: "center" });
       }, 350);
@@ -403,6 +1263,10 @@
     $p.find("#ms-edit-group").val(draft.groupId || "");
     $p.find("#ms-edit-author").val(draft.author || "");
     $p.find("#ms-edit-series").val(draft.series || "");
+    editSubGroupId = draft.subGroupId || null;
+    _lastEditGid = draft.groupId || "";
+    refreshGroupTrigger();
+    refreshSeriesTrigger();
     editTags = draft.tags ? [...draft.tags] : [];
     editCharacter = draft.character || "";
     if (editCharacter && !isLocalCharKey(editCharacter)) {
@@ -464,6 +1328,8 @@
       $p.find("#ms-edit-tags").html(buildTagsUI());
     },
   );
+  refreshGroupTrigger();
+  refreshSeriesTrigger();
   $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
   $p.find("#ms-body").on("click.ms", "#ms-char-unbind", function () {
     editCharacter = "";
@@ -686,6 +1552,7 @@
         series: $p.find("#ms-edit-series").val() || "",
         tags: editTags,
         character: editCharacter,
+        subGroupId: editSubGroupId,
         savedAt: Date.now(),
       });
     }, 2000);
@@ -695,13 +1562,56 @@
     const s = countStats(this.value);
     $p.find("#ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
     markDirty();
-    scheduleDraftSave();
   });
   $p.find("#ms-body").on("input.ms", "#ms-edit-title", function () {
     var _v = ($(this).val() || "").trim();
     $p.find("#ms-edit-current-title").text(
       _v || (isNew ? "新建小剧场" : "未命名"),
     );
+    markDirty();
+  });
+  $p.find("#ms-body").on("input.ms", "#ms-edit-author", function () {
+    markDirty();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-edit-group-trigger", function (e) {
+    e.stopPropagation();
+    if ($p.find("#ms-gp-popup").length) closeGroupPicker();
+    else openGroupPicker();
+  });
+  $p.find("#ms-body").on(
+    "keydown.ms",
+    "#ms-edit-group-trigger",
+    function (e) {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        e.preventDefault();
+        if (!$p.find("#ms-gp-popup").length) openGroupPicker();
+      }
+    },
+  );
+  $p.find("#ms-body").on("click.ms", "#ms-edit-series-trigger", function (e) {
+    e.stopPropagation();
+    if ($p.find("#ms-sp-popup").length) closeSeriesPicker();
+    else openSeriesPicker();
+  });
+  $p.find("#ms-body").on(
+    "keydown.ms",
+    "#ms-edit-series-trigger",
+    function (e) {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        e.preventDefault();
+        if (!$p.find("#ms-sp-popup").length) openSeriesPicker();
+      }
+    },
+  );
+  $p.find("#ms-body").on("change.ms", "#ms-edit-group", function () {
+    var _newGid = $(this).val() || "";
+    if (_newGid !== _lastEditGid) {
+      editSubGroupId = null;
+      _lastEditGid = _newGid;
+    }
+    refreshGroupTrigger();
+    closeSeriesPicker();
+    refreshSeriesTrigger();
   });
   $p.find("#ms-body").on("change.ms", "#ms-edit-group", function () {
     if (isNew && !$p.find("#ms-edit-author").val().trim()) {
@@ -999,6 +1909,7 @@
           series: $p.find("#ms-edit-series").val() || "",
           tags: [...editTags],
           character: editCharacter,
+          subGroupId: editSubGroupId,
           cursorPos: ta.selectionStart,
           focusMode: $p.hasClass("ms-focus-mode"),
           findBarOpen: $p.find("#ms-find-bar").is(":visible"),
@@ -1086,7 +1997,7 @@
   });
   $p.find("#ms-body").on(
     "keydown.ms",
-    "#ms-edit-title, #ms-edit-author, #ms-edit-series",
+    "#ms-edit-title, #ms-edit-author",
     function (e) {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
@@ -1359,6 +2270,8 @@
     }
     editDirty = false;
     clearDraft();
+    var _saveSgid = editSubGroupId;
+    if (_saveSgid && !getSubGroup(g2, _saveSgid)) _saveSgid = null;
     if (v.promptId) {
       const existingP = getPrompt(v.promptId);
       if (
@@ -1371,6 +2284,7 @@
         title: t || "未命名",
         content: c,
         groupId: g2,
+        subGroupId: _saveSgid,
         author: a,
         series: sr,
         tags: editTags,
@@ -1381,6 +2295,7 @@
         title: t || "未命名",
         content: c,
         groupId: g2,
+        subGroupId: _saveSgid,
         author: a,
         series: sr,
         tags: editTags,
@@ -1398,6 +2313,10 @@
     $p.find("#ms-edit-group").val(ss.groupId);
     $p.find("#ms-edit-author").val(ss.author);
     $p.find("#ms-edit-series").val(ss.series || "");
+    if (ss.subGroupId !== undefined) editSubGroupId = ss.subGroupId;
+    _lastEditGid = ss.groupId || "";
+    refreshGroupTrigger();
+    refreshSeriesTrigger();
     editTags = ss.tags ? [...ss.tags] : [];
     if (ss.character !== undefined) editCharacter = ss.character;
     $p.find("#ms-edit-tags").html(buildTagsUI());
@@ -1438,7 +2357,17 @@
       el2.style.removeProperty("left");
       el2.style.removeProperty("top");
       el2.style.removeProperty("transform");
+      /* 与手动进入专注模式那条路径保持一致：键盘适配留下的尺寸内联样式要一起清掉，
+         并重排一次贴合。否则从常用语页返回后面板带着专注模式的类、却没有对应的尺寸，
+         要等到下一次 resize 或点进正文框才对位。 */
+      el2.style.removeProperty("width");
+      el2.style.removeProperty("max-width");
+      el2.style.removeProperty("height");
+      el2.style.removeProperty("max-height");
+      el2.style.removeProperty("zoom");
       $p.addClass("ms-focus-mode");
+      if (setupKeyboardAdapt.refresh)
+        setTimeout(setupKeyboardAdapt.refresh, 80);
       var $focusBtn = $p.find("[data-md='focus']");
       $focusBtn.addClass("active").attr("title", "退出专注");
       $focusBtn.find("i").attr("class", "fa-solid fa-compress");

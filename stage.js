@@ -8,7 +8,8 @@
 const STORAGE_KEY = "miniStage_data";
 const PANEL_ID = "mini-stage-panel";
 const STYLE_ID = "mini-stage-styles";
-const SCRIPT_VERSION = "3.7.5";
+const SUBGROUP_NONE = "_nosub";
+const SCRIPT_VERSION = "3.8.0";
 const GROUP_COLORS = [
   "#D6A2A2",
   "#DDAA90",
@@ -31,7 +32,7 @@ const GROUP_COLORS = [
   "#8b5b8c",
 ];
 const TAG_COLORS = GROUP_COLORS;
-var GUIDE_VERSION = "3.7.5";
+var GUIDE_VERSION = "3.8.0";
 var GUIDE_REMOTE_URLS = {
   guide:
     "https://gist.githubusercontent.com/Sanjs333/c45460dc2bb5908ff53b5769088b122d/raw/guide.md",
@@ -47,7 +48,7 @@ var GUIDE_REMOTE_URLS = {
     "https://gist.githubusercontent.com/Sanjs333/03421197514de4c5295608d9beab3496/raw/changelog.md",
 };
 var BUILTIN_GUIDE_CONTENT =
-  "# 小剧场 使用说明\n\n正在从云端加载完整使用说明...\n\n如果长时间未加载，请检查网络或手动前往设置页「重新生成使用说明」。";
+  "# 小剧场 使用说明\n\n正在从云端加载完整使用说明...\n\n如果长时间未加载，请检查网络，或前往「设置 → 关于与更新 → 重新生成使用说明」。";
 var BUILTIN_INJECT_GUIDE_CONTENT =
   "# 小剧场 · 注入功能指南\n\n正在从云端加载完整注入指南...\n\n如果长时间未加载，请检查网络。";
 var BUILTIN_CHAR_BIND_GUIDE_CONTENT =
@@ -76,6 +77,7 @@ let filterState = {
   excludeTags: [],
   tagSelectMode: "include",
   groupId: null,
+  subGroupId: null,
   onlyCurrentChar: false,
 };
 let panelVisible = false;
@@ -1149,6 +1151,56 @@ function parseColorToRGBA(colorStr) {
   return null;
 }
 
+function _msColorLuminance(colorStr) {
+  var s = String(colorStr || "").trim();
+  var r, g, b;
+  var m = s.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (m) {
+    var hex = m[1];
+    if (hex.length === 3) {
+      r = parseInt(hex[0] + hex[0], 16);
+      g = parseInt(hex[1] + hex[1], 16);
+      b = parseInt(hex[2] + hex[2], 16);
+    } else {
+      r = parseInt(hex.substring(0, 2), 16);
+      g = parseInt(hex.substring(2, 4), 16);
+      b = parseInt(hex.substring(4, 6), 16);
+    }
+  } else {
+    var c = parseColorToRGBA(s);
+    if (!c) return null;
+    r = parseInt(c.r, 10);
+    g = parseInt(c.g, 10);
+    b = parseInt(c.b, 10);
+  }
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return null;
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+}
+
+function getThemeBindingInputStyle(binding) {
+  if (!binding) return null;
+  if (binding.bgMode !== "color" && binding.bgMode !== "image") return null;
+  var lum = null;
+  if (binding.bgMode === "color" && binding.bgColor) {
+    var _op = binding.bgOpacity === undefined ? 1 : binding.bgOpacity;
+    /* 半透明背景下宿主底色仍占主导，bgColor 判不出面板的真实亮度。这里只是
+       放弃用 bgColor 推导，不直接 return——下面还有一层用 textColor 反推的兜底，
+       绑了文字色的主题仍然应该拿到匹配的输入框配色。 */
+    if (_op >= 0.6) lum = _msColorLuminance(binding.bgColor);
+  }
+  if (lum === null && binding.textColor) {
+    var tl = _msColorLuminance(binding.textColor);
+    if (tl !== null) lum = tl > 0.5 ? 0.12 : 0.88;
+  }
+  if (lum === null) return null;
+  var isLight = lum > 0.5;
+  return {
+    bg: isLight ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.07)",
+    border:
+      "1px solid " + (isLight ? "rgba(0,0,0,0.18)" : "rgba(255,255,255,0.16)"),
+    color: isLight ? "#1a1a1a" : "#e8e8e8",
+  };
+}
 function getThemeSelectDocs() {
   var docs = [];
   try {
@@ -1704,6 +1756,16 @@ function syncThemeColors() {
   } catch (e) {
     clearThemeInputStyleVars($p);
   }
+  var _tbcInput = getThemeBindingInputStyle(_tbc);
+  if (_tbcInput) {
+    $p[0].style.setProperty("--ms-themed-input-bg", _tbcInput.bg);
+    $p[0].style.setProperty("--ms-themed-input-border", _tbcInput.border);
+    $p[0].style.setProperty("--ms-themed-input-shadow", "none");
+    // 底色被换掉后，宿主采样来的文字色可能与新底色同明度，需一并推导
+    if (!hasBoundText && _tbcInput.color) {
+      $p[0].style.setProperty("--ms-themed-input-color", _tbcInput.color);
+    }
+  }
 }
 
 function closeActiveDropdown() {
@@ -1759,6 +1821,14 @@ function getCtx() {
 function loadData() {
   try {
     const ctx = getCtx();
+    // 下面整段默认值播种都在 if 分支内，全新安装（还没有存储键）会整段跳过，
+    // 于是首个会话里这三个值是 undefined：界面自定义一打开就显示「undefinedpx」，
+    // zoom/width 拿到 NaN 被 CSSOM 丢弃，设置形同失效，直到刷新页面才正常
+    if (data.settings.uiFontSize === undefined) data.settings.uiFontSize = 14;
+    if (data.settings.uiPanelWidth === undefined)
+      data.settings.uiPanelWidth = 500;
+    if (data.settings.uiPanelHeight === undefined)
+      data.settings.uiPanelHeight = 82;
     if (ctx && ctx.s[STORAGE_KEY]) {
       const stored = ctx.s[STORAGE_KEY];
       data.groups = Array.isArray(stored.groups) ? stored.groups : [];
@@ -1844,6 +1914,11 @@ function loadData() {
         !Array.isArray(data.settings.randomInject.excludedCharGroupIds)
       )
         data.settings.randomInject.excludedCharGroupIds = [];
+      if (
+        data.settings.randomInject &&
+        !Array.isArray(data.settings.randomInject.excludedSubGroups)
+      )
+        data.settings.randomInject.excludedSubGroups = [];
       if (!Array.isArray(data.settings.tagMappings))
         data.settings.tagMappings = [];
       data.settings.tagMappings.forEach(function (m) {
@@ -2005,6 +2080,7 @@ function loadData() {
         if (!p.usageByCharacter || typeof p.usageByCharacter !== "object")
           p.usageByCharacter = {};
         if (p.sourceId === undefined) p.sourceId = null;
+        if (p.subGroupId === undefined) p.subGroupId = null;
         if (!p.fingerprint) p.fingerprint = contentFingerprint(p);
         if (p.usageCount === undefined) p.usageCount = 0;
         if (p.updatedAt === undefined) p.updatedAt = p.createdAt || null;
@@ -2024,6 +2100,15 @@ function loadData() {
         if (g.iconUrl === undefined) g.iconUrl = "";
         if (g.iconCharKey === undefined) g.iconCharKey = "";
         if (!Array.isArray(g.charDisplayOrder)) g.charDisplayOrder = [];
+        if (!Array.isArray(g.subGroups)) g.subGroups = [];
+        g.subGroups.forEach(function (sg) {
+          if (!sg.id) sg.id = uid();
+          if (typeof sg.name !== "string")
+            sg.name = String(sg.name || "未命名");
+          if (!sg.color) sg.color = GROUP_COLORS[0];
+          if (sg.note === undefined) sg.note = "";
+        });
+        g.subGroupEnabled = g.subGroups.length > 0;
         if (g.multiPrefixEnabled === undefined) g.multiPrefixEnabled = false;
         if (!Array.isArray(g.prefixTemplates)) g.prefixTemplates = [];
         if (!g.prefixAssignments || typeof g.prefixAssignments !== "object")
@@ -2062,6 +2147,7 @@ function loadData() {
         if (s.importCharGroups === undefined) s.importCharGroups = true;
         if (s.targetGroupId === undefined) s.targetGroupId = null;
       });
+      cleanOrphanSubGroupIds();
     }
     if (!data.settings.guideCreated && data.prompts.length === 0) {
       createBuiltinGuide();
@@ -2504,6 +2590,7 @@ function saveData() {
   _groupIdx = null;
   _promptIdx = null;
   _tagIdx = null;
+  _subGroupIdx = null;
   _visIdsCache = null;
   _savePending = true;
   if (_saveTimer) return;
@@ -2558,7 +2645,8 @@ function clearDraft() {
 
 var _groupIdx = null,
   _promptIdx = null,
-  _tagIdx = null;
+  _tagIdx = null,
+  _subGroupIdx = null;
 function _rebuildIdx() {
   _groupIdx = {};
   data.groups.forEach(function (g) {
@@ -2572,6 +2660,13 @@ function _rebuildIdx() {
   data.settings.definedTags.forEach(function (t) {
     _tagIdx[t.id] = t;
   });
+  _subGroupIdx = {};
+  data.groups.forEach(function (g) {
+    if (!Array.isArray(g.subGroups)) return;
+    g.subGroups.forEach(function (sg) {
+      if (sg && sg.id) _subGroupIdx[g.id + "|" + sg.id] = sg;
+    });
+  });
 }
 function getGroup(id) {
   if (!_groupIdx) _rebuildIdx();
@@ -2583,6 +2678,91 @@ function getPrompt(id) {
 }
 function getPromptsInGroup(gid) {
   return data.prompts.filter((p) => p.groupId === gid);
+}
+function isSubGroupEnabled(g) {
+  return !!(g && Array.isArray(g.subGroups) && g.subGroups.length > 0);
+}
+function getSubGroups(g) {
+  if (!g || !Array.isArray(g.subGroups)) return [];
+  return g.subGroups;
+}
+function getSubGroup(gid, sgid) {
+  if (!gid || !sgid || sgid === SUBGROUP_NONE) return null;
+  if (!_subGroupIdx) _rebuildIdx();
+  return _subGroupIdx[gid + "|" + sgid] || null;
+}
+function getPromptsInSubGroup(gid, sgid) {
+  if (!gid) return [];
+  var isNone = !sgid || sgid === SUBGROUP_NONE;
+  return data.prompts.filter(function (p) {
+    if (p.groupId !== gid) return false;
+    if (isNone) return !p.subGroupId || !getSubGroup(gid, p.subGroupId);
+    return p.subGroupId === sgid;
+  });
+}
+function getSubGroupsInScope(gid, charScope) {
+  var g = getGroup(gid);
+  if (!isSubGroupEnabled(g)) return [];
+  var counts = {};
+  data.prompts.forEach(function (p) {
+    if (p.groupId !== gid) return;
+    if (charScope === "_general") {
+      if (p.character) return;
+    } else if (charScope) {
+      if (p.character !== charScope) return;
+    }
+    if (p.subGroupId && getSubGroup(gid, p.subGroupId)) {
+      counts[p.subGroupId] = (counts[p.subGroupId] || 0) + 1;
+    }
+  });
+  var result = [];
+  var showEmpty = !charScope || charScope === "_general";
+  getSubGroups(g).forEach(function (sg) {
+    var c = counts[sg.id] || 0;
+    if (c > 0 || showEmpty) result.push({ subGroup: sg, count: c });
+  });
+  return result;
+}
+function cleanOrphanSubGroupIds() {
+  var changed = 0;
+  data.prompts.forEach(function (p) {
+    if (!p.subGroupId) return;
+    if (!p.groupId) {
+      p.subGroupId = null;
+      changed++;
+      return;
+    }
+    var g = data.groups.find(function (x) {
+      return x.id === p.groupId;
+    });
+    if (!g || !Array.isArray(g.subGroups)) {
+      p.subGroupId = null;
+      changed++;
+      return;
+    }
+    var found = g.subGroups.some(function (sg) {
+      return sg.id === p.subGroupId;
+    });
+    if (!found) {
+      p.subGroupId = null;
+      changed++;
+    }
+  });
+  var ri = data.settings.randomInject;
+  if (ri && Array.isArray(ri.excludedSubGroups)) {
+    ri.excludedSubGroups = ri.excludedSubGroups.filter(function (x) {
+      if (!x || !x.groupId || !x.subGroupId) return false;
+      var g = data.groups.find(function (y) {
+        return y.id === x.groupId;
+      });
+      if (!g || !Array.isArray(g.subGroups)) return false;
+      if (x.subGroupId === SUBGROUP_NONE) return g.subGroups.length > 0;
+      return g.subGroups.some(function (sg) {
+        return sg.id === x.subGroupId;
+      });
+    });
+  }
+  return changed;
 }
 function getUngroupedPrompts() {
   return data.prompts.filter((p) => !p.groupId || !getGroup(p.groupId));
@@ -3336,6 +3516,33 @@ function _rebindLostKeyByName(key, nameMap) {
   return key;
 }
 
+function mergeSubGroupsByName(localG, impG) {
+  var map = {};
+  if (!localG || !impG || !Array.isArray(impG.subGroups)) return map;
+  if (!Array.isArray(localG.subGroups)) localG.subGroups = [];
+  if (Array.isArray(impG.subGroups) && impG.subGroups.length > 0)
+    localG.subGroupEnabled = true;
+  impG.subGroups.forEach(function (isg) {
+    if (!isg || !isg.id || !isg.name) return;
+    var ex = localG.subGroups.find(function (lsg) {
+      return lsg.name === isg.name;
+    });
+    if (ex) {
+      map[isg.id] = ex.id;
+      return;
+    }
+    var nsg = {
+      id: uid(),
+      name: isg.name,
+      color:
+        isg.color || GROUP_COLORS[localG.subGroups.length % GROUP_COLORS.length],
+      note: isg.note || "",
+    };
+    localG.subGroups.push(nsg);
+    map[isg.id] = nsg.id;
+  });
+  return map;
+}
 function _buildIPGroupFromImport(icg) {
   return {
     id: uid(),
@@ -3349,6 +3556,10 @@ function _buildIPGroupFromImport(icg) {
     iconUrl: icg.iconUrl || "",
     iconCharKey: icg.iconCharKey || "",
     charKeys: [],
+    subGroupEnabled: Array.isArray(icg.subGroups) && icg.subGroups.length > 0,
+    subGroups: Array.isArray(icg.subGroups)
+      ? JSON.parse(JSON.stringify(icg.subGroups))
+      : [],
     multiPrefixEnabled: icg.multiPrefixEnabled === true,
     prefixTemplates: Array.isArray(icg.prefixTemplates)
       ? JSON.parse(JSON.stringify(icg.prefixTemplates))
@@ -3369,6 +3580,8 @@ function createGroup(name) {
     defaultAuthor: "",
     stagePrefix: "",
     charKeys: [],
+    subGroupEnabled: false,
+    subGroups: [],
   };
   data.groups.push(g);
   _invalidateCharGroupCache();
@@ -3388,7 +3601,10 @@ function deleteGroup(id) {
   data.groups = data.groups.filter((g) => g.id !== id);
   if (data.settings.generalCollapsed) delete data.settings.generalCollapsed[id];
   data.prompts.forEach((p) => {
-    if (p.groupId === id) p.groupId = null;
+    if (p.groupId === id) {
+      p.groupId = null;
+      p.subGroupId = null;
+    }
   });
   data.subscriptions.forEach((s) => {
     if (s.targetGroupId === id) s.targetGroupId = null;
@@ -3402,6 +3618,11 @@ function deleteGroup(id) {
   if (ri && Array.isArray(ri.excludedSeries)) {
     ri.excludedSeries = ri.excludedSeries.filter(function (s) {
       return s.groupId !== id;
+    });
+  }
+  if (ri && Array.isArray(ri.excludedSubGroups)) {
+    ri.excludedSubGroups = ri.excludedSubGroups.filter(function (x) {
+      return !x || x.groupId !== id;
     });
   }
   _invalidateCharGroupCache();
@@ -3418,12 +3639,85 @@ function deleteGroupWithPrompts(gid) {
   if (ids.length > 0) deletePrompts(ids);
   deleteGroup(gid);
 }
+function createSubGroup(gid, name) {
+  var g = getGroup(gid);
+  if (!g) return null;
+  if (!Array.isArray(g.subGroups)) g.subGroups = [];
+  var sg = {
+    id: uid(),
+    name: name || "未命名",
+    color: GROUP_COLORS[g.subGroups.length % GROUP_COLORS.length],
+    note: "",
+  };
+  g.subGroups.push(sg);
+  g.subGroupEnabled = true;
+  saveData();
+  return sg;
+}
+function updateSubGroup(gid, sgid, u) {
+  var sg = getSubGroup(gid, sgid);
+  if (!sg) return;
+  Object.assign(sg, u);
+  saveData();
+}
+function deleteSubGroup(gid, sgid, mode, targetSgid) {
+  var g = getGroup(gid);
+  if (!g || !Array.isArray(g.subGroups)) return;
+  var affected = data.prompts.filter(function (p) {
+    return p.groupId === gid && p.subGroupId === sgid;
+  });
+  if (mode === "delete") {
+    if (affected.length > 0) {
+      deletePrompts(
+        affected.map(function (p) {
+          return p.id;
+        }),
+      );
+    }
+  } else if (mode === "move" && targetSgid && getSubGroup(gid, targetSgid)) {
+    affected.forEach(function (p) {
+      p.subGroupId = targetSgid;
+    });
+  } else {
+    affected.forEach(function (p) {
+      p.subGroupId = null;
+    });
+  }
+  g.subGroups = g.subGroups.filter(function (sg) {
+    return sg.id !== sgid;
+  });
+  if (g.subGroups.length === 0) g.subGroupEnabled = false;
+  if (filterState.subGroupId === sgid) filterState.subGroupId = null;
+  // 视图栈里各层存过 filterState 快照，不清掉的话返回上一页会把失效的
+  // 文件夹筛选恢复出来，导致列表命中 0 条且筛选面板已无 chip 可取消
+  if (Array.isArray(viewStack)) {
+    viewStack.forEach(function (v) {
+      if (v && v._savedFilter && v._savedFilter.subGroupId === sgid) {
+        v._savedFilter.subGroupId = null;
+      }
+    });
+  }
+  var ri = data.settings.randomInject;
+  if (ri && Array.isArray(ri.excludedSubGroups)) {
+    var _sgAllGone = g.subGroups.length === 0;
+    ri.excludedSubGroups = ri.excludedSubGroups.filter(function (x) {
+      if (!x || x.groupId !== gid) return true;
+      if (x.subGroupId === sgid) return false;
+      // 分组已无任何文件夹时，「未分类」的排除记录会命中该组全部剧场，
+      // 而随机池页面此时不再渲染文件夹行，用户无法取消，必须一并清掉
+      if (_sgAllGone && x.subGroupId === SUBGROUP_NONE) return false;
+      return true;
+    });
+  }
+  saveData();
+}
 function createPrompt(obj) {
   const p = {
     id: uid(),
     title: obj.title || "未命名",
     content: obj.content || "",
     groupId: obj.groupId || null,
+    subGroupId: obj.subGroupId || null,
     author: obj.author || "",
     tags: obj.tags || [],
     starred: false,
@@ -3453,6 +3747,13 @@ function updatePrompt(id, u) {
     var oldChar = p.character;
     var oldGroupId = p.groupId;
     Object.assign(p, u);
+    if (
+      u.groupId !== undefined &&
+      u.groupId !== oldGroupId &&
+      u.subGroupId === undefined
+    ) {
+      p.subGroupId = null;
+    }
     _invalidateLc(p);
     if (oldChar !== p.character || oldGroupId !== p.groupId) {
       _invalidateCharGroupCache();
@@ -3468,7 +3769,8 @@ function updatePrompt(id, u) {
       u.author !== undefined ||
       u.series !== undefined ||
       u.tags !== undefined ||
-      u.groupId !== undefined
+      u.groupId !== undefined ||
+      u.subGroupId !== undefined
     ) {
       p.updatedAt = Date.now();
     }
@@ -3504,10 +3806,17 @@ function deletePrompts(ids) {
   _invalidateCharGroupCache();
   saveData();
 }
-function movePromptsToGroup(ids, gid) {
+function movePromptsToGroup(ids, gid, sgid) {
   const s = new Set(ids);
   data.prompts.forEach((p) => {
-    if (s.has(p.id)) p.groupId = gid;
+    if (!s.has(p.id)) return;
+    var switched = p.groupId !== gid;
+    p.groupId = gid;
+    if (sgid !== undefined) {
+      p.subGroupId = sgid && sgid !== SUBGROUP_NONE ? sgid : null;
+    } else if (switched) {
+      p.subGroupId = null;
+    }
   });
   _invalidateCharGroupCache();
   saveData();
@@ -3519,6 +3828,7 @@ function duplicatePrompt(id) {
     title: p.title + " (副本)",
     content: p.content,
     groupId: p.groupId,
+    subGroupId: p.subGroupId || null,
     author: p.author,
     tags: [...(p.tags || [])],
     series: p.series || "",
@@ -3752,6 +4062,17 @@ function filterPrompts(list) {
       r = r.filter((p) => !p.groupId || !getGroup(p.groupId));
     else r = r.filter((p) => p.groupId === filterState.groupId);
   }
+  if (filterState.subGroupId) {
+    if (filterState.subGroupId === SUBGROUP_NONE) {
+      r = r.filter(function (p) {
+        return !p.subGroupId || !getSubGroup(p.groupId, p.subGroupId);
+      });
+    } else {
+      r = r.filter(function (p) {
+        return p.subGroupId === filterState.subGroupId;
+      });
+    }
+  }
   if (filterState.onlyCurrentChar) {
     var curK2 = getCurrentCharKeySafe();
     r = curK2
@@ -3788,6 +4109,11 @@ function searchPrompts(list, q) {
     if (_getLc(p, "content").indexOf(lq) >= 0) return true;
     if (_getLc(p, "author").indexOf(lq) >= 0) return true;
     if (_getLc(p, "series").indexOf(lq) >= 0) return true;
+    if (p.subGroupId && p.groupId) {
+      var _sgS = getSubGroup(p.groupId, p.subGroupId);
+      if (_sgS && _sgS.name && _sgS.name.toLowerCase().indexOf(lq) >= 0)
+        return true;
+    }
     if (p.character) {
       var dn = getCharDisplayName(p.character);
       if (dn && dn.toLowerCase().indexOf(lq) >= 0) return true;
@@ -3810,12 +4136,32 @@ var _visIdsCacheKey = "";
 function getVisiblePromptIds() {
   const v = currentView();
   var curCharForCache = getCurrentCharKeySafe() || "";
+  var _sgSigForCache = "";
+  if (v.groupId && v.groupId !== "_ungrouped") {
+    var _sgGForCache = getGroup(v.groupId);
+    if (_sgGForCache) {
+      _sgSigForCache =
+        (_sgGForCache.subGroupEnabled ? "1" : "0") +
+        ":" +
+        getSubGroups(_sgGForCache)
+          .map(function (sg) {
+            return sg.id;
+          })
+          .join(",");
+    }
+  }
   var cacheKey =
     v.name +
     "|" +
     (v.groupId || "") +
     "|" +
     (v.charKey || "") +
+    "|" +
+    (v.subGroupId || "") +
+    "|" +
+    (v.charScope === undefined ? "" : String(v.charScope)) +
+    "|" +
+    _sgSigForCache +
     "|" +
     searchQuery +
     "|" +
@@ -3838,7 +4184,18 @@ function getVisiblePromptIds() {
   else if (v.name === "recent") list = getRecentPrompts();
   else if (v.name === "character")
     list = getPromptsByCharacter(v.charKey || v.charName);
-  else return [];
+  else if (v.name === "subgroup") {
+    list = getPromptsInSubGroup(v.groupId, v.subGroupId);
+    if (v.charScope === "_general") {
+      list = list.filter(function (p) {
+        return !p.character;
+      });
+    } else if (v.charScope) {
+      list = list.filter(function (p) {
+        return p.character === v.charScope;
+      });
+    }
+  } else return [];
   var sorted = sortPrompts(filterPrompts(searchPrompts(list, searchQuery)));
 
   function _groupBySeriesVisual(items) {
@@ -3858,6 +4215,33 @@ function getVisiblePromptIds() {
         out.push(p);
         seen.add(p.id);
       }
+    });
+    return out;
+  }
+
+  function _groupBySubGroupVisual(items, g) {
+    if (!isSubGroupEnabled(g) || getSubGroups(g).length === 0) {
+      return _groupBySeriesVisual(items);
+    }
+    var buckets = {};
+    var noSub = [];
+    items.forEach(function (p) {
+      if (p.subGroupId && getSubGroup(g.id, p.subGroupId)) {
+        if (!buckets[p.subGroupId]) buckets[p.subGroupId] = [];
+        buckets[p.subGroupId].push(p);
+      } else {
+        noSub.push(p);
+      }
+    });
+    var out = [];
+    getSubGroups(g).forEach(function (sg) {
+      if (!buckets[sg.id]) return;
+      _groupBySeriesVisual(buckets[sg.id]).forEach(function (p) {
+        out.push(p);
+      });
+    });
+    _groupBySeriesVisual(noSub).forEach(function (p) {
+      out.push(p);
     });
     return out;
   }
@@ -3901,18 +4285,20 @@ function getVisiblePromptIds() {
         if (orderedKeys.indexOf(k) < 0) orderedKeys.push(k);
       });
       var visual = [];
-      _groupBySeriesVisual(general).forEach(function (p) {
+      _groupBySubGroupVisual(general, g).forEach(function (p) {
         visual.push(p);
       });
       orderedKeys.forEach(function (k) {
-        _groupBySeriesVisual(byChar[k] || []).forEach(function (p) {
+        _groupBySubGroupVisual(byChar[k] || [], g).forEach(function (p) {
           visual.push(p);
         });
       });
       ordered = visual;
     } else {
-      ordered = _groupBySeriesVisual(sorted);
+      ordered = _groupBySubGroupVisual(sorted, g);
     }
+  } else if (v.name === "subgroup" && !searchQuery) {
+    ordered = _groupBySeriesVisual(sorted);
   } else if (v.name === "character" && !searchQuery) {
     ordered = _groupBySeriesVisual(sorted);
   } else if (
@@ -3921,7 +4307,7 @@ function getVisiblePromptIds() {
     filterState.groupId !== "_ungrouped" &&
     !searchQuery
   ) {
-    ordered = _groupBySeriesVisual(sorted);
+    ordered = _groupBySubGroupVisual(sorted, getGroup(filterState.groupId));
   }
 
   var result = ordered.map(function (p) {
@@ -4456,10 +4842,11 @@ function buildExportPayload(
     : [];
   const finalPrompts = exportPrompts.map((p) => {
     const cp = { ...p };
+    if (!includeGroups) cp.subGroupId = null;
     if (!includeHistory) delete cp.history;
+    cp.usageByCharacter = {};
     if (!includeCharacter) {
       cp.character = "";
-      cp.usageByCharacter = {};
     } else if (cp.character) {
       cp.character_name = getCharDisplayName(cp.character);
     }
@@ -4497,6 +4884,10 @@ function buildExportPayload(
             ? cg.charDisplayOrder.filter(function (k) {
                 return matchedKeys.indexOf(k) >= 0;
               })
+            : [],
+          subGroupEnabled: cg.subGroupEnabled === true,
+          subGroups: Array.isArray(cg.subGroups)
+            ? JSON.parse(JSON.stringify(cg.subGroups))
             : [],
           multiPrefixEnabled: cg.multiPrefixEnabled === true,
           prefixTemplates: Array.isArray(cg.prefixTemplates)
@@ -4655,6 +5046,10 @@ function executeImport(
   var _importNameMap = _buildLocalNameIndex();
   var importBdDateConflicts = [];
   var importBdMsgConflicts = [];
+  var sgidMap = {};
+  function _sgKey(gid, sgid) {
+    return (gid || "") + "|" + (sgid || "");
+  }
   ip.forEach(function (p) {
     _rebindPromptChar(p, _importNameMap);
   });
@@ -4694,6 +5089,10 @@ function executeImport(
             if (oi >= 0) other.charKeys.splice(oi, 1);
           });
           if (existing.charKeys.indexOf(k) < 0) existing.charKeys.push(k);
+        });
+        var _cgSgMap = mergeSubGroupsByName(existing, icg);
+        Object.keys(_cgSgMap).forEach(function (k) {
+          sgidMap[_sgKey(icg.id, k)] = _cgSgMap[k];
         });
         if (!existing.stagePrefix && icg.stagePrefix)
           existing.stagePrefix = icg.stagePrefix;
@@ -4781,49 +5180,59 @@ function executeImport(
     });
     const replaceTagIdMap = {};
     if (useTags && itags.length) {
-      var _impTagNames = new Set(
-        itags.map(function (t) {
-          return normalizeTagName(t.name);
-        }),
-      );
-      var _removedTagIds = new Set();
-      data.settings.definedTags.forEach(function (t) {
-        if (_impTagNames.has(normalizeTagName(t.name)))
-          _removedTagIds.add(t.id);
-      });
-      data.settings.definedTags = data.settings.definedTags.filter(
-        function (t) {
-          return !_impTagNames.has(normalizeTagName(t.name));
-        },
-      );
-      if (_removedTagIds.size > 0) {
-        data.prompts.forEach(function (p) {
-          if (Array.isArray(p.tags)) {
-            p.tags = p.tags.filter(function (tid) {
-              return !_removedTagIds.has(tid);
-            });
-          }
-        });
-      }
+      /* 原先的做法是「删掉同名本地标签 → 从剧场上摘掉它的引用 → 再把导入标签加回来」，
+         但摘引用那一步是对 data.prompts 全表执行的，不受「范围内」约束：本地其他分组里
+         引用同名标签的剧场会静默丢掉标签，而标签定义与颜色看着毫发无损，用户根本无从
+         定位。改成只建 id 映射 + 就地更新同名标签的属性，本地的引用一律不动。 */
       itags.forEach(function (t) {
-        var nt = Object.assign({}, t, { id: t.id || uid() });
-        data.settings.definedTags.push(nt);
-        replaceTagIdMap[t.id] = nt.id;
+        var _localSame = data.settings.definedTags.find(function (lt) {
+          return normalizeTagName(lt.name) === normalizeTagName(t.name);
+        });
+        if (_localSame) {
+          // 按字段赋值而非 Object.assign：导入文件是用户提供的任意 JSON，
+          // 整体合并会把未知字段一起带进本地标签数据里
+          _localSame.name = t.name;
+          if (t.color) _localSame.color = t.color;
+          replaceTagIdMap[t.id] = _localSame.id;
+        } else {
+          var nt = Object.assign({}, t, { id: t.id || uid() });
+          data.settings.definedTags.push(nt);
+          replaceTagIdMap[t.id] = nt.id;
+        }
       });
     }
     var replaceGidMap = {};
     var replacedLocalGids = new Set();
     if (useGroups && ig.length > 0) {
       ig.forEach(function (impG) {
-        var ex = data.groups.find(function (g) {
-          return g.name === impG.name;
-        });
+        /* 与 merge 分支一致：转换台推来的分组带 sourceId，优先按它精确命中，
+           否则本地有同名分组时会落进靠前的那一个。sourceId 只是传输期的线索，
+           不写进本地数据。 */
+        var ex = impG.sourceId
+          ? data.groups.find(function (g) {
+              return g.id === impG.sourceId;
+            })
+          : null;
+        if (!ex) {
+          ex = data.groups.find(function (g) {
+            return g.name === impG.name;
+          });
+        }
+        var _impSubs = Array.isArray(impG.subGroups)
+          ? JSON.parse(JSON.stringify(impG.subGroups))
+          : [];
         if (ex) {
           replacedLocalGids.add(ex.id);
           Object.assign(ex, impG, { id: ex.id });
+          delete ex.sourceId;
+          ex.subGroups = _impSubs;
+          ex.subGroupEnabled = _impSubs.length > 0;
           replaceGidMap[impG.id] = ex.id;
         } else {
           var newG = Object.assign({}, impG, { id: uid() });
+          delete newG.sourceId;
+          newG.subGroups = _impSubs;
+          newG.subGroupEnabled = _impSubs.length > 0;
           data.groups.push(newG);
           replaceGidMap[impG.id] = newG.id;
         }
@@ -4870,8 +5279,10 @@ function executeImport(
       np.fingerprint = contentFingerprint(np);
       if (useGroups) {
         np.groupId = replaceGidMap[p.groupId] || null;
+        np.subGroupId = np.groupId ? p.subGroupId || null : null;
       } else {
         np.groupId = targetGroupId || null;
+        np.subGroupId = null;
       }
       data.prompts.push(np);
     });
@@ -4895,12 +5306,30 @@ function executeImport(
     const gidMap = {};
     if (useGroups) {
       ig.forEach((g) => {
-        const ex = data.groups.find((eg) => eg.name === g.name);
-        if (ex) gidMap[g.id] = ex.id;
-        else {
+        /* 转换台推来的分组带 sourceId（用户在转换台里选中的那个本地分组的真实
+           id）。只按名字匹配的话，本地存在两个同名分组时会落进靠前的那一个。 */
+        let ex = g.sourceId
+          ? data.groups.find((eg) => eg.id === g.sourceId)
+          : null;
+        if (!ex) ex = data.groups.find((eg) => eg.name === g.name);
+        if (ex) {
+          gidMap[g.id] = ex.id;
+          var _m = mergeSubGroupsByName(ex, g);
+          Object.keys(_m).forEach(function (k) {
+            sgidMap[_sgKey(g.id, k)] = _m[k];
+          });
+        } else {
           const ng = { ...g, id: uid() };
+          delete ng.sourceId;
+          ng.subGroups = Array.isArray(g.subGroups)
+            ? JSON.parse(JSON.stringify(g.subGroups))
+            : [];
+          ng.subGroupEnabled = ng.subGroups.length > 0;
           data.groups.push(ng);
           gidMap[g.id] = ng.id;
+          ng.subGroups.forEach(function (sg) {
+            sgidMap[_sgKey(g.id, sg.id)] = sg.id;
+          });
         }
       });
     }
@@ -4938,8 +5367,21 @@ function executeImport(
           p.series !== undefined ? p.series : existingBySource.series;
         existingBySource.fingerprint = fp;
         existingBySource.updatedAt = Date.now();
-        if (useGroups && p.groupId)
+        if (useGroups && p.groupId) {
           existingBySource.groupId = gidMap[p.groupId] || p.groupId;
+          var _impGSg = (ig || []).find(function (x) {
+            return x && x.id === p.groupId;
+          });
+          if (
+            _impGSg &&
+            Array.isArray(_impGSg.subGroups) &&
+            _impGSg.subGroups.length > 0
+          ) {
+            // 远端明确给出归类才覆盖；远端该条没归类时保留本地归类
+            var _mappedSg = sgidMap[_sgKey(p.groupId, p.subGroupId)];
+            if (_mappedSg) existingBySource.subGroupId = _mappedSg;
+          }
+        }
         if (useTags && p.tags)
           existingBySource.tags = p.tags.map((tid) => tagIdMap[tid] || tid);
         updatedCount++;
@@ -4965,6 +5407,9 @@ function executeImport(
       np.groupId = useGroups
         ? gidMap[p.groupId] || p.groupId || null
         : targetGroupId || null;
+      np.subGroupId = useGroups
+        ? sgidMap[_sgKey(p.groupId, p.subGroupId)] || null
+        : null;
       np.tags = useTags
         ? (p.tags || []).map((tid) => tagIdMap[tid] || tid)
         : [];
@@ -4982,6 +5427,11 @@ function executeImport(
     if (useGroups) {
       ig.forEach((g) => {
         const ng = { ...g, id: uid() };
+        delete ng.sourceId;
+        ng.subGroups = Array.isArray(g.subGroups)
+          ? JSON.parse(JSON.stringify(g.subGroups))
+          : [];
+        ng.subGroupEnabled = ng.subGroups.length > 0;
         data.groups.push(ng);
         gidMap[g.id] = ng.id;
       });
@@ -5016,6 +5466,7 @@ function executeImport(
       np.groupId = useGroups
         ? gidMap[p.groupId] || null
         : targetGroupId || null;
+      np.subGroupId = useGroups && np.groupId ? p.subGroupId || null : null;
       np.tags = useTags
         ? (p.tags || []).map((tid) => tagIdMap[tid] || tid)
         : [];
@@ -5161,6 +5612,7 @@ function executeImport(
     });
   }
   dedupePromptTags();
+  cleanOrphanSubGroupIds();
   _invalidateCharGroupCache();
   saveData();
   toast("success", importMsg);
@@ -5219,6 +5671,16 @@ function exitFocusMode() {
   const el = $panel[0];
   $panel.removeClass("ms-focus-mode");
   el.removeAttribute("data-ms-kb");
+  /* 键盘适配在专注/全屏模式下给面板打过 width/height/zoom 的 !important 内联样式，
+     而负责清理它们的 clearKeyboardPatch 被 data-ms-kb 守卫拦着——标记在上一行刚被
+     抹掉，它就永远不会再执行了。这里显式清一遍：否则手机上退出专注模式（尤其键盘
+     还开着时）面板会永久卡在当次的可视高度上，max-height 抢不过 height !important，
+     关掉面板重开也救不回来，只能刷新页面。 */
+  el.style.removeProperty("width");
+  el.style.removeProperty("max-width");
+  el.style.removeProperty("height");
+  el.style.removeProperty("max-height");
+  el.style.removeProperty("zoom");
   el.style.removeProperty("border-radius");
   applyUICustomization();
   const saved = $panel.data("ms-focus-saved-pos");
@@ -5289,6 +5751,16 @@ function isInRandomPool(p) {
     p.groupId && getGroup(p.groupId) ? p.groupId : "_ungrouped";
   if (ri.excludedGroupIds && ri.excludedGroupIds.indexOf(effectiveGid) >= 0)
     return false;
+  if (ri.excludedSubGroups && ri.excludedSubGroups.length > 0) {
+    var _pSgKey =
+      p.subGroupId && getSubGroup(effectiveGid, p.subGroupId)
+        ? p.subGroupId
+        : SUBGROUP_NONE;
+    var _sgExcluded = ri.excludedSubGroups.some(function (x) {
+      return x && x.groupId === effectiveGid && x.subGroupId === _pSgKey;
+    });
+    if (_sgExcluded) return false;
+  }
   if (p.character) {
     var charG = getCharGroupOfChar(p.character);
     if (
@@ -5726,6 +6198,88 @@ function _loadMorePagedBlocks($body) {
   }
 }
 
+function buildTransferSnapshot() {
+  var gCounts = {};
+  var tCounts = {};
+  var sMap = {};
+  var sOrder = [];
+  data.prompts.forEach(function (p) {
+    var gid = p.groupId && getGroup(p.groupId) ? p.groupId : "_ungrouped";
+    gCounts[gid] = (gCounts[gid] || 0) + 1;
+    (p.tags || []).forEach(function (tid) {
+      if (getTag(tid)) tCounts[tid] = (tCounts[tid] || 0) + 1;
+    });
+    var sn = String(p.series || "").trim();
+    if (!sn) return;
+    var skey = gid + "\u0000" + sn;
+    if (!sMap[skey]) {
+      sMap[skey] = { name: sn, groupId: gid, count: 0 };
+      sOrder.push(skey);
+    }
+    sMap[skey].count++;
+  });
+  /* 指纹表只用来在转换台上标「已有」，算炸了也不该把分组标签快照一起拖没 */
+  var stageIndex = null;
+  try {
+    stageIndex = _tsBuildStageDupIndex();
+  } catch (e) {
+    stageIndex = null;
+  }
+  return {
+    _msSnapshot: true,
+    snapshotVersion: 1,
+    stageIndex: stageIndex,
+    scriptVersion: SCRIPT_VERSION,
+    exportedAt: new Date().toISOString(),
+    groups: data.groups.map(function (g) {
+      return {
+        id: g.id,
+        name: g.name,
+        color: g.color || "",
+        note: g.note || "",
+        isIP: isIPGroup(g),
+        promptCount: gCounts[g.id] || 0,
+        subGroups: getSubGroups(g).map(function (sg) {
+          return { id: sg.id, name: sg.name, color: sg.color || "" };
+        }),
+      };
+    }),
+    ungroupedCount: gCounts["_ungrouped"] || 0,
+    series: sOrder
+      .slice()
+      .sort(function (a, b) {
+        var x = sMap[a];
+        var y = sMap[b];
+        if (y.count !== x.count) return y.count - x.count;
+        return x.name.localeCompare(y.name, "zh-CN");
+      })
+      .map(function (k) {
+        return {
+          name: sMap[k].name,
+          groupId: sMap[k].groupId,
+          count: sMap[k].count,
+        };
+      }),
+    tagFilterExactMatch: data.settings.tagFilterExactMatch === true,
+    tags: (data.settings.definedTags || []).map(function (t) {
+      return {
+        id: t.id,
+        name: t.name,
+        color: t.color || "",
+        useCount: tCounts[t.id] || 0,
+      };
+    }),
+    tagMappings: (data.settings.tagMappings || []).map(function (m) {
+      return {
+        id: m.id,
+        name: m.name,
+        tagIds: (m.tagIds || []).slice(),
+        primaryTagId: m.primaryTagId || null,
+      };
+    }),
+  };
+}
+
   function currentView() {
     return viewStack[viewStack.length - 1];
   }
@@ -5808,6 +6362,7 @@ function _loadMorePagedBlocks($body) {
       excludeTags: [],
       tagSelectMode: "include",
       groupId: null,
+      subGroupId: null,
       onlyCurrentChar: false,
     };
     shiftKeyActive = false;
@@ -5872,6 +6427,7 @@ function _loadMorePagedBlocks($body) {
       excludeTags: [],
       tagSelectMode: "include",
       groupId: null,
+      subGroupId: null,
       onlyCurrentChar: false,
     };
     shiftKeyActive = false;
@@ -5963,6 +6519,9 @@ function getCSS() {
 @keyframes ms-flash-highlight{0%{background:rgba(var(--ms-accent-rgb),0.18);}100%{background:transparent;}}
 .ms-card.selected{background:rgba(var(--ms-accent-rgb),0.1);}
 .ms-card-check{width:18px;height:18px;border:2px solid var(--SmartThemeBorderColor,#555);border-radius:4px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:transparent;transition:all 0.15s;}
+#${PANEL_ID} .ms-card-check>i,#${PANEL_ID} .ms-gitem-check>i,#${PANEL_ID} .ms-series-check>i{color:inherit!important;font-size:10px!important;}
+#${PANEL_ID} .ms-nav-icon>i,#${PANEL_ID} .ms-sg-entry-icon>i,#${PANEL_ID} .ms-adv-entry-icon>i,#${PANEL_ID} .ms-modal-icon>i,#${PANEL_ID} .ms-modal-list-icon>i,
+#${PANEL_ID} .ms-set-ico>i,#${PANEL_ID} .ms-lost-icon>i{color:inherit!important;font-size:inherit!important;}
 .ms-card.selected .ms-card-check{background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;}
 .ms-card-star{flex-shrink:0;width:20px;text-align:center;cursor:pointer;}
 .ms-card-star .fa-star{font-size:12px;color:var(--SmartThemeBorderColor,#3a3a3a);opacity:0.25;transition:all 0.15s;}
@@ -5977,7 +6536,6 @@ function getCSS() {
 .ms-card-quick{display:flex;gap:2px;flex-shrink:0;}
 .ms-card-qbtn{width:24px;height:24px;border:none;background:transparent;color:var(--SmartThemeQuoteColor,#666);cursor:pointer;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:10px;transition:background 0.12s,color 0.12s;padding:0;}
 .ms-card-qbtn:hover{background:rgba(255,255,255,0.08);color:var(--SmartThemeBodyColor,#ccc);}
-.ms-card-tags-row{width:100%;display:flex;justify-content:flex-end;gap:4px;flex-wrap:wrap;padding-left:38px;margin-top:-2px;}
 .ms-card-tags-row{width:100%;display:flex;justify-content:flex-end;align-items:center;gap:4px;flex-wrap:wrap;padding-left:38px;margin-top:-2px;}
 .ms-card-ts{font-size:9px;color:var(--SmartThemeQuoteColor,#666);opacity:0.7;display:inline-flex;align-items:center;gap:2px;margin-left:auto;white-space:nowrap;}
 .ms-card-ts i{font-size:8px;}
@@ -6092,7 +6650,8 @@ function getCSS() {
 .ms-btn.primary:hover{filter:brightness(1.15);}
 .ms-btn.danger{color:var(--ms-danger);border-color:var(--ms-danger);}
 .ms-btn.danger:hover{background:rgba(var(--ms-danger-rgb),0.12);}
-.ms-tag-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center;flex-shrink:0;max-height:80px;overflow-y:auto;}
+.ms-tag-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center;flex-shrink:0;}
+#${PANEL_ID} #ms-edit-tags{max-height:120px;overflow-y:auto;}
 .ms-tag-toggle{display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:11px;cursor:pointer;border:1px solid var(--SmartThemeBorderColor,#444);color:var(--SmartThemeQuoteColor,#888);background:transparent;transition:all 0.15s;user-select:none;}
 .ms-tag-toggle:hover{border-color:var(--SmartThemeQuoteColor,#666);}
 .ms-tag-toggle.active{color:#fff;border-color:transparent;}
@@ -6101,7 +6660,7 @@ function getCSS() {
 .ms-tag-toggle .ms-tag-x{margin-left:2px;font-size:9px;opacity:0.6;}
 .ms-add-tag-btn{padding:3px 8px;border-radius:12px;font-size:11px;cursor:pointer;border:1px dashed var(--SmartThemeBorderColor,#444);color:var(--SmartThemeQuoteColor,#666);background:transparent;}
 .ms-add-tag-btn:hover{border-color:var(--SmartThemeQuoteColor,#888);color:var(--SmartThemeBodyColor,#aaa);}
-.ms-filter-panel{padding:8px 12px;border-bottom:1px solid var(--SmartThemeBorderColor,#333);display:none;flex-direction:column;gap:6px;flex-shrink:0;max-height:30vh;overflow-y:auto;}
+.ms-filter-panel{padding:8px 12px;border-bottom:1px solid var(--SmartThemeBorderColor,#333);display:none;flex-direction:column;gap:6px;flex-shrink:0;max-height:42vh;overflow-y:auto;}
 .ms-filter-panel.open{display:flex;}
 .ms-filter-section{font-size:10px;color:var(--SmartThemeQuoteColor,#666);font-weight:600;text-transform:uppercase;margin-top:2px;}
 .ms-gitem{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.03);}
@@ -6181,6 +6740,7 @@ function getCSS() {
 .ms-reorder-item:hover{background:rgba(255,255,255,0.03);}
 .ms-reorder-item.ms-drag-over{box-shadow:inset 0 2px 0 0 var(--ms-accent);}
 .ms-reorder-section-header.ms-drag-over{box-shadow:inset 0 0 0 2px var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.12)!important;}
+.ms-sub-section-grip:active{cursor:grabbing!important;}
 .ms-char-section-grip:active{cursor:grabbing!important;}
 .ms-reorder-grip{cursor:grab;color:var(--SmartThemeQuoteColor,#555);font-size:12px;flex-shrink:0;padding:4px;touch-action:none;}
 .ms-reorder-grip:active{cursor:grabbing;}
@@ -6338,7 +6898,9 @@ function getCSS() {
 .ms-modal-overlay.visible .ms-modal{transform:scale(1);}
 #${PANEL_ID} .ms-modal,
 #${PANEL_ID} .ms-dropdown,
-#${PANEL_ID} #ms-char-search-popup{
+#${PANEL_ID} #ms-char-search-popup,
+#${PANEL_ID} #ms-gp-popup,
+#${PANEL_ID} #ms-sp-popup{
   background-color:var(--ms-popup-bg,var(--SmartThemeBlurTintColor,#2a2a3a))!important;
   background-image:var(--ms-panel-bg-image,none)!important;
   background-size:var(--ms-panel-bg-size,cover)!important;
@@ -6429,6 +6991,123 @@ function getCSS() {
 #ms-float-ball .ms-ball-badge.visible{display:block;}
 #ms-float-ball.ms-ball-pinned .ms-ball-badge{background:var(--SmartThemeEmColor,#7ea8a0);}
 #ms-float-ball.ms-ball-random .ms-ball-badge{background:var(--SmartThemeQuoteColor,#888);}
+.ms-sg-item{padding:6px 0 10px;border-bottom:1px dashed rgba(255,255,255,0.06);}
+.ms-sg-item:last-child{border-bottom:none;}
+.ms-sg-row{display:flex;align-items:center;gap:6px;margin-bottom:5px;}
+.ms-sg-idx{font-size:10px;color:var(--ms-accent);font-weight:600;flex-shrink:0;min-width:24px;text-align:center;}
+.ms-sg-dot{width:16px;height:16px;border-radius:5px;flex-shrink:0;cursor:pointer;border:2px solid transparent;box-shadow:0 1px 2px rgba(0,0,0,0.25);}
+.ms-sg-dot:hover{border-color:rgba(255,255,255,0.35);}
+.ms-sg-input{appearance:none!important;-webkit-appearance:none!important;flex:1;min-width:0;width:100%;box-sizing:border-box;padding:3px 8px;background-color:var(--ms-themed-input-bg,var(--SmartThemeBlurTintColor,#222))!important;background-image:none!important;border:var(--ms-themed-input-border,1px solid var(--SmartThemeBorderColor,#444))!important;border-radius:4px!important;box-shadow:none!important;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc))!important;font-size:12px;font-family:inherit;outline:none;}
+.ms-sg-icon-btn{cursor:pointer;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;opacity:0.65;transition:opacity 0.15s;}
+.ms-sg-icon-btn:hover{opacity:1;}
+.ms-sg-note{margin:0 0 6px 30px;}
+.ms-sg-color-wrap .ms-color-inline{padding:2px 0 6px 30px;border-bottom:none;background:transparent;}
+.ms-sg-nosub{padding:8px 0 2px 4px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);display:flex;align-items:center;gap:6px;}
+.ms-ga-row:hover{background:rgba(255,255,255,0.05)!important;}
+.ms-sg-entry{display:flex;align-items:center;padding:8px 14px 8px 20px;cursor:pointer;gap:8px;transition:background 0.12s;border-bottom:1px solid rgba(255,255,255,0.03);}
+.ms-sg-entry:hover{background:rgba(255,255,255,0.04);}
+.ms-sg-entry-icon{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;}
+.ms-sg-entry-info{flex:1;min-width:0;}
+.ms-sg-entry-name{font-size:13px;font-weight:500;color:var(--SmartThemeBodyColor,#ddd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ms-sg-entry-note{font-size:10px;color:var(--SmartThemeQuoteColor,#555);margin-top:2px;font-style:italic;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ms-sg-entry-cnt{font-size:10px;color:var(--SmartThemeQuoteColor,#777);flex-shrink:0;display:inline-flex;align-items:center;gap:5px;}
+.ms-adv-entry{display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer;transition:background 0.12s;border-bottom:1px solid rgba(255,255,255,0.03);}
+.ms-adv-entry:hover{background:rgba(255,255,255,0.04);}
+.ms-adv-entry-icon{width:30px;height:30px;border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;background:rgba(var(--ms-accent-rgb),0.12);color:var(--ms-accent);}
+.ms-adv-entry-info{flex:1;min-width:0;}
+.ms-adv-entry-title{font-size:13px;font-weight:500;color:var(--SmartThemeBodyColor,#ddd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ms-adv-entry-desc{font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ms-adv-entry-chevron{color:var(--SmartThemeQuoteColor,#555);font-size:11px;flex-shrink:0;}
+.ms-adv-switch-wrap{flex-shrink:0;display:flex;align-items:center;}
+.ms-set-head{padding:16px 14px 5px;}
+.ms-set-head-title{font-size:11px;font-weight:600;color:var(--ms-accent);letter-spacing:0.06em;text-transform:none;}
+.ms-set-head-desc{font-size:10.5px;color:var(--SmartThemeQuoteColor,#888);line-height:1.6;margin-top:3px;overflow-wrap:break-word;}
+.ms-set-row{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;transition:background 0.12s;}
+.ms-set-row:hover{background:rgba(255,255,255,0.04);}
+.ms-set-row.static,.ms-set-row.static:hover{cursor:default;background:transparent;}
+.ms-set-ico{width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;background:rgba(var(--ms-accent-rgb),0.12);color:var(--ms-accent);}
+.ms-set-row.danger .ms-set-ico{background:rgba(var(--ms-danger-rgb),0.12);color:var(--ms-danger);}
+.ms-set-row.danger .ms-set-title{color:var(--ms-danger);}
+.ms-set-main{flex:1;min-width:0;}
+.ms-set-title{font-size:13px;color:var(--SmartThemeBodyColor,#ddd);line-height:1.45;overflow-wrap:break-word;}
+.ms-set-desc{font-size:10.5px;color:var(--SmartThemeQuoteColor,#888);line-height:1.55;margin-top:2px;overflow-wrap:break-word;}
+.ms-set-value{font-size:11px;color:var(--SmartThemeQuoteColor,#999);flex-shrink:0;max-width:42%;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ms-set-chev{font-size:11px;color:var(--SmartThemeQuoteColor,#555);flex-shrink:0;}
+.ms-set-field{padding:8px 14px 12px;}
+.ms-set-field .ms-form-row{margin:0;}
+.ms-set-note{padding:0 14px 12px;font-size:10.5px;color:var(--SmartThemeQuoteColor,#888);line-height:1.6;overflow-wrap:break-word;}
+.ms-set-seg{display:flex;gap:6px;padding:6px 14px 12px;flex-wrap:wrap;}
+.ms-set-segbtn{flex:1 1 120px;min-width:0;padding:8px 10px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:8px;background:transparent;color:var(--SmartThemeBodyColor,#bbb);font-size:12px;font-family:inherit;cursor:pointer;text-align:center;transition:background 0.15s,color 0.15s,border-color 0.15s;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ms-set-segbtn:hover{background:rgba(255,255,255,0.05);}
+.ms-set-segbtn.active{background:rgba(var(--ms-accent-rgb),0.14);border-color:var(--ms-accent);color:var(--ms-accent);}
+.ms-set-segbtn i{margin-right:4px;font-size:10px;}
+.ms-row-nowrap{flex-wrap:nowrap;}
+.ms-row-nowrap>.ms-field{min-width:0;}
+.ms-row-nowrap>.ms-field>select,.ms-row-nowrap>.ms-field>input{min-width:0;text-overflow:ellipsis;}
+#${PANEL_ID} input#ms-edit-group,#${PANEL_ID} input#ms-edit-series{display:none!important;}
+#${PANEL_ID} .ms-gp-trigger{display:flex!important;align-items:center;gap:7px;width:100%;min-width:0;height:33px;padding:0 9px;box-sizing:border-box;cursor:pointer;user-select:none;-webkit-tap-highlight-color:transparent;appearance:none!important;-webkit-appearance:none!important;background-color:var(--ms-themed-input-bg,var(--SmartThemeBlurTintColor,#222))!important;background-image:none!important;border:var(--ms-themed-input-border,1px solid var(--SmartThemeBorderColor,#444))!important;border-radius:var(--ms-themed-input-radius,8px)!important;box-shadow:var(--ms-themed-input-shadow,none)!important;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc))!important;font-size:13px;font-family:inherit;line-height:1.2;text-align:left;transition:border-color 0.15s;}
+#${PANEL_ID} .ms-gp-trigger:hover{border-color:var(--SmartThemeQuoteColor,#777)!important;}
+#${PANEL_ID} .ms-gp-trigger.open{border-color:var(--ms-accent)!important;}
+.ms-gp-trig-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;box-shadow:0 0 0 2px rgba(255,255,255,0.07);}
+.ms-gp-trig-dot.none{background:transparent;box-shadow:0 0 0 1.5px var(--SmartThemeQuoteColor,#777);}
+.ms-gp-trig-main{flex:1;min-width:0;display:flex;align-items:center;gap:5px;overflow:hidden;}
+.ms-gp-trig-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ms-gp-trig-sub{display:inline-flex;align-items:center;gap:3px;flex-shrink:1;min-width:0;max-width:52%;font-size:10.5px;padding:1px 6px;border-radius:9px;background:rgba(var(--ms-accent-rgb),0.15);color:var(--ms-accent);}
+.ms-gp-trig-sub>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ms-gp-trig-sub>i{font-size:9px;flex-shrink:0;}
+.ms-gp-trig-chev{flex-shrink:0;font-size:9px;opacity:0.5;transition:transform 0.18s,opacity 0.18s;}
+#${PANEL_ID} .ms-gp-trigger.open .ms-gp-trig-chev{transform:rotate(180deg);opacity:1;color:var(--ms-accent);}
+#ms-gp-popup,#ms-sp-popup{position:absolute;z-index:5006;width:296px;max-width:calc(100% - 16px);display:flex;flex-direction:column;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:10px;box-shadow:0 8px 26px rgba(0,0,0,0.45);overflow:hidden;opacity:0;transform:translateY(-4px);transition:opacity 0.16s ease,transform 0.16s ease;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);}
+#ms-gp-popup.visible,#ms-sp-popup.visible{opacity:1;transform:none;}
+.ms-gp-head{display:flex;align-items:center;gap:6px;padding:9px 10px 7px;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,0.06);}
+.ms-gp-head-t{font-size:12px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);display:flex;align-items:center;gap:5px;flex:1;min-width:0;}
+.ms-gp-head-t>i{color:var(--ms-accent);font-size:11px;}
+.ms-gp-head-n{font-size:10px;color:var(--SmartThemeQuoteColor,#888);flex-shrink:0;}
+#${PANEL_ID} .ms-gp-x{width:20px;height:20px;flex-shrink:0;border:none!important;background:transparent!important;color:var(--SmartThemeQuoteColor,#888)!important;cursor:pointer;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;padding:0!important;box-shadow:none!important;}
+#${PANEL_ID} .ms-gp-x:hover{background:rgba(255,255,255,0.08)!important;color:var(--ms-danger)!important;}
+.ms-gp-searchwrap{padding:7px 8px 4px;flex-shrink:0;}
+#${PANEL_ID} input.ms-gp-search{appearance:none!important;-webkit-appearance:none!important;width:100%;height:29px;padding:0 9px;box-sizing:border-box;background-color:var(--ms-themed-input-bg,var(--SmartThemeBlurTintColor,#222))!important;background-image:none!important;border:var(--ms-themed-input-border,1px solid var(--SmartThemeBorderColor,#444))!important;border-radius:var(--ms-themed-input-radius,6px)!important;box-shadow:var(--ms-themed-input-shadow,none)!important;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc))!important;font-size:12px;font-family:inherit;outline:none;margin:0!important;}
+#${PANEL_ID} input.ms-gp-search:focus{border-color:var(--ms-accent)!important;}
+.ms-gp-list{overflow-y:auto;overflow-x:hidden;max-height:min(302px,42vh);padding:2px 6px 6px;scrollbar-width:thin;}
+.ms-gp-list::-webkit-scrollbar{width:4px;}
+.ms-gp-list::-webkit-scrollbar-thumb{background:var(--SmartThemeBorderColor,#444);border-radius:4px;}
+.ms-gp-row{display:flex;align-items:center;gap:8px;padding:6px 7px;border-radius:7px;cursor:pointer;border:1px solid transparent;transition:background 0.12s;}
+.ms-gp-row:hover{background:rgba(255,255,255,0.06);}
+.ms-gp-row.sel{background:rgba(var(--ms-accent-rgb),0.14);border-color:rgba(var(--ms-accent-rgb),0.32);}
+.ms-gp-ico{width:26px;height:26px;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;background:rgba(255,255,255,0.06);color:var(--SmartThemeQuoteColor,#999);}
+.ms-gp-info{flex:1;min-width:0;}
+.ms-gp-name{font-size:12.5px;color:var(--SmartThemeBodyColor,#ddd);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ms-gp-row.sel .ms-gp-name{color:var(--ms-accent);font-weight:600;}
+.ms-gp-meta{display:flex;align-items:center;gap:6px;margin-top:2px;font-size:9.5px;color:var(--SmartThemeQuoteColor,#888);white-space:nowrap;overflow:hidden;}
+.ms-gp-meta>span{display:inline-flex;align-items:center;gap:3px;flex-shrink:0;}
+.ms-gp-meta i{font-size:8.5px;opacity:0.8;}
+.ms-gp-meta .ms-gp-m-fold{color:var(--ms-accent);opacity:0.9;}
+.ms-gp-ipbadge{flex-shrink:0;font-size:9px;padding:0px 5px;border-radius:8px;background:rgba(var(--ms-accent-rgb),0.12);color:var(--ms-accent);}
+.ms-gp-check{flex-shrink:0;font-size:11px;color:var(--ms-accent);}
+#${PANEL_ID} .ms-gp-exp{width:24px;height:24px;flex-shrink:0;border:none!important;background:transparent!important;color:var(--SmartThemeQuoteColor,#888)!important;cursor:pointer;border-radius:5px;display:flex;align-items:center;justify-content:center;font-size:12px;padding:0!important;box-shadow:none!important;transition:transform 0.18s,background 0.12s,color 0.12s;}
+#${PANEL_ID} .ms-gp-exp:hover{background:rgba(255,255,255,0.09)!important;color:var(--ms-accent)!important;}
+#${PANEL_ID} .ms-gp-exp.open{transform:rotate(90deg);color:var(--ms-accent)!important;}
+.ms-gp-subs{display:flex;flex-direction:column;gap:2px;margin:2px 0 4px 17px;padding-left:9px;border-left:1px dashed rgba(var(--ms-accent-rgb),0.28);}
+.ms-gp-srow{display:flex;align-items:center;gap:6px;padding:5px 7px;border-radius:6px;cursor:pointer;border:1px solid transparent;transition:background 0.12s;}
+.ms-gp-srow:hover{background:rgba(255,255,255,0.055);}
+.ms-gp-srow.sel{background:rgba(var(--ms-accent-rgb),0.13);border-color:rgba(var(--ms-accent-rgb),0.3);}
+.ms-gp-srow>i.ms-gp-sico{font-size:10px;flex-shrink:0;color:var(--ms-accent);opacity:0.85;}
+.ms-gp-srow.none>i.ms-gp-sico{color:var(--SmartThemeQuoteColor,#888);}
+.ms-gp-sname{flex:1;min-width:0;font-size:11.5px;color:var(--SmartThemeBodyColor,#ccc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.ms-gp-srow.sel .ms-gp-sname{color:var(--ms-accent);font-weight:600;}
+.ms-gp-scnt{flex-shrink:0;font-size:9.5px;color:var(--SmartThemeQuoteColor,#888);}
+.ms-gp-sacts{display:flex;gap:1px;flex-shrink:0;}
+#${PANEL_ID} .ms-gp-sbtn{width:20px;height:20px;border:none!important;background:transparent!important;color:var(--SmartThemeQuoteColor,#888)!important;cursor:pointer;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:9px;padding:0!important;box-shadow:none!important;opacity:0.75;}
+#${PANEL_ID} .ms-gp-sbtn:hover{background:rgba(255,255,255,0.1)!important;color:var(--ms-accent)!important;opacity:1;}
+#${PANEL_ID} .ms-gp-sbtn.del:hover{color:var(--ms-danger)!important;}
+#${PANEL_ID} .ms-gp-addfold{display:flex;align-items:center;gap:5px;width:100%;padding:4px 7px;margin-top:1px;border:1px dashed rgba(var(--ms-accent-rgb),0.35)!important;background:transparent!important;color:var(--ms-accent)!important;border-radius:6px;cursor:pointer;font-size:10.5px;font-family:inherit;box-shadow:none!important;transition:background 0.12s;}
+#${PANEL_ID} .ms-gp-addfold:hover{background:rgba(var(--ms-accent-rgb),0.1)!important;}
+.ms-gp-empty{padding:18px 10px;text-align:center;font-size:11px;color:var(--SmartThemeQuoteColor,#777);}
+.ms-gp-empty i{display:block;font-size:18px;opacity:0.35;margin-bottom:6px;}
+.ms-gp-foot{padding:6px;flex-shrink:0;border-top:1px solid rgba(255,255,255,0.06);}
+#${PANEL_ID} .ms-gp-newgroup{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:30px;border:1px solid var(--ms-accent)!important;background:rgba(var(--ms-accent-rgb),0.12)!important;color:var(--ms-accent)!important;border-radius:7px;cursor:pointer;font-size:12px;font-family:inherit;box-shadow:none!important;transition:background 0.12s;}
+#${PANEL_ID} .ms-gp-newgroup:hover{background:rgba(var(--ms-accent-rgb),0.22)!important;}
+.ms-page-minh{min-height:52vh;}
 `;
 }
 
@@ -6459,6 +7138,11 @@ function renderView() {
   _clearPagedCtx();
   const $p = $("#" + PANEL_ID);
   if (!$p.length) return;
+  $p.find("#ms-gp-popup, #ms-sp-popup, #ms-char-search-popup").remove();
+  $p.off(
+    "pointerdown.ms-gp keydown.ms-gp pointerdown.ms-sp keydown.ms-sp pointerdown.ms-char-search-close",
+  );
+  $p.find("#ms-body").off("scroll.ms-gp scroll.ms-sp");
   $p.find("#ms-count").text(data.prompts.length + " 条");
   $p.find("#ms-filter-panel").removeClass("open").empty();
   $p.find("#ms-title-info").hide().removeClass("open").off("click.ms-note");
@@ -6470,6 +7154,7 @@ function renderView() {
     "lost-chars": renderLostChars,
     list: renderList,
     group: renderGroup,
+    subgroup: renderSubGroup,
     starred: renderStarred,
     recent: renderRecent,
     characters: renderCharacters,
@@ -6488,10 +7173,20 @@ function renderView() {
     "quick-phrases": renderQuickPhrases,
     "quick-phrase-edit": renderQuickPhraseEdit,
     settings: renderSettings,
+    "settings-inject": renderSettingsInject,
+    "settings-pools": renderSettingsPools,
+    "settings-content": renderSettingsContent,
+    "settings-appearance": renderSettingsAppearance,
+    "settings-data": renderSettingsData,
+    "settings-transfer": renderSettingsTransfer,
+    "settings-about": renderSettingsAbout,
     stats: renderStats,
     "reorder-groups": renderReorderGroups,
     "reorder-prompts": renderReorderPrompts,
     "reorder-tags": renderReorderTags,
+    "reorder-subgroups": renderReorderSubGroups,
+    "group-subgroups": renderGroupSubGroups,
+    "group-prefixes": renderGroupPrefixes,
     history: renderHistory,
     "history-diff": renderHistoryDiff,
     "history-list": renderHistoryList,
@@ -6522,12 +7217,7 @@ function renderView() {
       $p.find(".ms-series-arrow").css("transition", "");
     });
   }
-  if (
-    v._filterPanelOpen &&
-    (filterState.includeTags.length > 0 ||
-      filterState.excludeTags.length > 0 ||
-      filterState.groupId)
-  ) {
+  if (v._filterPanelOpen) {
     $p.find("#ms-filter-panel").html(buildFilterPanel()).addClass("open");
     bindFilterEvents($p);
   }
@@ -6565,13 +7255,14 @@ function refreshKeepingState() {
   var $p = $("#" + PANEL_ID);
   var v = currentView();
   var $body = $p.find("#ms-body");
-  if (v.name === "group" || v.name === "character") {
+  if (v.name === "group" || v.name === "character" || v.name === "subgroup") {
     var _openSeries = [];
     $body.find(".ms-series-body.open").each(function () {
       _openSeries.push(this.id);
     });
     v._expandedSeries = _openSeries;
     v._savedScrollTop = $body.scrollTop();
+    v._filterPanelOpen = $p.find("#ms-filter-panel").hasClass("open");
     renderView();
   } else {
     renderBodyOnly();
@@ -6617,7 +7308,11 @@ function renderBodyOnly() {
     } else {
       $p.find("#ms-footer").html(buildListFooter()).show();
     }
-  } else if (v.name === "group") {
+  } else if (
+    v.name === "group" ||
+    v.name === "subgroup" ||
+    v.name === "character"
+  ) {
     var $oldSearch = $p.find("#ms-search");
     var _searchWasFocused = $oldSearch.is(":focus");
     var _searchStart =
@@ -6626,6 +7321,8 @@ function renderBodyOnly() {
         : 0;
     var _searchEnd =
       _searchWasFocused && $oldSearch[0] ? $oldSearch[0].selectionEnd || 0 : 0;
+    v._filterPanelOpen = $p.find("#ms-filter-panel").hasClass("open");
+    v._savedScrollTop = 0;
     renderView();
     if (_searchWasFocused) {
       var $newSearch = $p.find("#ms-search");
@@ -6813,6 +7510,7 @@ function buildListBody() {
     });
     const charCnt = charSet.size;
     const seriesCnt = seriesSet.size;
+    const subGroupCnt = isSubGroupEnabled(g) ? getSubGroups(g).length : 0;
     const noteH = g.note ? `<div class="ms-nav-note">${esc(g.note)}</div>` : "";
     const selCnt = _selByGroup[g.id] || 0;
     const selBadge =
@@ -6837,6 +7535,12 @@ function buildListBody() {
       cntParts.push(
         '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-user" style="font-size:8px;opacity:0.7;"></i>' +
           charCnt +
+          "</span>",
+      );
+    if (subGroupCnt > 0)
+      cntParts.push(
+        '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-folder-open" style="font-size:8px;opacity:0.7;"></i>' +
+          subGroupCnt +
           "</span>",
       );
     if (seriesCnt > 0)
@@ -6873,6 +7577,132 @@ function buildListBody() {
   return html;
 }
 
+function buildSubGroupEntries(g, charScope) {
+  if (!isSubGroupEnabled(g)) return "";
+  var list = getSubGroupsInScope(g.id, charScope);
+  if (list.length === 0) return "";
+  var stageIds = data.settings.stageSelectedIds || [];
+  function _inScope(p) {
+    if (charScope === "_general") {
+      return !p.character;
+    }
+    if (charScope) return p.character === charScope;
+    return true;
+  }
+  var html = "";
+  list.forEach(function (it) {
+    var sg = it.subGroup;
+    if (!sg) return;
+    var sgid = sg.id;
+    var iconBg = sg.color + "22";
+    var iconColor = sg.color;
+    var iconCls = "fa-folder-open";
+    var name = sg.name;
+    var scopePrompts = getPromptsInSubGroup(g.id, sgid).filter(_inScope);
+    var hasStage =
+      stageIds.length > 0 &&
+      scopePrompts.some(function (p) {
+        return stageIds.indexOf(p.id) >= 0;
+      });
+    var seriesSet = new Set();
+    scopePrompts.forEach(function (p) {
+      var sn = String(p.series || "").trim();
+      if (sn) seriesSet.add(sn);
+    });
+    var cntParts = [];
+    if (seriesSet.size > 0) {
+      cntParts.push(
+        '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-layer-group" style="font-size:8px;opacity:0.7;"></i>' +
+          seriesSet.size +
+          "</span>",
+      );
+    }
+    if (it.count === 0) {
+      cntParts.push(
+        '<span style="display:inline-flex;align-items:center;gap:2px;opacity:0.45;"><i class="fa-solid fa-masks-theater" style="font-size:8px;"></i>0</span>',
+      );
+    } else {
+      cntParts.push(
+        '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-masks-theater" style="font-size:8px;opacity:0.7;"></i>' +
+          it.count +
+          "</span>",
+      );
+    }
+    var checkH = "";
+    if (selectMode) {
+      var scopeIds = scopePrompts.map(function (p) {
+        return p.id;
+      });
+      var allSel =
+        scopeIds.length > 0 &&
+        scopeIds.every(function (id) {
+          return selectedIds.has(id);
+        });
+      var someSel =
+        !allSel &&
+        scopeIds.some(function (id) {
+          return selectedIds.has(id);
+        });
+      var scCls = allSel ? " ms-sc-all" : someSel ? " ms-sc-some" : "";
+      checkH =
+        '<div class="ms-series-check' +
+        scCls +
+        "\" data-series-ids='" +
+        JSON.stringify(scopeIds) +
+        "' data-series-key=\"" +
+        escAttr(g.id + ":" + sgid + ":" + (charScope || "")) +
+        '"><i class="fa-solid ' +
+        (someSel && !allSel ? "fa-minus" : "fa-check") +
+        '"></i></div>';
+    }
+    html +=
+      '<div class="ms-sg-entry' +
+      (hasStage ? " ms-stage-injecting" : "") +
+      (it.count === 0 ? '" style="opacity:0.6;' : "") +
+      '" data-sg-nav="' +
+      escAttr(sgid) +
+      '" data-sg-scope="' +
+      escAttr(charScope || "") +
+      '">' +
+      checkH +
+      '<div class="ms-sg-entry-icon" style="background:' +
+      iconBg +
+      ";color:" +
+      iconColor +
+      ';"><i class="fa-solid ' +
+      iconCls +
+      '"></i></div>' +
+      '<div class="ms-sg-entry-info"><div class="ms-sg-entry-name">' +
+      esc(name) +
+      "</div>" +
+      (sg && sg.note
+        ? '<div class="ms-sg-entry-note">' + esc(sg.note) + "</div>"
+        : "") +
+      "</div>" +
+      '<span class="ms-sg-entry-cnt">' +
+      cntParts.join('<span style="opacity:0.35;">·</span>') +
+      "</span>" +
+      '<i class="fa-solid fa-angle-right" style="color:var(--SmartThemeQuoteColor,#555);font-size:10px;flex-shrink:0;"></i>' +
+      "</div>";
+  });
+  return html;
+}
+function buildSubGroupSection(g, charScope) {
+  var html = buildSubGroupEntries(g, charScope);
+  var noneList = getPromptsInSubGroup(g.id, SUBGROUP_NONE);
+  if (charScope === "_general") {
+    noneList = noneList.filter(function (p) {
+      return !p.character;
+    });
+  } else if (charScope) {
+    noneList = noneList.filter(function (p) {
+      return p.character === charScope;
+    });
+  }
+  if (noneList.length === 0) return html;
+  html += renderGroupBodyWithSeries(sortPrompts(noneList));
+  return html;
+}
 function buildListFooter() {
   var subDot =
     data.settings.subUpdatesPending > 0
@@ -6939,20 +7769,35 @@ function buildToolbar(opts) {
 function buildFilterPanel() {
   let html = "";
   const v = currentView();
-  const inGroupView = v.name === "group";
+  const inGroupView = v.name === "group" || v.name === "subgroup";
   const inCharView = v.name === "character";
   const hasAnyFilter =
     filterState.includeTags.length > 0 ||
     filterState.excludeTags.length > 0 ||
-    filterState.groupId;
+    filterState.groupId ||
+    filterState.subGroupId;
   var _visibleTagIds = null;
-  if (v.name === "group" || v.name === "character") {
+  if (v.name === "group" || v.name === "character" || v.name === "subgroup") {
     var _scopeList;
     if (v.name === "group") {
       _scopeList =
         v.groupId === "_ungrouped"
           ? getUngroupedPrompts()
           : getPromptsInGroup(v.groupId);
+    } else if (v.name === "subgroup") {
+      _scopeList = getPromptsInSubGroup(
+        v.groupId,
+        v.subGroupId || SUBGROUP_NONE,
+      );
+      if (v.charScope === "_general") {
+        _scopeList = _scopeList.filter(function (p) {
+          return !p.character;
+        });
+      } else if (v.charScope) {
+        _scopeList = _scopeList.filter(function (p) {
+          return p.character === v.charScope;
+        });
+      }
     } else {
       _scopeList = getPromptsByCharacter(v.charKey || v.charName);
     }
@@ -7031,6 +7876,66 @@ function buildFilterPanel() {
     }
     html += `</div>`;
   }
+  var _sgFilterGid = null;
+  if (v.name === "group" && v.groupId && v.groupId !== "_ungrouped") {
+    _sgFilterGid = v.groupId;
+  } else if (
+    v.name === "list" &&
+    filterState.groupId &&
+    filterState.groupId !== "_ungrouped"
+  ) {
+    _sgFilterGid = filterState.groupId;
+  }
+  if (_sgFilterGid) {
+    var _sgFilterG = getGroup(_sgFilterGid);
+    if (isSubGroupEnabled(_sgFilterG) && getSubGroups(_sgFilterG).length > 0) {
+      var _sgCounts = {};
+      var _sgNoneCnt = 0;
+      getPromptsInGroup(_sgFilterGid).forEach(function (p) {
+        if (p.subGroupId && getSubGroup(_sgFilterGid, p.subGroupId))
+          _sgCounts[p.subGroupId] = (_sgCounts[p.subGroupId] || 0) + 1;
+        else _sgNoneCnt++;
+      });
+      html +=
+        '<div class="ms-filter-section">文件夹筛选</div><div class="ms-tag-row">';
+      var _sgAll = !filterState.subGroupId;
+      html +=
+        '<span class="ms-tag-toggle' +
+        (_sgAll ? " active" : "") +
+        '" data-filter-subgroup="" style="' +
+        (_sgAll ? "background:#666;" : "") +
+        '">全部</span>';
+      getSubGroups(_sgFilterG).forEach(function (sg) {
+        var _a = filterState.subGroupId === sg.id;
+        html +=
+          '<span class="ms-tag-toggle' +
+          (_a ? " active" : "") +
+          '" data-filter-subgroup="' +
+          escAttr(sg.id) +
+          '" style="' +
+          (_a ? "background:" + sg.color + ";" : "") +
+          '">' +
+          esc(sg.name) +
+          ' <span style="opacity:0.55;font-size:9px;">' +
+          (_sgCounts[sg.id] || 0) +
+          "</span></span>";
+      });
+      if (_sgNoneCnt > 0) {
+        var _aN = filterState.subGroupId === SUBGROUP_NONE;
+        html +=
+          '<span class="ms-tag-toggle' +
+          (_aN ? " active" : "") +
+          '" data-filter-subgroup="' +
+          SUBGROUP_NONE +
+          '" style="' +
+          (_aN ? "background:#666;" : "") +
+          '">未分类 <span style="opacity:0.55;font-size:9px;">' +
+          _sgNoneCnt +
+          "</span></span>";
+      }
+      html += "</div>";
+    }
+  }
   var curK = getCurrentCharKeySafe();
   if (!inGroupView && !inCharView && curK) {
     var onlyCur = filterState.onlyCurrentChar;
@@ -7097,6 +8002,18 @@ function getPromptCardBlocks(list, showGroupLabel) {
         }
       }
 
+      if (p.subGroupId && g) {
+        var _sgForCard = getSubGroup(g.id, p.subGroupId);
+        if (_sgForCard) {
+          _metaParts.push(
+            '<span style="color:' +
+              _sgForCard.color +
+              ';display:inline-flex;align-items:center;gap:3px;"><i class="fa-solid fa-folder-open" style="font-size:9px;"></i>' +
+              esc(_sgForCard.name) +
+              "</span>",
+          );
+        }
+      }
       if (p.series) {
         _metaParts.push(
           '<span style="color:var(--ms-accent);opacity:0.8;display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-layer-group" style="font-size:9px;"></i>' +
@@ -7170,7 +8087,7 @@ function getPromptCardBlocks(list, showGroupLabel) {
     }
     var cardHtml = "";
     if (selectMode) {
-      cardHtml += `<div class="ms-card ${isSel ? "selected" : ""}${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><div class="ms-card-check"><i class="fa-solid fa-check"></i></div>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}${anchorH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div>`;
+      cardHtml += `<div class="ms-card ${isSel ? "selected" : ""}${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><div class="ms-card-check"><i class="fa-solid fa-check"></i></div>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}${anchorH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div><div class="ms-card-quick"><button class="ms-card-qbtn" data-qaction="preview" data-pid="${p.id}" title="预览"><i class="fa-solid fa-eye"></i></button></div>`;
       if (_bottomRowH) cardHtml += _bottomRowH;
       cardHtml += `</div>`;
     } else {
@@ -7199,12 +8116,18 @@ function getGroupBodySeriesBlocks(list) {
       var seriesName = p.series.trim();
       var seriesItems = list.filter(function (q) {
         return (
-          q.series && q.series.trim() === seriesName && !rendered.has(q.id)
+          q.series &&
+          q.series.trim() === seriesName &&
+          (q.subGroupId || null) === (p.subGroupId || null) &&
+          !rendered.has(q.id)
         );
       });
       if (seriesItems.length > 1) {
         var sid =
-          "ms-series-" + simpleHash(seriesName + "||" + (p.groupId || ""));
+          "ms-series-" +
+          simpleHash(
+            seriesName + "||" + (p.groupId || "") + "||" + (p.subGroupId || ""),
+          );
         var headerExtra = "";
         var anchorBadge = "";
         if (selectMode) {
@@ -7270,13 +8193,21 @@ function getGroupBodySeriesBlocks(list) {
             return (
               q.series &&
               q.series.trim() === seriesName &&
-              q.groupId === p.groupId
+              q.groupId === p.groupId &&
+              (q.subGroupId || null) === (p.subGroupId || null)
             );
           }).length;
           if (fullSeriesCount > 1) {
             var sid2 =
               "ms-series-" +
-              simpleHash(seriesName + "||" + (p.groupId || "") + "||_f");
+              simpleHash(
+                seriesName +
+                  "||" +
+                  (p.groupId || "") +
+                  "||" +
+                  (p.subGroupId || "") +
+                  "||_f",
+              );
             var headerExtra2 = "";
             var anchorBadge2 = "";
             if (selectMode) {
@@ -7408,6 +8339,26 @@ function showMoveDropdown($p) {
   let html = `<div class="ms-dropdown-item" data-moveto="">未分组</div>`;
   data.groups.forEach((g) => {
     html += `<div class="ms-dropdown-item" data-moveto="${g.id}">${esc(g.name)}</div>`;
+    if (isSubGroupEnabled(g) && getSubGroups(g).length > 0) {
+      getSubGroups(g).forEach(function (sg) {
+        html +=
+          '<div class="ms-dropdown-item" data-moveto="' +
+          g.id +
+          '" data-movetosub="' +
+          sg.id +
+          '" style="padding-left:26px;font-size:11px;"><i class="fa-solid fa-folder-open" style="color:' +
+          sg.color +
+          ';font-size:9px;margin-right:5px;"></i>' +
+          esc(sg.name) +
+          "</div>";
+      });
+      html +=
+        '<div class="ms-dropdown-item" data-moveto="' +
+        g.id +
+        '" data-movetosub="' +
+        SUBGROUP_NONE +
+        '" style="padding-left:26px;font-size:11px;"><i class="fa-solid fa-inbox" style="opacity:0.6;font-size:9px;margin-right:5px;"></i>未分类</div>';
+    }
   });
   html += `<div style="border-top:1px solid var(--SmartThemeBorderColor,#333);"></div>`;
   html += `<div class="ms-dropdown-item" data-moveto="_new" style="color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>新建分组</div>`;
@@ -7434,7 +8385,12 @@ function showMoveDropdown($p) {
       });
       return;
     } else {
-      movePromptsToGroup([...selectedIds], target || null);
+      var subTarget = $(this).attr("data-movetosub");
+      if (subTarget !== undefined) {
+        movePromptsToGroup([...selectedIds], target || null, subTarget);
+      } else {
+        movePromptsToGroup([...selectedIds], target || null);
+      }
       toast("success", `已移动 ${selectedIds.size} 项`);
     }
     exitSelectMode();
@@ -7816,7 +8772,14 @@ function showBatchSeriesDropdown($p) {
     var isIP = g && isIPGroup(g);
     var charKey =
       isIP && p.character && isLocalCharKey(p.character) ? p.character : null;
-    var optKey = sn + "||" + (charKey || "_") + "||" + (p.groupId || "_");
+    var optKey =
+      sn +
+      "||" +
+      (charKey || "_") +
+      "||" +
+      (p.groupId || "_") +
+      "||" +
+      (p.subGroupId || "_");
     if (seenOptKey.has(optKey)) return;
     seenOptKey.add(optKey);
     seriesOptions.push({ name: sn, charKey: charKey });
@@ -8700,7 +9663,7 @@ function bindAllEvents() {
       msg =
         "确定删除「" +
         g.name +
-        "」分组吗？\n\n这是内置使用指南，里面的说明文档会一起删除。\n删除后可在「设置 → 重新生成使用说明」里恢复。";
+        "」分组吗？\n\n这是内置使用指南，里面的说明文档会一起删除。\n删除后可在「设置 → 关于与更新 → 重新生成使用说明」里恢复。";
     } else if (cnt > 0) {
       msg =
         "确定删除「" +
@@ -9092,6 +10055,17 @@ function bindAllEvents() {
       pid = $(this).data("pid");
     if (action === "send") sendToInput(pid);
     else if (action === "send-gen") sendAndGenerate(pid);
+    else if (action === "preview") {
+      var vis = getVisiblePromptIds();
+      var sibs = vis;
+      if (selectMode && selectedIds.has(pid)) {
+        var picked = vis.filter(function (x) {
+          return selectedIds.has(x);
+        });
+        if (picked.length > 1) sibs = picked;
+      }
+      navigateTo({ name: "preview", promptId: pid, _siblingIds: sibs });
+    }
   });
   $footer.on("click.ms", "[data-action='manage-groups']", () =>
     navigateTo({ name: "groups" }),
@@ -9261,6 +10235,7 @@ function bindFilterEvents($p) {
       filterState.includeTags = [];
       filterState.excludeTags = [];
       filterState.groupId = null;
+      filterState.subGroupId = null;
       $p.find("#ms-filter-panel").html(buildFilterPanel());
       bindFilterEvents($p);
       renderBodyOnly();
@@ -9268,6 +10243,14 @@ function bindFilterEvents($p) {
     .on("click.msf", "[data-filter-group]", function () {
       var gid = $(this).data("filter-group") || null;
       filterState.groupId = filterState.groupId === gid ? null : gid;
+      filterState.subGroupId = null;
+      $p.find("#ms-filter-panel").html(buildFilterPanel());
+      bindFilterEvents($p);
+      renderBodyOnly();
+    })
+    .on("click.msf", "[data-filter-subgroup]", function () {
+      var sgid = $(this).attr("data-filter-subgroup") || null;
+      filterState.subGroupId = filterState.subGroupId === sgid ? null : sgid;
       $p.find("#ms-filter-panel").html(buildFilterPanel());
       bindFilterEvents($p);
       renderBodyOnly();
@@ -9432,6 +10415,14 @@ function renderGroup(v) {
     filterState.includeTags.length === 0 &&
     filterState.excludeTags.length === 0 &&
     !filterState.onlyCurrentChar;
+  var sgMode =
+    isSubGroupEnabled(g) &&
+    getSubGroups(g).length > 0 &&
+    !searchQuery &&
+    !filterState.subGroupId &&
+    filterState.includeTags.length === 0 &&
+    filterState.excludeTags.length === 0 &&
+    !filterState.onlyCurrentChar;
 
   if (isIP && !searchQuery) {
     var memberH =
@@ -9500,7 +10491,9 @@ function renderGroup(v) {
         '" id="' +
         _genSid +
         '">' +
-        renderGroupBodyWithSeries(generalPrompts) +
+        (sgMode
+          ? buildSubGroupSection(g, "_general")
+          : renderGroupBodyWithSeries(generalPrompts)) +
         "</div>";
     }
     var orderedKeys = [];
@@ -9555,19 +10548,39 @@ function renderGroup(v) {
         '" id="' +
         sid +
         '">' +
-        renderGroupBodyWithSeries(ps) +
+        (sgMode ? buildSubGroupSection(g, k) : renderGroupBodyWithSeries(ps)) +
         "</div></div>";
     });
+  } else if (sgMode) {
+    bodyHtml += buildSubGroupSection(g, null);
   } else {
     bodyHtml += _applyPagedRender(getGroupBodySeriesBlocks(filtered));
   }
 
   $p.find("#ms-body").html(bodyHtml);
+  var _gHasFilter = !!(
+    searchQuery ||
+    filterState.includeTags.length > 0 ||
+    filterState.excludeTags.length > 0 ||
+    filterState.subGroupId ||
+    filterState.onlyCurrentChar
+  );
+  var _gNoneCnt = 0;
+  if (!isU && isSubGroupEnabled(g)) {
+    list.forEach(function (p) {
+      if (!p.subGroupId || !getSubGroup(gid, p.subGroupId)) _gNoneCnt++;
+    });
+  }
+  var _gCntText = _gHasFilter
+    ? filtered.length + "/" + list.length + " 条"
+    : list.length +
+      " 条" +
+      (_gNoneCnt > 0 ? " · 未分类 " + _gNoneCnt + " 条" : "");
   $p.find("#ms-footer")
     .html(
       selectMode
         ? buildBatchFooter()
-        : `<span>${filtered.length}/${list.length} 条${isIP ? " · IP 分组" : ""}</span>` +
+        : `<span>${_gCntText}${isIP ? " · IP 分组" : ""}</span>` +
             (!isU
               ? `<div class="ms-footer-btns"><a data-action="group-settings"><i class="fa-solid fa-gear"></i> 分组设置</a></div>`
               : ``),
@@ -9677,6 +10690,17 @@ function renderGroup(v) {
     $(this).find(".ms-series-arrow").toggleClass("open");
     $p.find("#" + sid).toggleClass("open");
   });
+  $p.find("#ms-body").on("click.ms", "[data-sg-nav]", function (e) {
+    if ($(e.target).closest(".ms-series-check").length) return;
+    var sgid = $(this).attr("data-sg-nav");
+    var scope = $(this).attr("data-sg-scope") || null;
+    navigateTo({
+      name: "subgroup",
+      groupId: gid,
+      subGroupId: sgid,
+      charScope: scope || null,
+    });
+  });
   if (!isU) {
     $p.find("#ms-footer").on(
       "click.ms",
@@ -9688,6 +10712,155 @@ function renderGroup(v) {
   }
 }
 
+function renderSubGroup(v) {
+  const $p = $("#" + PANEL_ID);
+  var g = getGroup(v.groupId);
+  if (!g) {
+    navigateBack();
+    return;
+  }
+  var isNone = !v.subGroupId || v.subGroupId === SUBGROUP_NONE;
+  var sg = isNone ? null : getSubGroup(v.groupId, v.subGroupId);
+  if (!isNone && !sg) {
+    navigateBack();
+    return;
+  }
+  var sgName = sg ? sg.name : "未分类";
+  var list = getPromptsInSubGroup(
+    v.groupId,
+    isNone ? SUBGROUP_NONE : v.subGroupId,
+  );
+  if (v.charScope === "_general") {
+    list = list.filter(function (p) {
+      return !p.character;
+    });
+  } else if (v.charScope) {
+    list = list.filter(function (p) {
+      return p.character === v.charScope;
+    });
+  }
+  var filtered = sortPrompts(filterPrompts(searchPrompts(list, searchQuery)));
+  $p.find("#ms-title").text(sgName);
+  $p.find("#ms-toolbar").html(
+    buildToolbar({
+      back: true,
+      search: true,
+      filter: true,
+      select: true,
+      sort: true,
+      random: list.length > 0,
+      reorder: list.length > 1,
+      add: true,
+      addId: "ms-btn-new-in-subgroup",
+    }),
+  );
+  var scopeLabel = "";
+  if (v.charScope === "_general") scopeLabel = "通用剧场";
+  else if (v.charScope) scopeLabel = getCharDisplayName(v.charScope);
+  var headerH =
+    '<div style="padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:11px;color:var(--SmartThemeQuoteColor,#888);display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+    '<i class="fa-solid fa-folder" style="color:' +
+    g.color +
+    ';font-size:10px;"></i><span>' +
+    esc(g.name) +
+    "</span>" +
+    (scopeLabel
+      ? '<span style="opacity:0.4;">/</span><span style="color:#b48cc8;">' +
+        esc(scopeLabel) +
+        "</span>"
+      : "") +
+    '<span style="opacity:0.4;">/</span>' +
+    (sg
+      ? '<span data-action="subgroup-settings" title="点击编辑此文件夹" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;color:' +
+        sg.color +
+        ';font-weight:600;"><i class="fa-solid fa-folder-open" style="font-size:10px;"></i>' +
+        esc(sgName) +
+        '<i class="fa-solid fa-pen" style="font-size:8px;opacity:0.5;"></i></span>'
+      : '<span style="display:inline-flex;align-items:center;gap:4px;color:var(--SmartThemeQuoteColor,#888);font-weight:600;"><i class="fa-solid fa-inbox" style="font-size:10px;"></i>' +
+        esc(sgName) +
+        "</span>") +
+    "</div>";
+  if (sg && sg.note) {
+    headerH +=
+      '<div style="padding:6px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#999);font-style:italic;line-height:1.6;border-bottom:1px solid rgba(255,255,255,0.04);">' +
+      esc(sg.note) +
+      "</div>";
+  }
+  var bodyH = headerH + buildRangeModeHint();
+  if (filtered.length === 0) {
+    bodyH +=
+      '<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无内容</div>';
+  } else {
+    bodyH += _applyPagedRender(getGroupBodySeriesBlocks(filtered));
+  }
+  $p.find("#ms-body").html(bodyH);
+  var _sgHasFilter = !!(
+    searchQuery ||
+    filterState.includeTags.length > 0 ||
+    filterState.excludeTags.length > 0 ||
+    filterState.onlyCurrentChar
+  );
+  var _sgCntText = _sgHasFilter
+    ? filtered.length + "/" + list.length + " 条"
+    : list.length + " 条";
+  $p.find("#ms-footer")
+    .html(
+      selectMode
+        ? buildBatchFooter()
+        : "<span>" +
+            _sgCntText +
+            "</span>" +
+            (sg
+              ? '<div class="ms-footer-btns"><a data-action="subgroup-settings"><i class="fa-solid fa-gear"></i> 文件夹设置</a></div>'
+              : '<div class="ms-footer-btns"><a data-action="group-subgroups"><i class="fa-solid fa-folder-open"></i> 管理文件夹</a></div>'),
+    )
+    .show();
+  bindAllEvents();
+  $p.find("#ms-toolbar").on("click.ms", "#ms-btn-new-in-subgroup", function () {
+    navigateTo({
+      name: "edit",
+      promptId: null,
+      defaultGroupId: v.groupId,
+      defaultSubGroupId: isNone ? null : v.subGroupId,
+      defaultCharacter:
+        v.charScope && v.charScope !== "_general" ? v.charScope : "",
+    });
+  });
+  $p.find("#ms-toolbar").on("click.ms", "#ms-btn-reorder", function () {
+    navigateTo({
+      name: "reorder-prompts",
+      groupId: v.groupId,
+      subGroupId: isNone ? SUBGROUP_NONE : v.subGroupId,
+      charScope: v.charScope || null,
+    });
+  });
+  function openSubGroupSettings() {
+    if (isNone || !sg) {
+      navigateTo({ name: "group-subgroups", groupId: v.groupId });
+      return;
+    }
+    showSubGroupEditDialog(v.groupId, v.subGroupId, function () {
+      renderView();
+    });
+  }
+  $p.find("#ms-body").on(
+    "click.ms",
+    "[data-action='subgroup-settings']",
+    openSubGroupSettings,
+  );
+  $p.find("#ms-footer").on(
+    "click.ms",
+    "[data-action='subgroup-settings']",
+    openSubGroupSettings,
+  );
+  $p.find("#ms-footer").on(
+    "click.ms",
+    "[data-action='group-subgroups']",
+    function () {
+      navigateTo({ name: "group-subgroups", groupId: v.groupId });
+    },
+  );
+}
 function renderStarred() {
   const $p = $("#" + PANEL_ID),
     list = sortPrompts(
@@ -9972,15 +11145,21 @@ function renderCharacter(v) {
         esc(charCg.name) +
         "</span>",
     );
+  var _cHasFilter = !!(
+    searchQuery ||
+    filterState.includeTags.length > 0 ||
+    filterState.excludeTags.length > 0
+  );
+  var _cCntText = _cHasFilter
+    ? filtered.length + "/" + list.length + " 条"
+    : list.length + " 条";
   $p.find("#ms-footer")
     .html(
       selectMode
         ? buildBatchFooter()
         : "<span>" +
-            filtered.length +
-            "/" +
-            list.length +
-            " 条 · 角色专属" +
+            _cCntText +
+            " · 角色专属" +
             (metaParts.length ? " · " + metaParts.join(" · ") : "") +
             '</span><div class="ms-footer-btns">' +
             (canEditBd
@@ -10126,6 +11305,11 @@ function renderPreview(v) {
     groupL,
     g ? g.color : "var(--SmartThemeQuoteColor,#888)",
   );
+  if (pr.subGroupId && g) {
+    var _sgPv = getSubGroup(g.id, pr.subGroupId);
+    if (_sgPv)
+      metaChips += buildPvChip("fa-folder-open", _sgPv.name, _sgPv.color);
+  }
   if (pr.series)
     metaChips += buildPvChip("fa-layer-group", pr.series, "var(--ms-accent)");
   if (pr.author) metaChips += buildPvChip("fa-user", pr.author);
@@ -10235,6 +11419,7 @@ function renderPreview(v) {
       name: "edit",
       promptId: null,
       defaultGroupId: pr.groupId,
+      defaultSubGroupId: pr.subGroupId || null,
       defaultSeries: pr.series || "",
       defaultCharacter: pr.character || "",
     });
@@ -10610,6 +11795,8 @@ function renderEdit(v) {
     content = isNew ? "" : pr.content;
   const groupId = isNew ? v.defaultGroupId || "" : pr.groupId || "";
   const g = groupId ? getGroup(groupId) : null;
+  var editSubGroupId = isNew ? v.defaultSubGroupId || null : pr.subGroupId || null;
+  var _lastEditGid = groupId;
   const author = isNew
     ? g && g.defaultAuthor
       ? g.defaultAuthor
@@ -10651,6 +11838,7 @@ function renderEdit(v) {
     series,
     tags: promptTags,
     character: isNew ? v.defaultCharacter || "" : pr.character || "",
+    subGroupId: editSubGroupId,
   });
   var $p = setupPage(
     isNew ? "新建小剧场" : "编辑",
@@ -10665,10 +11853,6 @@ function renderEdit(v) {
   );
   var editCharacter = isNew ? v.defaultCharacter || "" : pr.character || "";
   var editCharacterIsLost = editCharacter && !isLocalCharKey(editCharacter);
-  let groupOpts = `<option value="">未分组</option>`;
-  data.groups.forEach((gg) => {
-    groupOpts += `<option value="${gg.id}" ${groupId === gg.id ? "selected" : ""}>${esc(gg.name)}</option>`;
-  });
   function buildCharBindUI() {
     var curKey = getCurrentCharKeySafe();
     var curName = curKey ? getCharDisplayName(curKey) : "";
@@ -10744,6 +11928,851 @@ function renderEdit(v) {
     return h;
   }
 
+  function getEditGid() {
+    return $p.find("#ms-edit-group").val() || "";
+  }
+
+  function _gpCollectCounts() {
+    var byGroup = Object.create(null),
+      bySub = Object.create(null),
+      ungrouped = 0;
+    data.prompts.forEach(function (p) {
+      var gid = p.groupId || "";
+      if (!gid) {
+        ungrouped++;
+        return;
+      }
+      byGroup[gid] = (byGroup[gid] || 0) + 1;
+      if (p.subGroupId) {
+        var k = gid + "|" + p.subGroupId;
+        bySub[k] = (bySub[k] || 0) + 1;
+      }
+    });
+    return { byGroup: byGroup, bySub: bySub, ungrouped: ungrouped };
+  }
+
+  function _gpGroupStat(g, counts) {
+    var subs = getSubGroups(g);
+    var total = counts.byGroup[g.id] || 0;
+    var inFolders = 0;
+    subs.forEach(function (sg) {
+      inFolders += counts.bySub[g.id + "|" + sg.id] || 0;
+    });
+    return {
+      total: total,
+      folders: subs.length,
+      loose: Math.max(0, total - inFolders),
+    };
+  }
+
+  function buildGroupTriggerHTML() {
+    var gid = getEditGid();
+    var g = gid ? getGroup(gid) : null;
+    var sg = g && editSubGroupId ? getSubGroup(gid, editSubGroupId) : null;
+    var h = g
+      ? '<span class="ms-gp-trig-dot" style="background:' +
+        escAttr(g.color || "#888") +
+        ';"></span>'
+      : '<span class="ms-gp-trig-dot none"></span>';
+    h +=
+      '<span class="ms-gp-trig-main"><span class="ms-gp-trig-name">' +
+      esc(g ? g.name : "未分组") +
+      "</span>";
+    if (sg) {
+      h +=
+        '<span class="ms-gp-trig-sub" title="文件夹：' +
+        escAttr(sg.name) +
+        '"><i class="fa-solid fa-folder"></i><span>' +
+        esc(sg.name) +
+        "</span></span>";
+    }
+    h += '</span><i class="fa-solid fa-angle-down ms-gp-trig-chev"></i>';
+    return h;
+  }
+
+  function refreshGroupTrigger() {
+    $p.find("#ms-edit-group-trigger").html(buildGroupTriggerHTML());
+  }
+
+  function applyGroupPick(gid, sgid) {
+    var $h = $p.find("#ms-edit-group");
+    var prev = $h.val() || "";
+    gid = gid || "";
+    sgid = sgid || null;
+    var same = prev === gid && editSubGroupId === sgid;
+    $h.val(gid);
+    if (prev !== gid) {
+      _lastEditGid = gid;
+      $h.trigger("change");
+    }
+    editSubGroupId = sgid;
+    refreshGroupTrigger();
+    if (!same) markDirty();
+  }
+
+  var _gpExpanded = new Set();
+  var _gpKw = "";
+
+  function closeGroupPicker() {
+    if (!$p.find("#ms-gp-popup").length) return;
+    $p.find("#ms-gp-popup").remove();
+    $p.off("pointerdown.ms-gp");
+    $p.off("keydown.ms-gp");
+    $p.find("#ms-body").off("scroll.ms-gp");
+    $p.find("#ms-edit-group-trigger").removeClass("open");
+  }
+
+  function _gpRenderList() {
+    var $list = $p.find("#ms-gp-list");
+    if (!$list.length) return;
+    var counts = _gpCollectCounts();
+    var lkw = _gpKw.trim().toLowerCase();
+    var curGid = getEditGid();
+    var totalFolders = 0;
+    data.groups.forEach(function (g) {
+      totalFolders += getSubGroups(g).length;
+    });
+    $p.find("#ms-gp-summary").text(
+      data.groups.length + " 组 · " + totalFolders + " 文件夹",
+    );
+    var h = "";
+    var matched = 0;
+    if (!lkw || "未分组".indexOf(lkw) >= 0) {
+      matched++;
+      var noneSel = !curGid;
+      h +=
+        '<div class="ms-gp-row' +
+        (noneSel ? " sel" : "") +
+        '" data-gp-gid="">' +
+        '<div class="ms-gp-ico"><i class="fa-solid fa-inbox"></i></div>' +
+        '<div class="ms-gp-info"><div class="ms-gp-name">未分组</div>' +
+        '<div class="ms-gp-meta"><span><i class="fa-solid fa-masks-theater"></i>' +
+        counts.ungrouped +
+        " 条剧场</span></div></div>" +
+        (noneSel ? '<i class="fa-solid fa-check ms-gp-check"></i>' : "") +
+        "</div>";
+    }
+    data.groups.forEach(function (g) {
+      var subs = getSubGroups(g);
+      var gHit = !lkw || (g.name || "").toLowerCase().indexOf(lkw) >= 0;
+      var subHits = subs.filter(function (sg) {
+        return !lkw || (sg.name || "").toLowerCase().indexOf(lkw) >= 0;
+      });
+      if (lkw && !gHit && subHits.length === 0) return;
+      matched++;
+      var st = _gpGroupStat(g, counts);
+      var isCurG = curGid === g.id;
+      var expanded = _gpExpanded.has(g.id) || (!!lkw && subHits.length > 0);
+      h +=
+        '<div class="ms-gp-row' +
+        (isCurG ? " sel" : "") +
+        '" data-gp-gid="' +
+        escAttr(g.id) +
+        '">' +
+        buildGroupAvatarHTML(g, 26) +
+        '<div class="ms-gp-info"><div class="ms-gp-name" title="' +
+        escAttr(g.name) +
+        '">' +
+        esc(g.name) +
+        "</div>" +
+        '<div class="ms-gp-meta"><span><i class="fa-solid fa-masks-theater"></i>' +
+        st.total +
+        " 条</span>" +
+        (st.folders > 0
+          ? '<span class="ms-gp-m-fold"><i class="fa-solid fa-folder"></i>' +
+            st.folders +
+            " 个文件夹</span>"
+          : '<span style="opacity:0.6;"><i class="fa-regular fa-folder-open"></i>无文件夹</span>') +
+        (isIPGroup(g) ? '<span class="ms-gp-ipbadge">IP</span>' : "") +
+        "</div></div>" +
+        (isCurG && !editSubGroupId
+          ? '<i class="fa-solid fa-check ms-gp-check"></i>'
+          : "") +
+        (lkw
+          ? ""
+          : '<button type="button" class="ms-gp-exp' +
+            (expanded ? " open" : "") +
+            '" data-gp-exp="' +
+            escAttr(g.id) +
+            '" title="展开/收起文件夹"><i class="fa-solid fa-angle-right"></i></button>') +
+        "</div>";
+      if (!expanded) return;
+      h += '<div class="ms-gp-subs">';
+      subHits.forEach(function (sg) {
+        var c = counts.bySub[g.id + "|" + sg.id] || 0;
+        var sSel = isCurG && editSubGroupId === sg.id;
+        h +=
+          '<div class="ms-gp-srow' +
+          (sSel ? " sel" : "") +
+          '" data-gp-gid="' +
+          escAttr(g.id) +
+          '" data-gp-sgid="' +
+          escAttr(sg.id) +
+          '">' +
+          '<i class="fa-solid fa-folder ms-gp-sico"' +
+          (sg.color ? ' style="color:' + escAttr(sg.color) + ';"' : "") +
+          "></i>" +
+          '<div class="ms-gp-sname" title="' +
+          escAttr(sg.name) +
+          '">' +
+          esc(sg.name) +
+          "</div>" +
+          '<span class="ms-gp-scnt">' +
+          c +
+          "</span>" +
+          '<div class="ms-gp-sacts">' +
+          '<button type="button" class="ms-gp-sbtn" data-gp-ren="' +
+          escAttr(sg.id) +
+          '" data-gp-g="' +
+          escAttr(g.id) +
+          '" title="重命名文件夹"><i class="fa-solid fa-pen"></i></button>' +
+          '<button type="button" class="ms-gp-sbtn del" data-gp-del="' +
+          escAttr(sg.id) +
+          '" data-gp-g="' +
+          escAttr(g.id) +
+          '" title="删除文件夹"><i class="fa-solid fa-trash"></i></button>' +
+          "</div>" +
+          (sSel ? '<i class="fa-solid fa-check ms-gp-check"></i>' : "") +
+          "</div>";
+      });
+      if (!lkw) {
+        var looseSel = isCurG && !editSubGroupId;
+        h +=
+          '<div class="ms-gp-srow none' +
+          (looseSel ? " sel" : "") +
+          '" data-gp-gid="' +
+          escAttr(g.id) +
+          '" data-gp-sgid="">' +
+          '<i class="fa-solid fa-folder-open ms-gp-sico"></i>' +
+          '<div class="ms-gp-sname">未分类</div>' +
+          '<span class="ms-gp-scnt">' +
+          st.loose +
+          "</span>" +
+          (looseSel ? '<i class="fa-solid fa-check ms-gp-check"></i>' : "") +
+          "</div>";
+        h +=
+          '<button type="button" class="ms-gp-addfold" data-gp-addfold="' +
+          escAttr(g.id) +
+          '"><i class="fa-solid fa-folder-plus"></i>在此分组新建文件夹</button>';
+      }
+      h += "</div>";
+    });
+    if (matched === 0) {
+      h +=
+        '<div class="ms-gp-empty"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的分组或文件夹</div>';
+    } else if (!lkw && data.groups.length === 0) {
+      h +=
+        '<div class="ms-gp-empty" style="padding:12px 10px;"><i class="fa-regular fa-folder-open"></i>还没有任何分组，点下方按钮新建</div>';
+    }
+    $list.html(h);
+  }
+
+  function _gpPosition() {
+    var $pop = $p.find("#ms-gp-popup");
+    var $trig = $p.find("#ms-edit-group-trigger");
+    if (!$pop.length || !$trig.length) return;
+    var tr = $trig[0].getBoundingClientRect();
+    var pr = $p[0].getBoundingClientRect();
+    var $list = $pop.find("#ms-gp-list");
+    // 面板本身 overflow:hidden，浮层必须夹在面板可视区内，否则会被裁掉
+    $list.css("max-height", "");
+    /* rect 是视口像素（已乘过面板的 zoom），而 offsetHeight/offsetWidth 和写回
+       css 的 top/left 都是布局像素。两者混用会让浮层在开了「自定义字号与尺寸」
+       （zoom ≠ 1）时整体偏移，所以先把 rect 换算回布局像素。 */
+    var _z = 1;
+    try {
+      _z = parseFloat(getComputedStyle($p[0]).zoom) || 1;
+    } catch (e) {}
+    var trTop = (tr.top - pr.top) / _z;
+    var trBottom = (tr.bottom - pr.top) / _z;
+    var trLeft = (tr.left - pr.left) / _z;
+    var prH = pr.height / _z;
+    var prW = pr.width / _z;
+    var below = prH - trBottom - 11;
+    var above = trTop - 11;
+    var openUp = false;
+    if ($pop[0].offsetHeight > below && above > below) openUp = true;
+    var room = Math.max(96, openUp ? above : below);
+    var chrome = $pop[0].offsetHeight - ($list[0].offsetHeight || 0);
+    if ($pop[0].offsetHeight > room) {
+      $list.css("max-height", Math.max(64, room - chrome) + "px");
+    }
+    var popH = $pop[0].offsetHeight;
+    var popW = $pop[0].offsetWidth || 296;
+    var left = trLeft;
+    var maxLeft = prW - popW - 8;
+    if (left > maxLeft) left = maxLeft;
+    if (left < 8) left = 8;
+    var top = openUp ? trTop - popH - 5 : trBottom + 5;
+    if (top < 6) top = 6;
+    $pop.css({ top: top + "px", left: left + "px" });
+  }
+
+  function openGroupPicker() {
+    closeGroupPicker();
+    closeSeriesPicker();
+    $p.find("#ms-char-search-popup").remove();
+    _gpKw = "";
+    var curGid = getEditGid();
+    if (curGid) _gpExpanded.add(curGid);
+    $p.append(
+      '<div id="ms-gp-popup">' +
+        '<div class="ms-gp-head"><div class="ms-gp-head-t"><i class="fa-solid fa-layer-group"></i>选择分组 / 文件夹</div>' +
+        '<span class="ms-gp-head-n" id="ms-gp-summary"></span>' +
+        '<button type="button" class="ms-gp-x" id="ms-gp-close" title="关闭"><i class="fa-solid fa-xmark"></i></button></div>' +
+        '<div class="ms-gp-searchwrap"><input type="text" class="ms-gp-search" id="ms-gp-search" placeholder="搜索分组或文件夹..."></div>' +
+        '<div class="ms-gp-list" id="ms-gp-list"></div>' +
+        '<div class="ms-gp-foot"><button type="button" class="ms-gp-newgroup" id="ms-gp-newgroup"><i class="fa-solid fa-plus"></i>新建分组</button></div>' +
+        "</div>",
+    );
+    $p.find("#ms-edit-group-trigger").addClass("open");
+    _gpRenderList();
+    _gpPosition();
+    var $pop = $p.find("#ms-gp-popup");
+    $pop.addClass("visible");
+    var $selRow = $pop.find(".ms-gp-row.sel").first();
+    if ($selRow.length) {
+      var lEl = $pop.find("#ms-gp-list")[0];
+      var off = $selRow[0].offsetTop - 40;
+      if (off > 0) lEl.scrollTop = off;
+    }
+    $pop.on("click", "#ms-gp-close", function () {
+      closeGroupPicker();
+    });
+    $pop.on("input", "#ms-gp-search", function () {
+      _gpKw = $(this).val() || "";
+      _gpRenderList();
+      _gpPosition();
+    });
+    $pop.on("click", "[data-gp-exp]", function (e) {
+      e.stopPropagation();
+      var gid = $(this).attr("data-gp-exp");
+      if (_gpExpanded.has(gid)) _gpExpanded.delete(gid);
+      else _gpExpanded.add(gid);
+      _gpRenderList();
+      _gpPosition();
+    });
+    $pop.on("click", ".ms-gp-srow", function (e) {
+      e.stopPropagation();
+      applyGroupPick(
+        $(this).attr("data-gp-gid") || "",
+        $(this).attr("data-gp-sgid") || null,
+      );
+      closeGroupPicker();
+    });
+    $pop.on("click", ".ms-gp-row", function () {
+      applyGroupPick($(this).attr("data-gp-gid") || "", null);
+      closeGroupPicker();
+    });
+    $pop.on("click", "[data-gp-ren]", function (e) {
+      e.stopPropagation();
+      var sgid = $(this).attr("data-gp-ren");
+      var gid = $(this).attr("data-gp-g");
+      var sg = getSubGroup(gid, sgid);
+      if (!sg) return;
+      msPrompt("", {
+        title: "重命名文件夹",
+        defaultValue: sg.name || "",
+        placeholder: "文件夹名称",
+        validate: function (val) {
+          if (!val || !val.trim()) return "名称不能为空";
+          return null;
+        },
+      }).then(function (name) {
+        if (!name || !name.trim()) return;
+        updateSubGroup(gid, sgid, { name: name.trim() });
+        _gpRenderList();
+        _gpPosition();
+        refreshGroupTrigger();
+        toast("success", "已重命名");
+      });
+    });
+    $pop.on("click", "[data-gp-del]", function (e) {
+      e.stopPropagation();
+      var sgid = $(this).attr("data-gp-del");
+      var gid = $(this).attr("data-gp-g");
+      var sg = getSubGroup(gid, sgid);
+      if (!sg) return;
+      var cnt = getPromptsInSubGroup(gid, sgid).length;
+      msConfirm(
+        cnt > 0
+          ? "其中 " +
+              cnt +
+              " 条剧场会移出文件夹，变为「未分类」，剧场本身不会被删除。"
+          : "这个空文件夹将被删除。",
+        {
+          title: "删除文件夹「" + truncate(sg.name, 14) + "」？",
+          type: "danger",
+          dangerous: true,
+          okText: "删除",
+        },
+      ).then(function (ok) {
+        if (!ok) return;
+        deleteSubGroup(gid, sgid, "none");
+        if (editSubGroupId === sgid) {
+          editSubGroupId = null;
+          refreshGroupTrigger();
+          markDirty();
+        }
+        _gpRenderList();
+        _gpPosition();
+        toast("success", "已删除文件夹");
+      });
+    });
+    $pop.on("click", "[data-gp-addfold]", function (e) {
+      e.stopPropagation();
+      var gid = $(this).attr("data-gp-addfold");
+      msPrompt("", {
+        title: "新建文件夹",
+        placeholder: "例如：日常 / 剧情 / 节日",
+        validate: function (val) {
+          if (!val || !val.trim()) return "名称不能为空";
+          return null;
+        },
+      }).then(function (name) {
+        if (!name || !name.trim()) return;
+        var sg = createSubGroup(gid, name.trim());
+        if (!sg) return;
+        _gpExpanded.add(gid);
+        applyGroupPick(gid, sg.id);
+        _gpRenderList();
+        _gpPosition();
+        toast("success", "已新建文件夹并选中");
+      });
+    });
+    $pop.on("click", "#ms-gp-newgroup", function (e) {
+      e.stopPropagation();
+      msPrompt("", {
+        title: "新建分组",
+        placeholder: "分组名称",
+        validate: function (val) {
+          if (!val || !val.trim()) return "名称不能为空";
+          return null;
+        },
+      }).then(function (name) {
+        if (!name || !name.trim()) return;
+        var g = createGroup(name.trim());
+        if (!g) return;
+        _gpExpanded.add(g.id);
+        applyGroupPick(g.id, null);
+        _gpRenderList();
+        _gpPosition();
+        toast("success", "已新建分组并选中");
+      });
+    });
+    setTimeout(function () {
+      $p.on("pointerdown.ms-gp", function (ev) {
+        if (
+          $(ev.target).closest(
+            "#ms-gp-popup, #ms-edit-group-trigger, .ms-modal-overlay",
+          ).length
+        )
+          return;
+        closeGroupPicker();
+      });
+      $p.find("#ms-body").on("scroll.ms-gp", function () {
+        closeGroupPicker();
+      });
+      $p.on("keydown.ms-gp", function (ev) {
+        if (ev.key === "Escape" || ev.key === "Esc") {
+          ev.stopPropagation();
+          closeGroupPicker();
+          $p.find("#ms-edit-group-trigger").focus();
+        }
+      });
+    }, 50);
+  }
+  var _spKw = "";
+
+  function getEditSeries() {
+    return $p.find("#ms-edit-series").val() || "";
+  }
+
+  function _spCollectSeries() {
+    var gid = getEditGid();
+    // 裸对象会让「constructor」「toString」这类系列名命中原型属性，于是
+    // map[sn] 判真但从未初始化，下一行读 undefined.subs 会直接抛 TypeError
+    var map = Object.create(null);
+    var order = [];
+    data.prompts.forEach(function (p) {
+      if ((p.groupId || "") !== gid) return;
+      var sn = String(p.series || "").trim();
+      if (!sn) return;
+      if (!map[sn]) {
+        map[sn] = { name: sn, count: 0, subs: {} };
+        order.push(sn);
+      }
+      map[sn].count++;
+      var sgk =
+        p.subGroupId && getSubGroup(gid, p.subGroupId) ? p.subGroupId : "";
+      map[sn].subs[sgk] = (map[sn].subs[sgk] || 0) + 1;
+    });
+    return { map: map, order: order };
+  }
+
+  function _spSubLabel(gid, subs) {
+    var keys = Object.keys(subs || {});
+    if (keys.length === 0) return "";
+    var names = keys.map(function (k) {
+      if (!k) return "未分类";
+      var sg = getSubGroup(gid, k);
+      return sg ? sg.name : "未分类";
+    });
+    if (names.length <= 2) return names.join("、");
+    return names.slice(0, 2).join("、") + " 等 " + names.length + " 处";
+  }
+
+  function buildSeriesTriggerHTML() {
+    var cur = getEditSeries();
+    if (!cur) {
+      return (
+        '<span class="ms-gp-trig-dot none"></span>' +
+        '<span class="ms-gp-trig-main"><span class="ms-gp-trig-name" style="opacity:0.7;">无系列</span></span>' +
+        '<i class="fa-solid fa-angle-down ms-gp-trig-chev"></i>'
+      );
+    }
+    var gid = getEditGid();
+    var info = _spCollectSeries();
+    var item = info.map[cur];
+    var badge = item
+      ? '<span class="ms-gp-trig-sub" title="本组内共 ' +
+        escAttr(String(item.count)) +
+        ' 条使用这个系列"><i class="fa-solid fa-masks-theater"></i><span>' +
+        item.count +
+        " 条</span></span>"
+      : '<span class="ms-gp-trig-sub" title="本组内还没有其它剧场用这个系列名"><i class="fa-solid fa-plus"></i><span>新系列</span></span>';
+    return (
+      '<span class="ms-gp-trig-dot" style="background:var(--ms-accent);"></span>' +
+      '<span class="ms-gp-trig-main"><span class="ms-gp-trig-name" title="' +
+      escAttr(cur) +
+      '">' +
+      esc(cur) +
+      "</span>" +
+      badge +
+      '</span><i class="fa-solid fa-angle-down ms-gp-trig-chev"></i>'
+    );
+  }
+
+  function refreshSeriesTrigger() {
+    $p.find("#ms-edit-series-trigger").html(buildSeriesTriggerHTML());
+  }
+
+  function applySeriesPick(name) {
+    var next = String(name || "").trim();
+    var prev = getEditSeries();
+    $p.find("#ms-edit-series").val(next);
+    refreshSeriesTrigger();
+    if (next !== prev) markDirty();
+  }
+
+  function closeSeriesPicker() {
+    if (!$p.find("#ms-sp-popup").length) return;
+    $p.find("#ms-sp-popup").remove();
+    $p.off("pointerdown.ms-sp");
+    $p.off("keydown.ms-sp");
+    $p.find("#ms-body").off("scroll.ms-sp");
+    $p.find("#ms-edit-series-trigger").removeClass("open");
+  }
+
+  function _spRenderList() {
+    var $list = $p.find("#ms-sp-list");
+    if (!$list.length) return;
+    var gid = getEditGid();
+    var g = gid ? getGroup(gid) : null;
+    var info = _spCollectSeries();
+    var cur = getEditSeries();
+    var names = info.order.slice();
+    if (cur && names.indexOf(cur) < 0) names.push(cur);
+    names.sort(function (a, b) {
+      if (a === cur) return -1;
+      if (b === cur) return 1;
+      var ca = info.map[a] ? info.map[a].count : 0;
+      var cb = info.map[b] ? info.map[b].count : 0;
+      if (ca !== cb) return cb - ca;
+      return a.localeCompare(b, "zh-CN");
+    });
+    $p.find("#ms-sp-summary").text(
+      (g ? truncate(g.name, 8) : "未分组") +
+        " · " +
+        info.order.length +
+        " 个系列",
+    );
+    var lkw = _spKw.trim().toLowerCase();
+    var h = "";
+    var matched = 0;
+    if (!lkw || "无系列".indexOf(lkw) >= 0) {
+      matched++;
+      var noneSel = !cur;
+      h +=
+        '<div class="ms-gp-row' +
+        (noneSel ? " sel" : "") +
+        '" data-sp-name="">' +
+        '<div class="ms-gp-ico"><i class="fa-solid fa-ban"></i></div>' +
+        '<div class="ms-gp-info"><div class="ms-gp-name">无系列</div>' +
+        '<div class="ms-gp-meta"><span>不归入任何系列，在列表里单独显示</span></div></div>' +
+        (noneSel ? '<i class="fa-solid fa-check ms-gp-check"></i>' : "") +
+        "</div>";
+    }
+    names.forEach(function (sn) {
+      if (lkw && sn.toLowerCase().indexOf(lkw) < 0) return;
+      matched++;
+      var item = info.map[sn];
+      var cnt = item ? item.count : 0;
+      var isSel = cur === sn;
+      var subLabel = item ? _spSubLabel(gid, item.subs) : "";
+      h +=
+        '<div class="ms-gp-row' +
+        (isSel ? " sel" : "") +
+        '" data-sp-name="' +
+        escAttr(sn) +
+        '">' +
+        '<div class="ms-gp-ico" style="color:var(--ms-accent);"><i class="fa-solid fa-layer-group"></i></div>' +
+        '<div class="ms-gp-info"><div class="ms-gp-name" title="' +
+        escAttr(sn) +
+        '">' +
+        esc(sn) +
+        "</div>" +
+        '<div class="ms-gp-meta">' +
+        (cnt > 0
+          ? '<span><i class="fa-solid fa-masks-theater"></i>' +
+            cnt +
+            " 条</span>"
+          : '<span style="opacity:0.7;"><i class="fa-solid fa-plus"></i>新系列</span>') +
+        (subLabel
+          ? '<span class="ms-gp-m-fold"><i class="fa-solid fa-folder"></i>' +
+            esc(subLabel) +
+            "</span>"
+          : "") +
+        "</div></div>" +
+        (cnt > 0
+          ? '<div class="ms-gp-sacts">' +
+            '<button type="button" class="ms-gp-sbtn" data-sp-ren="' +
+            escAttr(sn) +
+            '" title="重命名本组内的这个系列"><i class="fa-solid fa-pen"></i></button>' +
+            '<button type="button" class="ms-gp-sbtn del" data-sp-clr="' +
+            escAttr(sn) +
+            '" title="移除本组内的这个系列"><i class="fa-solid fa-trash"></i></button>' +
+            "</div>"
+          : "") +
+        (isSel ? '<i class="fa-solid fa-check ms-gp-check"></i>' : "") +
+        "</div>";
+    });
+    if (matched === 0) {
+      h +=
+        '<div class="ms-gp-empty"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的系列' +
+        (lkw
+          ? '<br><span style="font-size:10px;opacity:0.8;">按回车即可用这个名字新建</span>'
+          : "") +
+        "</div>";
+    } else if (!lkw && info.order.length === 0) {
+      h +=
+        '<div class="ms-gp-empty" style="padding:12px 10px;"><i class="fa-solid fa-layer-group"></i>本组还没有任何系列，点下方按钮新建</div>';
+    }
+    $list.html(h);
+  }
+
+  function _spPosition() {
+    var $pop = $p.find("#ms-sp-popup");
+    var $trig = $p.find("#ms-edit-series-trigger");
+    if (!$pop.length || !$trig.length) return;
+    var tr = $trig[0].getBoundingClientRect();
+    var pr = $p[0].getBoundingClientRect();
+    var $list = $pop.find("#ms-sp-list");
+    $list.css("max-height", "");
+    /* rect 是视口像素（已乘过面板的 zoom），而 offsetHeight/offsetWidth 和写回
+       css 的 top/left 都是布局像素。两者混用会让浮层在开了「自定义字号与尺寸」
+       （zoom ≠ 1）时整体偏移，所以先把 rect 换算回布局像素。 */
+    var _z = 1;
+    try {
+      _z = parseFloat(getComputedStyle($p[0]).zoom) || 1;
+    } catch (e) {}
+    var trTop = (tr.top - pr.top) / _z;
+    var trBottom = (tr.bottom - pr.top) / _z;
+    var trLeft = (tr.left - pr.left) / _z;
+    var prH = pr.height / _z;
+    var prW = pr.width / _z;
+    var below = prH - trBottom - 11;
+    var above = trTop - 11;
+    var openUp = false;
+    if ($pop[0].offsetHeight > below && above > below) openUp = true;
+    var room = Math.max(96, openUp ? above : below);
+    var chrome = $pop[0].offsetHeight - ($list[0].offsetHeight || 0);
+    if ($pop[0].offsetHeight > room) {
+      $list.css("max-height", Math.max(64, room - chrome) + "px");
+    }
+    var popH = $pop[0].offsetHeight;
+    var popW = $pop[0].offsetWidth || 296;
+    var left = trLeft;
+    var maxLeft = prW - popW - 8;
+    if (left > maxLeft) left = maxLeft;
+    if (left < 8) left = 8;
+    var top = openUp ? trTop - popH - 5 : trBottom + 5;
+    if (top < 6) top = 6;
+    $pop.css({ top: top + "px", left: left + "px" });
+  }
+
+  function openSeriesPicker() {
+    closeSeriesPicker();
+    closeGroupPicker();
+    $p.find("#ms-char-search-popup").remove();
+    _spKw = "";
+    $p.append(
+      '<div id="ms-sp-popup">' +
+        '<div class="ms-gp-head"><div class="ms-gp-head-t"><i class="fa-solid fa-layer-group"></i>选择系列</div>' +
+        '<span class="ms-gp-head-n" id="ms-sp-summary"></span>' +
+        '<button type="button" class="ms-gp-x" id="ms-sp-close" title="关闭"><i class="fa-solid fa-xmark"></i></button></div>' +
+        '<div class="ms-gp-searchwrap"><input type="text" class="ms-gp-search" id="ms-sp-search" placeholder="搜索本组系列，或输入新名称后回车..."></div>' +
+        '<div class="ms-gp-list" id="ms-sp-list"></div>' +
+        '<div class="ms-gp-foot"><button type="button" class="ms-gp-newgroup" id="ms-sp-newseries"><i class="fa-solid fa-plus"></i>新建系列</button></div>' +
+        "</div>",
+    );
+    $p.find("#ms-edit-series-trigger").addClass("open");
+    _spRenderList();
+    _spPosition();
+    var $pop = $p.find("#ms-sp-popup");
+    $pop.addClass("visible");
+    var $selRow = $pop.find(".ms-gp-row.sel").first();
+    if ($selRow.length) {
+      var lEl = $pop.find("#ms-sp-list")[0];
+      var off = $selRow[0].offsetTop - 40;
+      if (off > 0) lEl.scrollTop = off;
+    }
+    $pop.on("click", "#ms-sp-close", function () {
+      closeSeriesPicker();
+    });
+    $pop.on("input", "#ms-sp-search", function () {
+      _spKw = $(this).val() || "";
+      _spRenderList();
+      _spPosition();
+    });
+    $pop.on("keydown", "#ms-sp-search", function (ev) {
+      if (ev.key !== "Enter") return;
+      ev.preventDefault();
+      var kw = ($(this).val() || "").trim();
+      if (!kw) return;
+      /* 列表过滤是不区分大小写的子串匹配，直接拿输入去新建会造出「衣柜」和
+         「衣柜大公开」这种裂开的两个系列，所以回车先往已有系列上靠。 */
+      var _spOrder = _spCollectSeries().order || [];
+      var _kwLow = kw.toLowerCase();
+      var _exact = null;
+      var _subHits = [];
+      _spOrder.forEach(function (sn) {
+        var _low = String(sn).toLowerCase();
+        if (_low === _kwLow) _exact = sn;
+        else if (_low.indexOf(_kwLow) >= 0) _subHits.push(sn);
+      });
+      applySeriesPick(
+        _exact || (_subHits.length === 1 ? _subHits[0] : kw),
+      );
+      closeSeriesPicker();
+    });
+    $pop.on("click", ".ms-gp-row", function () {
+      applySeriesPick($(this).attr("data-sp-name") || "");
+      closeSeriesPicker();
+    });
+    $pop.on("click", "[data-sp-ren]", function (e) {
+      e.stopPropagation();
+      var src = $(this).attr("data-sp-ren");
+      var gid = getEditGid();
+      msPrompt("把「" + src + "」重命名为：", {
+        title: "重命名系列",
+        icon: "fa-layer-group",
+        defaultValue: src,
+        placeholder: "新的系列名",
+        validate: function (val) {
+          if (!val || !val.trim()) return "名称不能为空";
+          return null;
+        },
+      }).then(function (name) {
+        if (!name || !name.trim()) return;
+        var next = name.trim();
+        if (next === src) return;
+        var changed = 0;
+        data.prompts.forEach(function (pp) {
+          if ((pp.groupId || "") !== gid) return;
+          if (String(pp.series || "").trim() !== src) return;
+          pp.series = next;
+          _invalidateLc(pp);
+          changed++;
+        });
+        if (changed > 0) saveData();
+        if (getEditSeries() === src) applySeriesPick(next);
+        _spRenderList();
+        _spPosition();
+        toast("success", "已重命名 " + changed + " 条");
+      });
+    });
+    $pop.on("click", "[data-sp-clr]", function (e) {
+      e.stopPropagation();
+      var src = $(this).attr("data-sp-clr");
+      var gid = getEditGid();
+      var affected = data.prompts.filter(function (pp) {
+        return (
+          (pp.groupId || "") === gid && String(pp.series || "").trim() === src
+        );
+      });
+      msConfirm(
+        "本组内 " +
+          affected.length +
+          " 条剧场会移出这个系列，变成「无系列」。剧场内容不会被删除。",
+        {
+          title: "移除系列「" + truncate(src, 14) + "」？",
+          type: "danger",
+          dangerous: true,
+          okText: "移除",
+        },
+      ).then(function (ok) {
+        if (!ok) return;
+        affected.forEach(function (pp) {
+          pp.series = "";
+          _invalidateLc(pp);
+        });
+        saveData();
+        if (getEditSeries() === src) applySeriesPick("");
+        _spRenderList();
+        _spPosition();
+        toast("success", "已移除系列");
+      });
+    });
+    $pop.on("click", "#ms-sp-newseries", function (e) {
+      e.stopPropagation();
+      msPrompt("", {
+        title: "新建系列",
+        icon: "fa-layer-group",
+        defaultValue: _spKw.trim(),
+        placeholder: "例如：衣柜大公开",
+        validate: function (val) {
+          if (!val || !val.trim()) return "名称不能为空";
+          return null;
+        },
+      }).then(function (name) {
+        if (!name || !name.trim()) return;
+        applySeriesPick(name.trim());
+        closeSeriesPicker();
+      });
+    });
+    setTimeout(function () {
+      $p.on("pointerdown.ms-sp", function (ev) {
+        if (
+          $(ev.target).closest(
+            "#ms-sp-popup, #ms-edit-series-trigger, .ms-modal-overlay",
+          ).length
+        )
+          return;
+        closeSeriesPicker();
+      });
+      $p.find("#ms-body").on("scroll.ms-sp", function () {
+        closeSeriesPicker();
+      });
+      $p.on("keydown.ms-sp", function (ev) {
+        if (ev.key === "Escape" || ev.key === "Esc") {
+          ev.stopPropagation();
+          closeSeriesPicker();
+          $p.find("#ms-edit-series-trigger").focus();
+        }
+      });
+    }, 50);
+  }
   let editTags = [...promptTags];
   const stats = countStats(content);
   let _editTagTab = "used";
@@ -10911,8 +12940,19 @@ function renderEdit(v) {
       series: $p.find("#ms-edit-series").val() || "",
       tags: editTags,
       character: editCharacter,
+      subGroupId: editSubGroupId,
     });
     editDirty = cur !== editSnapshot;
+    /* 原先只有正文的 input 会排草稿。改系列/文件夹/标签/角色后若页面被关掉，
+       恢复出来的草稿会把这些字段退回改动之前，而 banner 只说「已恢复草稿」。
+       必须带 dirty 判断：markDirty 也会在「从子页面返回」这类净无改动的场合被
+       调用，无条件排草稿会留下一份幽灵草稿，下次进来白弹一个恢复横幅。 */
+    if (editDirty) {
+      scheduleDraftSave();
+    } else if (_editDraftTimer) {
+      clearTimeout(_editDraftTimer);
+      _editDraftTimer = null;
+    }
   }
   var _draftBannerH = "";
   if (v._pendingDraft) {
@@ -10931,8 +12971,8 @@ function renderEdit(v) {
       '</span><button class="ms-tbtn" id="ms-draft-restore" style="padding:3px 10px;font-size:11px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-rotate-left" style="margin-right:3px;"></i>恢复</button><button class="ms-tbtn" id="ms-draft-discard" style="padding:3px 10px;font-size:11px;"><i class="fa-solid fa-xmark" style="margin-right:3px;"></i>丢弃</button></div>';
   }
   $p.find("#ms-body").html(`<div class="ms-form-edit">${_draftBannerH}
-      <div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>标题</label><input type="text" id="ms-edit-title" placeholder="小剧场名字" value="${esc(title)}"></div><div class="ms-field" style="flex:1;"><label>系列 <span style="font-weight:350;opacity:0.5;">(同系列自动聚合)</span></label><input type="text" id="ms-edit-series" placeholder="如：「衣柜大公开」" value="${esc(series)}"></div></div>
-      <div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>分组</label><select id="ms-edit-group">${groupOpts}</select></div><div class="ms-field" style="flex:1;"><label>作者</label><input type="text" id="ms-edit-author" placeholder="署名" value="${esc(author)}"></div></div>
+      <div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>标题</label><input type="text" id="ms-edit-title" placeholder="小剧场名字" value="${esc(title)}"></div><div class="ms-field" style="flex:1;"><label>系列 <span style="font-weight:350;opacity:0.5;">(同系列自动聚合)</span></label><input type="hidden" id="ms-edit-series" value="${escAttr(series)}"><div class="ms-gp-trigger" id="ms-edit-series-trigger" tabindex="0" role="button" title="点击选择或新建系列"></div></div></div>
+      <div class="ms-form-row ms-row-nowrap"><div class="ms-field" style="flex:1.35;"><label>分组 / 文件夹</label><input type="hidden" id="ms-edit-group" value="${escAttr(groupId || "")}"><div class="ms-gp-trigger" id="ms-edit-group-trigger" tabindex="0" role="button" title="点击选择分组或文件夹"></div></div><div class="ms-field ms-field-author" style="flex:1;"><label>作者</label><input type="text" id="ms-edit-author" placeholder="署名" value="${esc(author)}"></div></div>
       <div class="ms-field"><label>绑定角色 <span style="font-weight:350;opacity:0.5;">(可选，绑定后会出现在角色专属页)</span></label><div id="ms-edit-char-wrap" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;"></div></div>
       <div class="ms-field"><div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;"><label style="margin:0;">标签</label><div id="ms-edit-tags-tabs" style="display:flex;gap:4px;">${buildTagsTabsHTML()}</div></div><div class="ms-tag-row" id="ms-edit-tags">${buildTagsUI()}</div></div>
       <div class="ms-field ms-content-field">
@@ -10990,6 +13030,11 @@ function renderEdit(v) {
   if (isMobile) {
     $p.find("#ms-body").on("focus.ms", "#ms-edit-content", function () {
       const ta = this;
+      if (setupKeyboardAdapt.refresh) {
+        [80, 300, 600, 1000, 1500].forEach(function (ms) {
+          setTimeout(setupKeyboardAdapt.refresh, ms);
+        });
+      }
       setTimeout(() => {
         ta.scrollIntoView({ behavior: "smooth", block: "center" });
       }, 350);
@@ -11003,6 +13048,10 @@ function renderEdit(v) {
     $p.find("#ms-edit-group").val(draft.groupId || "");
     $p.find("#ms-edit-author").val(draft.author || "");
     $p.find("#ms-edit-series").val(draft.series || "");
+    editSubGroupId = draft.subGroupId || null;
+    _lastEditGid = draft.groupId || "";
+    refreshGroupTrigger();
+    refreshSeriesTrigger();
     editTags = draft.tags ? [...draft.tags] : [];
     editCharacter = draft.character || "";
     if (editCharacter && !isLocalCharKey(editCharacter)) {
@@ -11064,6 +13113,8 @@ function renderEdit(v) {
       $p.find("#ms-edit-tags").html(buildTagsUI());
     },
   );
+  refreshGroupTrigger();
+  refreshSeriesTrigger();
   $p.find("#ms-edit-char-wrap").html(buildCharBindUI());
   $p.find("#ms-body").on("click.ms", "#ms-char-unbind", function () {
     editCharacter = "";
@@ -11286,6 +13337,7 @@ function renderEdit(v) {
         series: $p.find("#ms-edit-series").val() || "",
         tags: editTags,
         character: editCharacter,
+        subGroupId: editSubGroupId,
         savedAt: Date.now(),
       });
     }, 2000);
@@ -11295,13 +13347,56 @@ function renderEdit(v) {
     const s = countStats(this.value);
     $p.find("#ms-char-count").text(s.chars + " 字 · " + s.lines + " 行");
     markDirty();
-    scheduleDraftSave();
   });
   $p.find("#ms-body").on("input.ms", "#ms-edit-title", function () {
     var _v = ($(this).val() || "").trim();
     $p.find("#ms-edit-current-title").text(
       _v || (isNew ? "新建小剧场" : "未命名"),
     );
+    markDirty();
+  });
+  $p.find("#ms-body").on("input.ms", "#ms-edit-author", function () {
+    markDirty();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-edit-group-trigger", function (e) {
+    e.stopPropagation();
+    if ($p.find("#ms-gp-popup").length) closeGroupPicker();
+    else openGroupPicker();
+  });
+  $p.find("#ms-body").on(
+    "keydown.ms",
+    "#ms-edit-group-trigger",
+    function (e) {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        e.preventDefault();
+        if (!$p.find("#ms-gp-popup").length) openGroupPicker();
+      }
+    },
+  );
+  $p.find("#ms-body").on("click.ms", "#ms-edit-series-trigger", function (e) {
+    e.stopPropagation();
+    if ($p.find("#ms-sp-popup").length) closeSeriesPicker();
+    else openSeriesPicker();
+  });
+  $p.find("#ms-body").on(
+    "keydown.ms",
+    "#ms-edit-series-trigger",
+    function (e) {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+        e.preventDefault();
+        if (!$p.find("#ms-sp-popup").length) openSeriesPicker();
+      }
+    },
+  );
+  $p.find("#ms-body").on("change.ms", "#ms-edit-group", function () {
+    var _newGid = $(this).val() || "";
+    if (_newGid !== _lastEditGid) {
+      editSubGroupId = null;
+      _lastEditGid = _newGid;
+    }
+    refreshGroupTrigger();
+    closeSeriesPicker();
+    refreshSeriesTrigger();
   });
   $p.find("#ms-body").on("change.ms", "#ms-edit-group", function () {
     if (isNew && !$p.find("#ms-edit-author").val().trim()) {
@@ -11599,6 +13694,7 @@ function renderEdit(v) {
           series: $p.find("#ms-edit-series").val() || "",
           tags: [...editTags],
           character: editCharacter,
+          subGroupId: editSubGroupId,
           cursorPos: ta.selectionStart,
           focusMode: $p.hasClass("ms-focus-mode"),
           findBarOpen: $p.find("#ms-find-bar").is(":visible"),
@@ -11686,7 +13782,7 @@ function renderEdit(v) {
   });
   $p.find("#ms-body").on(
     "keydown.ms",
-    "#ms-edit-title, #ms-edit-author, #ms-edit-series",
+    "#ms-edit-title, #ms-edit-author",
     function (e) {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
@@ -11959,6 +14055,8 @@ function renderEdit(v) {
     }
     editDirty = false;
     clearDraft();
+    var _saveSgid = editSubGroupId;
+    if (_saveSgid && !getSubGroup(g2, _saveSgid)) _saveSgid = null;
     if (v.promptId) {
       const existingP = getPrompt(v.promptId);
       if (
@@ -11971,6 +14069,7 @@ function renderEdit(v) {
         title: t || "未命名",
         content: c,
         groupId: g2,
+        subGroupId: _saveSgid,
         author: a,
         series: sr,
         tags: editTags,
@@ -11981,6 +14080,7 @@ function renderEdit(v) {
         title: t || "未命名",
         content: c,
         groupId: g2,
+        subGroupId: _saveSgid,
         author: a,
         series: sr,
         tags: editTags,
@@ -11998,6 +14098,10 @@ function renderEdit(v) {
     $p.find("#ms-edit-group").val(ss.groupId);
     $p.find("#ms-edit-author").val(ss.author);
     $p.find("#ms-edit-series").val(ss.series || "");
+    if (ss.subGroupId !== undefined) editSubGroupId = ss.subGroupId;
+    _lastEditGid = ss.groupId || "";
+    refreshGroupTrigger();
+    refreshSeriesTrigger();
     editTags = ss.tags ? [...ss.tags] : [];
     if (ss.character !== undefined) editCharacter = ss.character;
     $p.find("#ms-edit-tags").html(buildTagsUI());
@@ -12038,7 +14142,17 @@ function renderEdit(v) {
       el2.style.removeProperty("left");
       el2.style.removeProperty("top");
       el2.style.removeProperty("transform");
+      /* 与手动进入专注模式那条路径保持一致：键盘适配留下的尺寸内联样式要一起清掉，
+         并重排一次贴合。否则从常用语页返回后面板带着专注模式的类、却没有对应的尺寸，
+         要等到下一次 resize 或点进正文框才对位。 */
+      el2.style.removeProperty("width");
+      el2.style.removeProperty("max-width");
+      el2.style.removeProperty("height");
+      el2.style.removeProperty("max-height");
+      el2.style.removeProperty("zoom");
       $p.addClass("ms-focus-mode");
+      if (setupKeyboardAdapt.refresh)
+        setTimeout(setupKeyboardAdapt.refresh, 80);
       var $focusBtn = $p.find("[data-md='focus']");
       $focusBtn.addClass("active").attr("title", "退出专注");
       $focusBtn.find("i").attr("class", "fa-solid fa-compress");
@@ -12189,7 +14303,16 @@ function renderGroups() {
         if (groupSelectMode) {
           html += `<div class="ms-gitem ${isSel ? "ms-gitem-selected" : ""}" data-gid="${g.id}"><div class="ms-gitem-check"><i class="fa-solid fa-check"></i></div>${iconH}<span class="ms-gitem-name">${esc(g.name)}${ipBadge}${g.note ? "<br><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#555);font-style:italic;'>" + esc(truncate(g.note, 30)) + "</span>" : ""}</span><span class="ms-gitem-cnt">${cnt}</span></div>`;
         } else {
-          html += `<div class="ms-gitem">${iconH}<span class="ms-gitem-name">${esc(g.name)}${ipBadge}${g.note ? "<br><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#555);font-style:italic;'>" + esc(truncate(g.note, 30)) + "</span>" : ""}</span><span class="ms-gitem-cnt">${cnt}</span><button class="ms-gitem-btn" data-action="rename" data-gid="${g.id}"><i class="fa-solid fa-pen"></i></button><button class="ms-gitem-btn danger" data-action="delete-group" data-gid="${g.id}"><i class="fa-solid fa-trash"></i></button></div>`;
+          var _sgCntG =
+            isSubGroupEnabled(g) && Array.isArray(g.subGroups)
+              ? g.subGroups.length
+              : 0;
+          var _sgBadgeG = _sgCntG
+            ? '<span style="display:inline-block;margin-left:4px;padding:1px 5px;background:rgba(var(--ms-accent-rgb),0.12);color:var(--ms-accent);border-radius:3px;font-size:9px;vertical-align:middle;"><i class="fa-solid fa-folder-open" style="font-size:8px;margin-right:2px;"></i>' +
+              _sgCntG +
+              "</span>"
+            : "";
+          html += `<div class="ms-gitem">${iconH}<span class="ms-gitem-name">${esc(g.name)}${ipBadge}${_sgBadgeG}${g.note ? "<br><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#555);font-style:italic;'>" + esc(truncate(g.note, 30)) + "</span>" : ""}</span><span class="ms-gitem-cnt">${cnt}</span><button class="ms-gitem-btn" data-action="subgroups" data-gid="${g.id}" title="管理文件夹"><i class="fa-solid fa-folder-open"></i></button><button class="ms-gitem-btn" data-action="rename" data-gid="${g.id}"><i class="fa-solid fa-pen"></i></button><button class="ms-gitem-btn danger" data-action="delete-group" data-gid="${g.id}"><i class="fa-solid fa-trash"></i></button></div>`;
           if (expandedColorId === g.id) {
             html += buildColorPickerHTML(g.color, "data-gid", g.id);
           }
@@ -12279,6 +14402,8 @@ function renderGroups() {
       const a = $(this).data("action"),
         gid = $(this).data("gid");
       if (a === "rename") navigateTo({ name: "group-edit", groupId: gid });
+      else if (a === "subgroups")
+        navigateTo({ name: "group-subgroups", groupId: gid });
       else if (a === "delete-group") {
         const cnt = getPromptsInGroup(gid).length;
         msConfirm(
@@ -12344,8 +14469,6 @@ function renderGroupEdit(v) {
     ? GROUP_COLORS[data.groups.length % GROUP_COLORS.length]
     : g.color;
   var editIconMode = isNew ? "group" : g.iconMode || "group";
-  var editIconFallbackMode =
-    editIconMode && editIconMode !== "custom" ? editIconMode : "group";
   var editIconUrl = isNew ? "" : g.iconUrl || "";
   var editIconCharKey = isNew ? "" : g.iconCharKey || "";
   var showCharSection = !isNew && editCharKeys.length > 0;
@@ -12582,104 +14705,60 @@ function renderGroupEdit(v) {
       }
       charSectionH += "</div>";
     }
-    var multiPrefixSectionH = "";
+    var advSectionH = "";
     if (!isNew && v.groupId) {
-      var groupPrompts = getPromptsInGroup(v.groupId);
-      var multiPrefixEnabled = g && g.multiPrefixEnabled;
-      var prefixTemplates =
-        g && Array.isArray(g.prefixTemplates) ? g.prefixTemplates : [];
-      var prefixAssignments = (g && g.prefixAssignments) || {};
-      multiPrefixSectionH +=
-        '<div class="ms-section-label" style="display:flex;align-items:center;gap:8px;padding:8px 14px 4px;">' +
-        '<label class="ms-switch" style="margin:0;"><input type="checkbox" id="ms-gedit-multi-prefix-toggle" ' +
-        (multiPrefixEnabled ? "checked" : "") +
-        '><span class="ms-switch-slider"></span></label>' +
-        '<span style="font-weight:600;text-transform:none;letter-spacing:0;font-size:11px;color:var(--SmartThemeQuoteColor,#888);">多前缀模式</span>' +
-        '<span style="font-size:9px;font-weight:normal;opacity:0.6;text-transform:none;letter-spacing:0;">(创建多套前缀模板，适用于分组内多条剧场不同前缀)</span>' +
-        "</div>";
-      if (multiPrefixEnabled) {
-        var tplToPrompts = {};
-        Object.keys(prefixAssignments).forEach(function (pid) {
-          var tid = prefixAssignments[pid];
-          if (!tplToPrompts[tid]) tplToPrompts[tid] = [];
-          tplToPrompts[tid].push(pid);
-        });
-        multiPrefixSectionH +=
-          '<div style="padding:4px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;line-height:1.6;">' +
-          '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>没被任何模板勾选的剧场，会自动用上方「注入前缀指令」作为分组默认' +
-          "</div>";
-        multiPrefixSectionH +=
-          '<div style="padding:4px 14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
-          '<button class="ms-tbtn" id="ms-gedit-add-template" style="font-size:11px;padding:4px 10px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:3px;"></i>添加前缀模板</button>' +
-          '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">' +
-          prefixTemplates.length +
-          " 个模板，" +
-          groupPrompts.length +
-          " 条剧场</span>" +
-          "</div>";
-        if (prefixTemplates.length === 0) {
-          multiPrefixSectionH +=
-            '<div class="ms-empty" style="padding:14px;font-size:11px;"><i class="fa-solid fa-file-lines"></i>还没有模板，点上面「添加前缀模板」开始创建</div>';
-        } else {
-          multiPrefixSectionH +=
-            '<div id="ms-gedit-template-list" style="padding:0 14px;display:flex;flex-direction:column;gap:10px;">';
-          prefixTemplates.forEach(function (tpl, tplIdx) {
-            var assignedIds = tplToPrompts[tpl.id] || [];
-            multiPrefixSectionH +=
-              '<div class="ms-prefix-tpl-item" data-tpl-id="' +
-              tpl.id +
-              '" style="padding:6px 0 10px;border-bottom:1px dashed rgba(255,255,255,0.06);">' +
-              '<div style="display:flex;align-items:center;gap:4px;margin-bottom:5px;">' +
-              '<span style="font-size:10px;color:var(--ms-accent);font-weight:600;flex-shrink:0;min-width:28px;">#' +
-              (tplIdx + 1) +
-              "</span>" +
-              '<input type="text" class="ms-prefix-tpl-name" data-tpl-id="' +
-              tpl.id +
-              '" value="' +
-              esc(tpl.name || "未命名模板") +
-              '" placeholder="模板名" style="flex:1;min-width:0;padding:3px 8px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:4px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:12px;outline:none;">' +
-              '<i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-tpl-content-' +
-              tpl.id +
-              '" data-fs-title="编辑模板「' +
-              esc(truncate(tpl.name || "未命名模板", 20)) +
-              '」" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
-              '<i class="fa-solid fa-trash ms-prefix-tpl-del" data-tpl-id="' +
-              tpl.id +
-              '" title="删除模板" style="cursor:pointer;color:var(--ms-danger);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
-              "</div>" +
-              '<textarea class="ms-prefix-tpl-content" id="ms-tpl-content-' +
-              tpl.id +
-              '" data-tpl-id="' +
-              tpl.id +
-              '" style="min-height:54px;width:100%;font-family:Consolas,monospace;font-size:11px;line-height:1.5;resize:vertical;box-sizing:border-box;margin-bottom:6px;" placeholder="模板内容，可用 {\u200B{stage}}、{\u200B{stage_title}} 等宏">' +
-              esc(tpl.content || "") +
-              "</textarea>";
-            if (groupPrompts.length === 0) {
-              multiPrefixSectionH +=
-                '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;padding-left:32px;">本分组还没有剧场</div>';
-            } else {
-              multiPrefixSectionH +=
-                '<button class="ms-tbtn ms-prefix-tpl-config" data-tpl-id="' +
-                tpl.id +
-                '" style="width:100%;text-align:center;font-size:11px;padding:5px 10px;display:flex;align-items:center;justify-content:center;gap:6px;">' +
-                '<i class="fa-solid fa-list-check" style="color:var(--ms-accent);"></i>' +
-                "<span>配置适用剧场</span>" +
-                (assignedIds.length > 0
-                  ? '<span style="font-size:11px;color:var(--ms-accent);font-weight:600;">已选 ' +
-                    assignedIds.length +
-                    " 条</span>"
-                  : '<span style="font-size:10px;opacity:0.55;">未配置</span>') +
-                "</button>";
-            }
-            multiPrefixSectionH += "</div>";
-          });
-          multiPrefixSectionH += "</div>";
-        }
-        if (groupPrompts.length === 0 && prefixTemplates.length > 0) {
-          multiPrefixSectionH +=
-            '<div class="ms-empty" style="padding:14px;font-size:11px;margin:6px 14px 0;"><i class="fa-solid fa-folder-open"></i>本分组还没有剧场，添加剧场后再来分配模板</div>';
-        }
+      var _gAdv = getGroup(v.groupId) || g;
+      var _advPrompts = getPromptsInGroup(v.groupId);
+      var _sgCntAdv = Array.isArray(_gAdv.subGroups)
+        ? _gAdv.subGroups.length
+        : 0;
+      var _sgClassified = 0;
+      _advPrompts.forEach(function (p) {
+        if (p.subGroupId && getSubGroup(v.groupId, p.subGroupId))
+          _sgClassified++;
+      });
+      var _pfxOn = !!_gAdv.multiPrefixEnabled;
+      var _pfxCntAdv = Array.isArray(_gAdv.prefixTemplates)
+        ? _gAdv.prefixTemplates.length
+        : 0;
+      var _pfxAssigned = 0;
+      if (_gAdv.prefixAssignments) {
+        _pfxAssigned = Object.keys(_gAdv.prefixAssignments).filter(
+          function (pid) {
+            var _pp = getPrompt(pid);
+            return _pp && _pp.groupId === v.groupId;
+          },
+        ).length;
       }
+      var _sgDesc =
+        _sgCntAdv === 0
+          ? "还没有文件夹 · 在分组与系列之间增加一层归类"
+          : _sgCntAdv + " 个文件夹 · " + _sgClassified + " 条已归类";
+      var _pfxDesc = !_pfxOn
+        ? "未启用 · 分组内不同剧场使用不同前缀"
+        : _pfxCntAdv === 0
+          ? "已启用 · 还没有创建模板"
+          : _pfxCntAdv + " 个模板 · " + _pfxAssigned + " 条已分配";
+      advSectionH += '<div class="ms-section-label">高级设置</div>';
+      advSectionH +=
+        '<div class="ms-adv-entry" data-adv-nav="subgroups">' +
+        '<div class="ms-adv-entry-icon"><i class="fa-solid fa-folder-open"></i></div>' +
+        '<div class="ms-adv-entry-info"><div class="ms-adv-entry-title">分组文件夹</div>' +
+        '<div class="ms-adv-entry-desc">' +
+        esc(_sgDesc) +
+        "</div></div>" +
+        '<i class="fa-solid fa-angle-right ms-adv-entry-chevron"></i></div>';
+      advSectionH +=
+        '<div class="ms-adv-entry" data-adv-nav="prefixes">' +
+        '<div class="ms-adv-entry-icon"><i class="fa-solid fa-file-lines"></i></div>' +
+        '<div class="ms-adv-entry-info"><div class="ms-adv-entry-title">多前缀模式</div>' +
+        '<div class="ms-adv-entry-desc">' +
+        esc(_pfxDesc) +
+        "</div></div>" +
+        '<div class="ms-adv-switch-wrap" data-adv-switch="1"><label class="ms-switch" style="margin:0;"><input type="checkbox" id="ms-adv-pfx-toggle"' +
+        (_pfxOn ? " checked" : "") +
+        '><span class="ms-switch-slider"></span></label></div>' +
+        '<i class="fa-solid fa-angle-right ms-adv-entry-chevron"></i></div>';
     }
     var toggleCharSectionH =
       '<button class="ms-tbtn" id="ms-gedit-toggle-charsection" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-' +
@@ -12707,7 +14786,7 @@ function renderGroupEdit(v) {
       '<div class="ms-field"><label>多条外壳模板（本组）<span style="font-weight:350;opacity:0.5;">(选多条本组剧场时的整体结构，留空使用全局默认；用 {\u200B{stage_count}} 表示数量、{\u200B{stage_tasks}} 表示所有任务块)</span> <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-gedit-multi-shell" data-fs-title="编辑分组多条外壳模板" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-gedit-multi-shell" style="min-height:60px;resize:vertical;" placeholder="留空使用全局默认；多条剧场全在本组时才生效">' +
       esc(g ? g.multiStagePrefix || "" : "") +
       "</textarea></div>" +
-      multiPrefixSectionH +
+      advSectionH +
       toggleCharSectionH +
       charSectionH +
       (!isNew
@@ -12740,7 +14819,6 @@ function renderGroupEdit(v) {
     if (!$name.length) return false;
     var name = ($name.val() || "").trim();
     if (!name) return false;
-    _collectMultiPrefixFromUI();
     var stagePrefix = $p.find("#ms-gedit-prefix").val() || "";
     var multiStagePrefix = $p.find("#ms-gedit-multi-shell").val() || "";
     var finalIconUrl = $p.find("#ms-gedit-icon-url").length
@@ -12757,9 +14835,6 @@ function renderGroupEdit(v) {
       iconUrl: editIconMode === "custom" ? finalIconUrl : "",
       iconCharKey: editIconMode === "char" ? editIconCharKey : "",
       charKeys: editCharKeys.slice(),
-      multiPrefixEnabled: editMultiPrefixEnabled,
-      prefixTemplates: editPrefixTemplates,
-      prefixAssignments: editPrefixAssignments,
     };
     data.groups.forEach(function (og) {
       if (og.id === v.groupId) return;
@@ -12798,7 +14873,7 @@ function renderGroupEdit(v) {
     );
     $p.find("#ms-body").on(
       "click.ms-gd",
-      "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-custom-icon-toggle, #ms-gedit-toggle-charsection, #ms-gedit-add-template, .ms-prefix-tpl-del, .ms-gedit-char-cb",
+      "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-toggle-charsection, .ms-gedit-char-cb",
       function () {
         groupEditDirty = true;
       },
@@ -12827,7 +14902,7 @@ function renderGroupEdit(v) {
     });
     $p.find("#ms-body").on(
       "click.ms-gd",
-      "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], #ms-gedit-custom-icon-toggle, #ms-gedit-add-template, .ms-prefix-tpl-del, .ms-gedit-char-cb",
+      "[data-gedit-color], [data-gedit-iconmode], [data-gedit-iconchar], .ms-gedit-char-cb",
       function () {
         setTimeout(_saveGroupEditNow, 0);
       },
@@ -12843,6 +14918,7 @@ function renderGroupEdit(v) {
     var noteVal = $p.find("#ms-gedit-note").val();
     var authorVal = $p.find("#ms-gedit-author").val();
     var prefixVal = $p.find("#ms-gedit-prefix").val();
+    var multiShellVal = $p.find("#ms-gedit-multi-shell").val();
     var iconUrlVal = $p.find("#ms-gedit-icon-url").length
       ? $p.find("#ms-gedit-icon-url").val()
       : undefined;
@@ -12859,6 +14935,8 @@ function renderGroupEdit(v) {
     if (noteVal !== undefined) $p.find("#ms-gedit-note").val(noteVal);
     if (authorVal !== undefined) $p.find("#ms-gedit-author").val(authorVal);
     if (prefixVal !== undefined) $p.find("#ms-gedit-prefix").val(prefixVal);
+    if (multiShellVal !== undefined)
+      $p.find("#ms-gedit-multi-shell").val(multiShellVal);
     if (iconUrlVal !== undefined && $p.find("#ms-gedit-icon-url").length) {
       $p.find("#ms-gedit-icon-url").val(iconUrlVal);
     }
@@ -12880,395 +14958,31 @@ function renderGroupEdit(v) {
       }
     });
   }
-  var editMultiPrefixEnabled = !isNew && g && g.multiPrefixEnabled;
-  var editPrefixTemplates =
-    !isNew && g && Array.isArray(g.prefixTemplates)
-      ? JSON.parse(JSON.stringify(g.prefixTemplates))
-      : [];
-  var editPrefixAssignments =
-    !isNew && g && g.prefixAssignments
-      ? Object.assign({}, g.prefixAssignments)
-      : {};
-  function _collectMultiPrefixFromUI() {
-    $p.find(".ms-prefix-tpl-name").each(function () {
-      var tid = $(this).data("tpl-id");
-      var tpl = editPrefixTemplates.find(function (t) {
-        return t.id === tid;
-      });
-      if (tpl) tpl.name = $(this).val();
-    });
-    $p.find(".ms-prefix-tpl-content").each(function () {
-      var tid = $(this).data("tpl-id");
-      var tpl = editPrefixTemplates.find(function (t) {
-        return t.id === tid;
-      });
-      if (tpl) tpl.content = $(this).val();
-    });
-  }
-  function _syncMultiPrefixToGroup() {
-    if (!g) return;
-    g.multiPrefixEnabled = editMultiPrefixEnabled;
-    g.prefixTemplates = editPrefixTemplates;
-    g.prefixAssignments = editPrefixAssignments;
-  }
-  function _refreshMultiPrefixUI() {
-    _collectMultiPrefixFromUI();
-    var $body = $p.find("#ms-body");
-    var sc = $body.scrollTop();
-    _syncMultiPrefixToGroup();
-    $body.html(buildBody());
-    $body.scrollTop(sc);
-  }
-  $p.find("#ms-body").on(
-    "change.ms",
-    "#ms-gedit-multi-prefix-toggle",
-    function () {
-      editMultiPrefixEnabled = $(this).is(":checked");
-      _refreshMultiPrefixUI();
-    },
-  );
-  $p.find("#ms-body").on("click.ms", "#ms-gedit-add-template", function () {
-    _collectMultiPrefixFromUI();
-    var newTpl = {
-      id: uid(),
-      name: "模板 " + (editPrefixTemplates.length + 1),
-      content: "",
-    };
-    editPrefixTemplates.push(newTpl);
-    _refreshMultiPrefixUI();
-  });
-  $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-name", function () {
-    var tid = $(this).data("tpl-id");
-    var tpl = editPrefixTemplates.find(function (t) {
-      return t.id === tid;
-    });
-    if (tpl) tpl.name = $(this).val();
-  });
-  $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-content", function () {
-    var tid = $(this).data("tpl-id");
-    var tpl = editPrefixTemplates.find(function (t) {
-      return t.id === tid;
-    });
-    if (tpl) tpl.content = $(this).val();
-  });
-  $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-del", function () {
-    var tid = $(this).data("tpl-id");
-    var tpl = editPrefixTemplates.find(function (t) {
-      return t.id === tid;
-    });
-    if (!tpl) return;
-    var usedCount = 0;
-    Object.keys(editPrefixAssignments).forEach(function (pid) {
-      if (editPrefixAssignments[pid] === tid) usedCount++;
-    });
-    var msg =
-      usedCount > 0
-        ? "确定删除模板「" +
-          (tpl.name || "未命名") +
-          "」吗？\n\n有 " +
-          usedCount +
-          " 条剧场分配了这个模板，删除后会自动改用分组默认前缀。"
-        : "确定删除模板「" + (tpl.name || "未命名") + "」吗？";
-    msConfirm(msg, {
-      title: "删除模板",
-      dangerous: true,
-      okText: "删除",
-    }).then(function (ok) {
-      if (!ok) return;
-      editPrefixTemplates = editPrefixTemplates.filter(function (t) {
-        return t.id !== tid;
-      });
-      Object.keys(editPrefixAssignments).forEach(function (pid) {
-        if (editPrefixAssignments[pid] === tid)
-          delete editPrefixAssignments[pid];
-      });
-      _refreshMultiPrefixUI();
-    });
-  });
-  $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-config", function () {
-    var tid = $(this).data("tpl-id");
-    if (!tid) return;
-    var tpl = editPrefixTemplates.find(function (t) {
-      return t.id === tid;
-    });
-    if (!tpl) return;
-    _collectMultiPrefixFromUI();
-    var groupPromptsForCfg = getPromptsInGroup(v.groupId);
-    var workingAssignments = Object.assign({}, editPrefixAssignments);
-    var cfgSearchKw = "";
-
-    function buildTplCfgModalBody() {
-      var lkw = cfgSearchKw.toLowerCase();
-      var filtered = groupPromptsForCfg.filter(function (p) {
-        if (!lkw) return true;
-        return (
-          (p.title || "").toLowerCase().indexOf(lkw) >= 0 ||
-          (p.content || "").toLowerCase().indexOf(lkw) >= 0
-        );
-      });
-      var assignedToThisCount = 0;
-      var occupiedByOthersCount = 0;
-      groupPromptsForCfg.forEach(function (p) {
-        if (workingAssignments[p.id] === tid) assignedToThisCount++;
-        else if (workingAssignments[p.id]) occupiedByOthersCount++;
-      });
-      var html = "";
-      html +=
-        '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;line-height:1.6;">';
-      html +=
-        '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>';
-      html +=
-        "勾选要使用「<strong>" +
-        esc(tpl.name || "未命名") +
-        "</strong>」前缀的剧场。被其他模板占用的会显示灰色，可点击以更改至当前模板。";
-      html += "</div>";
-      html +=
-        '<input type="text" class="ms-modal-search" id="ms-tpl-cfg-search" placeholder="搜索剧场..." value="' +
-        esc(cfgSearchKw) +
-        '">';
-      html +=
-        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px;flex-wrap:wrap;">';
-      html +=
-        '<span style="color:var(--SmartThemeQuoteColor,#888);flex:1;min-width:0;">共 ' +
-        groupPromptsForCfg.length +
-        ' 条 · 当前模板已选 <strong style="color:var(--ms-accent);">' +
-        assignedToThisCount +
-        "</strong> 条" +
-        (occupiedByOthersCount > 0
-          ? ' · <span style="color:var(--ms-accent);opacity:0.85;">' +
-            occupiedByOthersCount +
-            " 条被其他模板占用</span>"
-          : "") +
-        "</span>";
-      html +=
-        '<button class="ms-tbtn" data-tpl-cfg-action="select-free" style="font-size:10px;padding:3px 8px;flex-shrink:0;" title="只勾选未被任何模板占用的剧场">勾选空闲</button>';
-      html +=
-        '<button class="ms-tbtn" data-tpl-cfg-action="clear" style="font-size:10px;padding:3px 8px;color:var(--ms-danger);border-color:var(--ms-danger);flex-shrink:0;" title="把当前模板下的剧场全部释放">清空</button>';
-      html += "</div>";
-      if (filtered.length === 0) {
-        html +=
-          '<div class="ms-empty" style="padding:20px;font-size:11px;"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的剧场</div>';
-      } else {
-        html +=
-          '<div id="ms-tpl-cfg-list" style="max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:3px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;padding:6px;">';
-        filtered.forEach(function (p) {
-          var assignedTo = workingAssignments[p.id];
-          var isAssignedToThis = assignedTo === tid;
-          var isAssignedToOther = assignedTo && assignedTo !== tid;
-          var otherTpl = isAssignedToOther
-            ? editPrefixTemplates.find(function (t) {
-                return t.id === assignedTo;
-              })
-            : null;
-          var rowBg = isAssignedToThis
-            ? "background:rgba(var(--ms-accent-rgb),0.12);"
-            : isAssignedToOther
-              ? "background:rgba(255,255,255,0.02);opacity:0.6;"
-              : "";
-          var checkBg = isAssignedToThis
-            ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
-            : "";
-          var noteH = "";
-          if (isAssignedToOther && otherTpl) {
-            noteH =
-              '<span style="font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.12);padding:1px 6px;border-radius:3px;flex-shrink:0;" title="点击会更改到当前模板">已属于「' +
-              esc(truncate(otherTpl.name || "未命名", 12)) +
-              "」</span>";
-          }
-          var seriesH = "";
-          if (p.series && String(p.series).trim()) {
-            seriesH =
-              '<div style="font-size:9px;color:var(--ms-accent);opacity:0.75;display:flex;align-items:center;gap:3px;line-height:1.3;margin-bottom:2px;"><i class="fa-solid fa-layer-group" style="font-size:8px;"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
-              esc(String(p.series).trim()) +
-              "</span></div>";
-          }
-          html +=
-            '<div class="ms-tpl-cfg-row" data-pid="' +
-            p.id +
-            '" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;transition:background 0.12s;' +
-            rowBg +
-            '">';
-          html +=
-            '<div class="ms-gitem-check" style="' +
-            checkBg +
-            '"><i class="fa-solid fa-check"></i></div>';
-          html += '<div style="flex:1;min-width:0;overflow:hidden;">';
-          html += seriesH;
-          html +=
-            '<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--SmartThemeBodyColor,#ddd);">' +
-            esc(p.title || "未命名") +
-            "</div>";
-          html += "</div>";
-          html += noteH;
-          html +=
-            '<button class="ms-card-qbtn ms-tpl-cfg-preview" data-pid="' +
-            p.id +
-            '" title="预览剧场内容" style="flex-shrink:0;width:24px;height:24px;font-size:10px;"><i class="fa-solid fa-eye"></i></button>';
-          html += "</div>";
-        });
-        html += "</div>";
-      }
-      return html;
-    }
-
-    function refreshTplCfgBody($overlay, keepFocus) {
-      var $oldInput = $overlay.find("#ms-tpl-cfg-search");
-      var caretPos = -1;
-      if (keepFocus && $oldInput.is(":focus") && $oldInput[0]) {
-        caretPos = $oldInput[0].selectionStart || 0;
-      }
-      var $oldList = $overlay.find("#ms-tpl-cfg-list");
-      var savedScroll = $oldList.length ? $oldList[0].scrollTop : 0;
-      $overlay.find(".ms-modal-body").html(buildTplCfgModalBody());
-      var $newList = $overlay.find("#ms-tpl-cfg-list");
-      if ($newList.length && savedScroll > 0) {
-        $newList[0].scrollTop = savedScroll;
-      }
-      if (caretPos >= 0) {
-        var $newInput = $overlay.find("#ms-tpl-cfg-search");
-        if ($newInput.length) {
-          $newInput.focus();
-          try {
-            $newInput[0].setSelectionRange(caretPos, caretPos);
-          } catch (e) {}
-        }
-      }
-    }
-
-    showModal({
-      title: "配置「" + truncate(tpl.name || "未命名", 18) + "」的适用剧场",
-      iconType: "info",
-      icon: "fa-list-check",
-      modalStyle: "min-width:380px;max-width:94vw;width:520px;",
-      body: buildTplCfgModalBody(),
-      buttons: [
-        { text: "取消", value: null },
-        {
-          text: "保存",
-          cls: "primary",
-          primary: true,
-          action: function () {
-            editPrefixAssignments = workingAssignments;
-            _refreshMultiPrefixUI();
-            groupEditDirty = true;
-            return true;
-          },
-        },
-      ],
-      cancelValue: null,
-      onShow: function ($overlay) {
-        $overlay.on("input", "#ms-tpl-cfg-search", function () {
-          cfgSearchKw = $(this).val();
-          refreshTplCfgBody($overlay, true);
-        });
-        $overlay.on("click", ".ms-tpl-cfg-preview", function (e) {
-          e.stopPropagation();
-          var pid = $(this).data("pid");
-          if (!pid) return;
-          var pp = getPrompt(pid);
-          if (!pp) return;
-          showModal({
-            title: "预览：" + truncate(pp.title || "未命名", 24),
-            iconType: "info",
-            icon: "fa-eye",
-            modalStyle:
-              "min-width:340px;max-width:92vw;width:480px;max-height:80vh;",
-            body:
-              '<div class="ms-preview-content" style="padding:0;font-size:13px;">' +
-              renderMd(pp.content || "") +
-              "</div>",
-            buttons: [
-              { text: "关闭", cls: "primary", primary: true, value: true },
-            ],
-          });
-        });
-        $overlay.on("click", ".ms-tpl-cfg-row", function () {
-          var pid = $(this).data("pid");
-          if (!pid) return;
-          if (workingAssignments[pid] === tid) {
-            delete workingAssignments[pid];
-          } else {
-            workingAssignments[pid] = tid;
-          }
-          refreshTplCfgBody($overlay, false);
-        });
-        $overlay.on(
-          "click",
-          '[data-tpl-cfg-action="select-free"]',
-          function () {
-            groupPromptsForCfg.forEach(function (p) {
-              if (!workingAssignments[p.id]) {
-                workingAssignments[p.id] = tid;
-              }
-            });
-            refreshTplCfgBody($overlay, false);
-          },
-        );
-        $overlay.on("click", '[data-tpl-cfg-action="clear"]', function () {
-          groupPromptsForCfg.forEach(function (p) {
-            if (workingAssignments[p.id] === tid) {
-              delete workingAssignments[p.id];
-            }
-          });
-          refreshTplCfgBody($overlay, false);
-        });
-      },
-    });
-  });
-  $p.find("#ms-body").on("change.ms", ".ms-prefix-assign-sel", function () {
-    var pid = $(this).data("pid");
-    var val = $(this).val();
-    if (val) editPrefixAssignments[pid] = val;
-    else delete editPrefixAssignments[pid];
-    var tid = val;
-    var $row = $(this).closest(".ms-prefix-assign-item");
-    $row.css(
-      "background",
-      val ? "rgba(var(--ms-accent-rgb),0.06)" : "rgba(255,255,255,0.02)",
-    );
-    var $tplList = $p.find("#ms-gedit-template-list");
-    if ($tplList.length) {
-      editPrefixTemplates.forEach(function (tpl) {
-        var usedCount = 0;
-        Object.keys(editPrefixAssignments).forEach(function (ppid) {
-          if (editPrefixAssignments[ppid] === tpl.id) usedCount++;
-        });
-        var $badge = $tplList
-          .find('.ms-prefix-tpl-item[data-tpl-id="' + tpl.id + '"] span')
-          .first();
-        if ($badge.length) {
-          $badge.text(usedCount > 0 ? "已用 " + usedCount : "未使用");
-          $badge.css(
-            "color",
-            usedCount > 0
-              ? "var(--ms-accent)"
-              : "var(--SmartThemeQuoteColor,#666)",
-          );
-          $badge.css(
-            "background",
-            "rgba(var(--ms-accent-rgb)," +
-              (usedCount > 0 ? "0.12" : "0.04") +
-              ")",
-          );
-        }
-      });
-    }
-  });
-  $p.find("#ms-body").on("click.ms", "[data-bulk-assign]", function () {
-    var target = $(this).data("bulk-assign");
-    var groupPrompts = getPromptsInGroup(v.groupId);
-    if (target === "default") {
-      groupPrompts.forEach(function (p) {
-        delete editPrefixAssignments[p.id];
-      });
-    } else {
-      groupPrompts.forEach(function (p) {
-        editPrefixAssignments[p.id] = target;
-      });
-    }
-    _refreshMultiPrefixUI();
-  });
   $p.find("#ms-body").on("click.ms", "#ms-gedit-cancel", navigateBack);
+  $p.find("#ms-body").on("click.ms", "[data-adv-switch]", function (e) {
+    e.stopPropagation();
+  });
+  $p.find("#ms-body").on("change.ms", "#ms-adv-pfx-toggle", function (e) {
+    e.stopPropagation();
+    if (!v.groupId) return;
+    var gg = getGroup(v.groupId);
+    if (!gg) return;
+    gg.multiPrefixEnabled = $(this).is(":checked");
+    if (!Array.isArray(gg.prefixTemplates)) gg.prefixTemplates = [];
+    if (!gg.prefixAssignments || typeof gg.prefixAssignments !== "object")
+      gg.prefixAssignments = {};
+    saveData();
+    refreshBody();
+  });
+  $p.find("#ms-body").on("click.ms", "[data-adv-nav]", function (e) {
+    if ($(e.target).closest("[data-adv-switch]").length) return;
+    var nav = $(this).attr("data-adv-nav");
+    if (!v.groupId) return;
+    if (nav === "subgroups")
+      navigateTo({ name: "group-subgroups", groupId: v.groupId });
+    else if (nav === "prefixes")
+      navigateTo({ name: "group-prefixes", groupId: v.groupId });
+  });
 
   $p.find("#ms-body").on("click.ms", "[data-gedit-color]", function () {
     editColor = $(this).data("gedit-color");
@@ -13287,7 +15001,6 @@ function renderGroupEdit(v) {
 
   $p.find("#ms-body").on("click.ms", "[data-gedit-iconmode]", function () {
     editIconMode = $(this).data("gedit-iconmode");
-    if (editIconMode !== "custom") editIconFallbackMode = editIconMode;
     refreshBody();
   });
 
@@ -13366,7 +15079,6 @@ function renderGroupEdit(v) {
     var finalIconUrl = $p.find("#ms-gedit-icon-url").length
       ? $p.find("#ms-gedit-icon-url").val().trim()
       : editIconUrl;
-    _collectMultiPrefixFromUI();
     var payload = {
       name: n,
       note: note,
@@ -13378,9 +15090,6 @@ function renderGroupEdit(v) {
       iconUrl: editIconMode === "custom" ? finalIconUrl : "",
       iconCharKey: editIconMode === "char" ? editIconCharKey : "",
       charKeys: editCharKeys.slice(),
-      multiPrefixEnabled: editMultiPrefixEnabled,
-      prefixTemplates: editPrefixTemplates,
-      prefixAssignments: editPrefixAssignments,
     };
     data.groups.forEach(function (og) {
       if (v.groupId && og.id === v.groupId) return;
@@ -14686,6 +16395,79 @@ function renderStats() {
     html += `</div>`;
   }
 
+  var _sgStats = [];
+  data.groups.forEach(function (g) {
+    if (!isSubGroupEnabled(g) || getSubGroups(g).length === 0) return;
+    var _sgc = {};
+    var _sgNone = 0;
+    getPromptsInGroup(g.id).forEach(function (p) {
+      if (p.subGroupId && getSubGroup(g.id, p.subGroupId))
+        _sgc[p.subGroupId] = (_sgc[p.subGroupId] || 0) + 1;
+      else _sgNone++;
+    });
+    getSubGroups(g).forEach(function (sg) {
+      _sgStats.push({
+        name: sg.name,
+        color: sg.color,
+        groupName: g.name,
+        count: _sgc[sg.id] || 0,
+      });
+    });
+    if (_sgNone > 0) {
+      _sgStats.push({
+        name: "未分类",
+        color: "#888",
+        groupName: g.name,
+        count: _sgNone,
+      });
+    }
+  });
+  if (_sgStats.length > 0) {
+    _sgStats.sort(function (a, b) {
+      return b.count - a.count;
+    });
+    var _sgTop = _sgStats.slice(0, 8);
+    var _sgMax = _sgTop[0].count || 1;
+    var _sgTotal = 0;
+    _sgStats.forEach(function (x) {
+      _sgTotal += x.count;
+    });
+    html +=
+      '<div class="ms-stats-section">文件夹分布 TOP ' +
+      _sgTop.length +
+      "</div>";
+    html += '<div class="ms-stats-rank">';
+    _sgTop.forEach(function (s, i) {
+      var posCls =
+        i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "normal";
+      var barW = Math.max((s.count / _sgMax) * 100, 4);
+      html +=
+        '<div class="ms-stats-rank-item"><span class="ms-stats-rank-pos ' +
+        posCls +
+        '">' +
+        (i + 1) +
+        '</span><div class="ms-stats-rank-info"><div class="ms-stats-rank-name"><i class="fa-solid fa-folder-open" style="color:' +
+        s.color +
+        ';font-size:10px;margin-right:4px;"></i>' +
+        esc(s.name) +
+        '</div><div class="ms-stats-rank-meta">' +
+        esc(s.groupName) +
+        '</div></div><div class="ms-stats-rank-bar-wrap"><div class="ms-stats-rank-bar" style="width:' +
+        barW +
+        "%;background:" +
+        s.color +
+        ';"></div></div><span class="ms-stats-rank-count">' +
+        s.count +
+        " 条</span></div>";
+    });
+    html += "</div>";
+    html +=
+      '<div style="padding:2px 14px 8px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);">共 ' +
+      _sgStats.length +
+      " 个文件夹分区 · " +
+      _sgTotal +
+      " 条剧场已按文件夹归类</div>";
+    }
   if (totalTags > 0 && totalPrompts > 0) {
     var tagStats = data.settings.definedTags
       .map(function (t) {
@@ -14839,36 +16621,59 @@ function renderStats() {
   bindAllEvents();
 }
 
-function renderSettings() {
-  const $p = setupPage("设置");
-  $p.find("#ms-body").html(
-    stripZeroWidth(`<div class="ms-form"><div class="ms-field"><label>默认作者署名</label><input type="text" id="ms-default-author" placeholder="新建时自动填入" value="${esc(data.settings.defaultAuthor || "")}"></div><div class="ms-section-label">注入设置</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-inject-enabled-toggle" ${data.settings.stageInjectEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">启用注入功能</span></div><div style="padding:4px 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);line-height:1.5;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>选中剧场后，内容会随下一次发送注入到AI提示词中</div><div id="ms-inject-details" style="${data.settings.stageInjectEnabled ? "" : "display:none;"}"><div class="ms-inject-settings-row"><label class="ms-inject-radio${data.settings.stageInjectMode === "depth" ? " active" : ""}" data-mode="depth"><input type="radio" name="ms-inject-mode" value="depth" ${data.settings.stageInjectMode === "depth" ? "checked" : ""}><i class="fa-solid fa-layer-group" style="margin-right:3px;font-size:11px;"></i>深度注入</label><label class="ms-inject-radio${data.settings.stageInjectMode === "macro" ? " active" : ""}" data-mode="macro"><input type="radio" name="ms-inject-mode" value="macro" ${data.settings.stageInjectMode === "macro" ? "checked" : ""}><i class="fa-solid fa-code" style="margin-right:3px;font-size:11px;"></i>自定义宏 {{stage}}</label></div><div class="ms-macro-info">
-  <div class="ms-macro-info-title"><i class="fa-solid fa-wand-magic-sparkles" style="margin-right:4px;color:var(--ms-accent);"></i>可用宏</div>
-  
-  <div style="font-size:10px;color:var(--ms-accent);font-weight:600;margin:4px 0 2px;opacity:0.85;">全局宏（预设、世界书、聊天历史等任何地方都能用）</div>
-  <div><code>{\u200B{stage}}</code><span class="ms-macro-desc">剧场原始内容</span></div>
-  <div><code>{\u200B{stage_title}}</code><span class="ms-macro-desc">剧场标题</span></div>
-  <div><code>{\u200B{stage_prompt}}</code><span class="ms-macro-desc">前缀+剧场内容的完整注入体</span></div>
-  
-  <div style="font-size:10px;color:var(--ms-accent);font-weight:600;margin:6px 0 2px;opacity:0.85;">脚本宏（仅在「前缀指令」「多条外壳模板」框里有效，写进预设无效）</div>
-  <div><code>{\u200B{stages}}</code><span class="ms-macro-desc">多条任务合并插入</span></div>
-  <div><code>{\u200B{stage_count}}</code><span class="ms-macro-desc">剧场总数</span></div>
-  <div><code>{\u200B{stage_tasks}}</code><span class="ms-macro-desc">所有任务块拼接</span></div>
-  
-  <div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-top:6px;border-top:1px dashed rgba(255,255,255,0.08);padding-top:6px;">
-    ⚠️ <code style="font-style:normal;">{\u200B{stage}}</code> 与 <code style="font-style:normal;">{\u200B{stages}}</code> 的多任务行为不同，<a href="#" id="ms-goto-inject-guide" style="color:var(--ms-accent);cursor:pointer;">查看使用说明</a>
-  </div>
-</div><div id="ms-depth-opts" style="${data.settings.stageInjectMode === "depth" ? "" : "display:none;"}padding:0 14px;"><div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>注入深度</label><input type="number" id="ms-inject-depth" min="0" max="999" value="${data.settings.stageInjectDepth || 0}" style="width:100%;"></div><div class="ms-field" style="flex:1;"><label>消息角色</label><select id="ms-inject-role" style="width:100%;"><option value="system"${data.settings.stageInjectRole === "system" ? " selected" : ""}>System</option><option value="user"${data.settings.stageInjectRole === "user" ? " selected" : ""}>User</option><option value="assistant"${data.settings.stageInjectRole === "assistant" ? " selected" : ""}>Assistant</option></select></div></div></div><div class="ms-field" style="padding:6px 14px 0;"><label>默认前缀指令 <span style="font-weight:350;opacity:0.5;">(用 {\u200B{stage}} 标记剧场插入位置，不写则拼接在末尾)</span><i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-default-prefix" data-fs-title="编辑默认前缀指令" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-default-prefix" style="min-height:120px;resize:vertical;" placeholder="例：在正文最后输出以下剧场内容...">${esc(data.settings.defaultStagePrefix || "")}</textarea></div><div class="ms-field" style="padding:6px 14px 0;"><label>多条外壳模板 <span style="font-weight:350;opacity:0.5;">(选多条剧场时的整体结构，用 {\u200B{stage_count}} 表示数量，{\u200B{stage_tasks}} 表示所有任务块)</span> <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-multi-prefix" data-fs-title="编辑多条外壳模板" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i></label><textarea id="ms-multi-prefix" style="min-height:80px;resize:vertical;" placeholder="留空使用内置默认模板">${esc(data.settings.multiStagePrefix || "")}</textarea><div style="padding:4px 2px;font-size:10px;color:var(--ms-danger);line-height:1.5;"><i class="fa-solid fa-triangle-exclamation" style="margin-right:3px;"></i>多条外壳模板中必须包含 {\u200B{stage_tasks}}，否则会自动回退使用内置默认模板</div></div><div class="ms-section-label" style="margin-top:6px;">生成后行为</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-clear-after-gen-toggle" ${data.settings.clearStageAfterGeneration ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">生成完成后自动清除选中的注入</span></div><div style="padding:4px 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);line-height:1.5;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>开启后每次成功生成会自动取消已选注入；API 报错、空回复或用户中止时不会清除，方便直接重试</div><div class="ms-section-label" style="margin-top:6px;">随机注入</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-random-toggle" ${data.settings.randomInject && data.settings.randomInject.enabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">没有手动选中时，自动从随机池中抽取</span></div><div id="ms-random-multi-wrap" style="${data.settings.randomInject && data.settings.randomInject.enabled ? "" : "display:none;"}"><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-random-multi-toggle" ${data.settings.randomInject && data.settings.randomInject.multiEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">随机抽取多条剧场</span></div><div id="ms-random-multi-count-wrap" style="${data.settings.randomInject && data.settings.randomInject.multiEnabled ? "" : "display:none;"}padding:4px 14px;"><div class="ms-field"><label>每次随机抽取的数量</label><div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-random-multi-count" min="1" max="10" step="1" value="${(data.settings.randomInject && data.settings.randomInject.multiCount) || 2}" style="width:80px;"><span style="font-size:12px;color:var(--SmartThemeQuoteColor,#888);">条（建议 2-5 条，过多会污染上下文）</span></div></div></div></div></div><button class="ms-tbtn" id="ms-go-random-pool" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-sliders"></i> 管理随机池</button><div class="ms-section-label" style="margin-top:6px;">固定注入</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-pinned-toggle" ${data.settings.pinnedInject && data.settings.pinnedInject.enabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">启用固定注入序列</span></div><div style="padding:4px 14px 8px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);line-height:1.5;"><i class="fa-solid fa-circle-info" style="margin-right:4px;color:var(--ms-accent);"></i>没有手动选中时，按你排好的序列注入。序列里的骰子占位符需要同时开启上方「随机注入」才会抽取</div><button class="ms-tbtn" id="ms-go-pinned-pool" style="width:100%;text-align:center;"><i class="fa-solid fa-thumbtack"></i> 管理固定池 (${data.settings.pinnedInject && Array.isArray(data.settings.pinnedInject.sequence) ? data.settings.pinnedInject.sequence.length : 0})</button><button class="ms-tbtn" id="ms-go-qp" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-bolt"></i> 管理快捷短语 (${data.quickPhrases.length})</button><button class="ms-tbtn" id="ms-go-stats" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-chart-bar"></i> 使用统计</button><div class="ms-section-label">订阅设置</div><div class="ms-field"><label>自动检查间隔 <span style="font-weight:350;opacity:0.5;">(打开面板时，超过此时间未检查的订阅会自动静默检查)</span></label><div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-auto-check-interval" min="0" max="168" step="1" value="${data.settings.autoCheckInterval || 6}" style="width:80px;"><span style="font-size:12px;color:var(--SmartThemeQuoteColor,#888);">小时（设为 0 关闭自动检查）</span></div></div><button class="ms-tbtn" id="ms-go-subs" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-rss"></i> 订阅管理 (${data.subscriptions.length})</button><div class="ms-section-label">界面自定义</div><div style="display:flex;align-items:center;gap:8px;padding:8px 14px 4px;"><span style="font-size:13px;color:var(--SmartThemeBodyColor,#ccc);flex-shrink:0;">收起方式</span><div style="display:flex;gap:5px;margin-left:auto;flex-shrink:0;"><span class="ms-tag-toggle${data.settings.collapseMode !== "ball" ? " active" : ""}" data-collapse-mode="bar" style="${data.settings.collapseMode !== "ball" ? "background:var(--ms-accent);color:#fff;" : ""}"><i class="fa-solid fa-window-minimize" style="margin-right:4px;font-size:9px;"></i>折叠条</span><span class="ms-tag-toggle${data.settings.collapseMode === "ball" ? " active" : ""}" data-collapse-mode="ball" style="${data.settings.collapseMode === "ball" ? "background:var(--ms-accent);color:#fff;" : ""}"><i class="fa-solid fa-circle-dot" style="margin-right:4px;font-size:9px;"></i>悬浮球</span></div></div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-ui-custom-toggle" ${data.settings.uiCustomEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">启用自定义字号和面板尺寸</span></div><div id="ms-ui-custom-details" style="${data.settings.uiCustomEnabled ? "" : "display:none;"}padding:4px 14px;"><div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>字号 (px)</label><input type="number" id="ms-ui-font-size" min="10" max="24" value="${data.settings.uiFontSize}"></div><div class="ms-field" style="flex:1;"><label>面板宽度 (px)</label><input type="number" id="ms-ui-panel-width" min="320" max="1400" value="${data.settings.uiPanelWidth}"></div><div class="ms-field" style="flex:1;"><label>最大高度 (vh)</label><input type="number" id="ms-ui-panel-height" min="40" max="100" value="${data.settings.uiPanelHeight}"></div></div></div><div class="ms-section-label">主题适配</div><button class="ms-tbtn" id="ms-tb-open" style="width:100%;text-align:center;"><i class="fa-solid fa-palette"></i> 主题绑定 (${Object.keys(data.settings.themeBindings || {}).length})</button><div style="font-size:10px;color:var(--SmartThemeQuoteColor,#555);padding:4px 14px;line-height:1.5;">为抓取背景失败、撞色严重的美化主题指定面板背景和文字色。</div><div class="ms-section-label">使用说明</div><button class="ms-tbtn" id="ms-regen-guide" style="width:100%;text-align:center;"><i class="fa-solid fa-book"></i> 重新生成使用说明</button><div class="ms-section-label">脚本更新 <span style="font-weight:400;opacity:0.6;text-transform:none;letter-spacing:0;margin-left:4px;">当前 v${SCRIPT_VERSION}</span></div><button class="ms-tbtn" id="ms-update-script" style="width:100%;text-align:center;"><i class="fa-solid fa-arrows-rotate"></i> 检查脚本更新</button>
-<button class="ms-tbtn" id="ms-view-changelog" style="width:100%;text-align:center;margin-top:6px;"><i class="fa-solid fa-clipboard-list"></i> 查看更新日志</button><div style="font-size:10px;color:var(--SmartThemeQuoteColor,#555);padding:4px 14px;line-height:1.5;">刷新浏览器缓存并重载脚本，获取最新版本。</div><div class="ms-section-label">数据管理</div><div style="display:flex;align-items:center;gap:10px;padding:6px 14px;font-size:13px;"><label class="ms-switch"><input type="checkbox" id="ms-history-warn-toggle" ${data.settings.historyWarnEnabled ? "checked" : ""}><span class="ms-switch-slider"></span></label><span style="color:var(--SmartThemeBodyColor,#ccc);">历史超过30条时在底栏变红提醒</span></div><button class="ms-tbtn" id="ms-go-history-list" style="width:100%;text-align:center;margin-bottom:6px;"><i class="fa-solid fa-clock-rotate-left"></i> 查看有历史记录的剧场(${
-      data.prompts.filter(function (p) {
-        return p.history && p.history.length > 0;
-      }).length
-    } 条)</button><button class="ms-tbtn" id="ms-clean-lost-chars" style="width:100%;text-align:center;margin-bottom:6px;"><i class="fa-solid fa-user-slash"></i> 处理失联角色（重绑/解绑）</button><button class="ms-tbtn danger" id="ms-clear-all-history" style="width:100%;text-align:center;"><i class="fa-solid fa-broom"></i> 清空全部版本历史</button><button class="ms-tbtn danger" id="ms-wipe-all-data" style="width:100%;text-align:center;margin-top:6px;background:rgba(var(--ms-danger-rgb),0.12);border-color:var(--ms-danger);"><i class="fa-solid fa-skull-crossbones"></i> 彻底清空所有本地数据</button><div style="padding:6px 14px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);" id="ms-data-size-info"></div></div>`),
+function _msSetHead(title, desc) {
+  var h =
+    '<div class="ms-set-head"><div class="ms-set-head-title">' +
+    esc(title) +
+    "</div>";
+  if (desc) h += '<div class="ms-set-head-desc">' + desc + "</div>";
+  return h + "</div>";
+}
+
+function _msSetRow(o) {
+  var cls = "ms-set-row";
+  if (o.danger) cls += " danger";
+  if (o.plain) cls += " static";
+  var attr = "";
+  if (o.id) attr += ' id="' + o.id + '"';
+  if (o.nav) attr += ' data-set-nav="' + escAttr(o.nav) + '"';
+  if (o.act) attr += ' data-set-act="' + escAttr(o.act) + '"';
+  var h = '<div class="' + cls + '"' + attr + ">";
+  if (o.icon)
+    h +=
+      '<div class="ms-set-ico"><i class="fa-solid ' + o.icon + '"></i></div>';
+  h +=
+    '<div class="ms-set-main"><div class="ms-set-title">' + o.title + "</div>";
+  if (o.desc) h += '<div class="ms-set-desc">' + o.desc + "</div>";
+  h += "</div>";
+  if (o.value) h += '<span class="ms-set-value">' + o.value + "</span>";
+  if (o.sw)
+    h +=
+      '<div class="ms-adv-switch-wrap"><label class="ms-switch" style="margin:0;"><input type="checkbox" id="' +
+      o.sw +
+      '"' +
+      (o.on ? " checked" : "") +
+      '><span class="ms-switch-slider"></span></label></div>';
+  if (o.nav) h += '<i class="fa-solid fa-angle-right ms-set-chev"></i>';
+  return h + "</div>";
+}
+
+function _msSetField(labelHtml, inputHtml) {
+  return (
+    '<div class="ms-set-field"><div class="ms-field">' +
+    (labelHtml ? "<label>" + labelHtml + "</label>" : "") +
+    inputHtml +
+    "</div></div>"
   );
-  $p.find("#ms-footer").hide();
-  bindAllEvents();
+}
+
+function _msSetNote(html) {
+  return '<div class="ms-set-note">' + html + "</div>";
+}
+
+function _msDataSize() {
   try {
-    var sizeKB = Math.round(
+    var kb = Math.round(
       JSON.stringify({
         groups: data.groups,
         prompts: data.prompts,
@@ -14877,162 +16682,598 @@ function renderSettings() {
         settings: data.settings,
       }).length / 1024,
     );
-    var sizeText =
-      sizeKB < 1024 ? sizeKB + " KB" : (sizeKB / 1024).toFixed(2) + " MB";
-    var warnH =
-      sizeKB > 2048
-        ? ' <span style="color:var(--ms-danger);">(偏大，建议清理历史)</span>'
-        : "";
-    $p.find("#ms-data-size-info").html(
-      '<i class="fa-solid fa-database" style="margin-right:4px;"></i>当前数据体积：<strong>' +
-        sizeText +
-        "</strong>" +
-        warnH,
-    );
-  } catch (e) {}
-  $p.find("#ms-body").on("click.ms", "#ms-goto-inject-guide", function (e) {
-    e.preventDefault();
-    if (getPrompt("_builtin_inject_guide")) {
-      navigateTo({ name: "preview", promptId: "_builtin_inject_guide" });
-    } else {
-      toast("warning", "找不到注入功能指南，可在设置里重新生成使用说明");
-    }
+    return {
+      kb: kb,
+      text: kb < 1024 ? kb + " KB" : (kb / 1024).toFixed(2) + " MB",
+    };
+  } catch (e) {
+    return { kb: 0, text: "未知" };
+  }
+}
+
+function _msHistoryTotal() {
+  return data.prompts.reduce(function (s, p) {
+    return s + (p.history ? p.history.length : 0);
+  }, 0);
+}
+
+function _msRandomPoolCount() {
+  return data.prompts.filter(function (p) {
+    return isInRandomPool(p);
+  }).length;
+}
+
+function _msPinnedSeqCount() {
+  var pi = data.settings.pinnedInject;
+  return pi && Array.isArray(pi.sequence) ? pi.sequence.length : 0;
+}
+
+function _msInjectRoleLabel() {
+  var r = data.settings.stageInjectRole || "system";
+  if (r === "user") return "User";
+  if (r === "assistant") return "Assistant";
+  return "System";
+}
+
+function _msBindSetRows($p) {
+  var $body = $p.find("#ms-body");
+  $body.on("click.ms", "[data-set-nav]", function (e) {
+    if (
+      $(e.target).closest(".ms-switch, input, select, textarea, button, a")
+        .length
+    )
+      return;
+    var n = $(this).attr("data-set-nav");
+    if (n) navigateTo({ name: n });
   });
-  $p.find("#ms-body").on("change.ms", "#ms-inject-enabled-toggle", function () {
+  $body.on("click.ms", ".ms-set-row", function (e) {
+    if (
+      $(e.target).closest(".ms-switch, input, select, textarea, button, a")
+        .length
+    )
+      return;
+    if ($(this).attr("data-set-nav")) return;
+    var $sw = $(this).find('.ms-switch input[type="checkbox"]');
+    if ($sw.length) $sw.prop("checked", !$sw.prop("checked")).trigger("change");
+  });
+}
+
+function _msShowMacroHelp() {
+  var body = stripZeroWidth(
+    '<div class="ms-macro-info" style="margin:0;">' +
+      '<div style="font-size:10px;color:var(--ms-accent);font-weight:600;margin:0 0 2px;opacity:0.85;">全局宏（预设、世界书、聊天历史等任何地方都能用）</div>' +
+      "<div><code>{\u200B{stage}}</code><span class=\"ms-macro-desc\">剧场原始内容</span></div>" +
+      "<div><code>{\u200B{stage_title}}</code><span class=\"ms-macro-desc\">剧场标题</span></div>" +
+      "<div><code>{\u200B{stage_prompt}}</code><span class=\"ms-macro-desc\">前缀+剧场内容的完整注入体</span></div>" +
+      '<div style="font-size:10px;color:var(--ms-accent);font-weight:600;margin:8px 0 2px;opacity:0.85;">脚本宏（仅在「前缀指令」「多条外壳模板」框里有效）</div>' +
+      "<div><code>{\u200B{stages}}</code><span class=\"ms-macro-desc\">多条任务合并插入</span></div>" +
+      "<div><code>{\u200B{stage_count}}</code><span class=\"ms-macro-desc\">剧场总数</span></div>" +
+      "<div><code>{\u200B{stage_tasks}}</code><span class=\"ms-macro-desc\">所有任务块拼接</span></div>" +
+      '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-top:8px;border-top:1px dashed rgba(255,255,255,0.08);padding-top:7px;line-height:1.7;">' +
+      "<code style=\"font-style:normal;\">{\u200B{stage}}</code> 与 <code style=\"font-style:normal;\">{\u200B{stages}}</code> 的多任务行为不同，" +
+      '<a href="#" id="ms-goto-inject-guide" style="color:var(--ms-accent);cursor:pointer;">查看完整说明</a></div>' +
+      "</div>",
+  );
+  showModal({
+    title: "可用宏速查",
+    iconType: "info",
+    icon: "fa-wand-magic-sparkles",
+    modalStyle: "min-width:320px;max-width:92vw;width:440px;",
+    body: body,
+    buttons: [{ text: "知道了", cls: "primary", primary: true, value: true }],
+    onShow: function ($overlay, close) {
+      $overlay.on("click", "#ms-goto-inject-guide", function (e) {
+        e.preventDefault();
+        close(true);
+        setTimeout(function () {
+          if (getPrompt("_builtin_inject_guide")) {
+            navigateTo({ name: "preview", promptId: "_builtin_inject_guide" });
+          } else {
+            toast("warning", "找不到注入功能指南，可在关于页重新生成使用说明");
+          }
+        }, 200);
+      });
+    },
+  });
+}
+
+function renderSettings() {
+  var $p = setupPage("设置");
+  var injectOn = !!data.settings.stageInjectEnabled;
+  var injectDesc;
+  if (!injectOn) {
+    injectDesc = "已关闭，剧场仅能手动填入输入框";
+  } else if (data.settings.stageInjectMode === "macro") {
+    injectDesc = "已启用 · 自定义宏模式";
+  } else {
+    injectDesc =
+      "已启用 · 深度注入 · 深度 " +
+      (data.settings.stageInjectDepth || 0) +
+      " · " +
+      _msInjectRoleLabel();
+  }
+
+  var ri = data.settings.randomInject || {};
+  var pi = data.settings.pinnedInject || {};
+  var poolParts = [];
+  if (ri.enabled) {
+    poolParts.push(
+      "随机 " +
+        (ri.multiEnabled ? (parseInt(ri.multiCount) || 2) + " 条" : "1 条"),
+    );
+  } else {
+    poolParts.push("随机已关");
+  }
+  poolParts.push(
+    pi.enabled ? "固定序列 " + _msPinnedSeqCount() + " 项" : "固定已关",
+  );
+
+  var appearParts = [];
+  appearParts.push(
+    data.settings.collapseMode === "ball" ? "悬浮球收起" : "折叠条收起",
+  );
+  appearParts.push(
+    data.settings.uiCustomEnabled
+      ? "字号 " + data.settings.uiFontSize + "px"
+      : "默认尺寸",
+  );
+  var themeCnt = Object.keys(data.settings.themeBindings || {}).length;
+  if (themeCnt > 0) appearParts.push("主题绑定 " + themeCnt);
+
+  var sizeInfo = _msDataSize();
+  var histTotal = _msHistoryTotal();
+
+  var html = "";
+  html += _msSetHead("注入", "控制剧场内容如何随发送进入 AI 的提示词");
+  html += _msSetRow({
+    nav: "settings-inject",
+    icon: "fa-syringe",
+    title: "注入功能",
+    desc: esc(injectDesc),
+  });
+  html += _msSetRow({
+    nav: "settings-pools",
+    icon: "fa-dice",
+    title: "随机与固定序列",
+    desc: esc(poolParts.join(" · ")),
+  });
+
+  html += _msSetHead("内容");
+  html += _msSetRow({
+    nav: "settings-content",
+    icon: "fa-pen-nib",
+    title: "创作与订阅",
+    desc:
+      "默认作者 · 快捷短语 " +
+      data.quickPhrases.length +
+      " 条 · 订阅 " +
+      data.subscriptions.length +
+      " 个",
+  });
+  html += _msSetRow({
+    nav: "stats",
+    icon: "fa-chart-simple",
+    title: "使用统计",
+  });
+
+  html += _msSetHead("外观");
+  html += _msSetRow({
+    nav: "settings-appearance",
+    icon: "fa-palette",
+    title: "界面与主题",
+    desc: esc(appearParts.join(" · ")),
+  });
+
+  html += _msSetHead("数据", "备份、清理与跨端搬运");
+  html += _msSetRow({
+    nav: "settings-data",
+    icon: "fa-database",
+    title: "数据管理",
+    desc:
+      "占用 " +
+      esc(sizeInfo.text) +
+      " · 版本历史 " +
+      histTotal +
+      " 条" +
+      (sizeInfo.kb > 2048
+        ? ' · <span style="color:var(--ms-danger);">建议清理</span>'
+        : ""),
+  });
+  html += _msSetRow({
+    nav: "settings-transfer",
+    icon: "fa-right-left",
+    title: "格式转换台",
+    desc: "与转换台交换分组、标签与剧场数据",
+  });
+
+  html += _msSetHead("关于", "");
+  html += _msSetRow({
+    nav: "settings-about",
+    icon: "fa-circle-info",
+    title: "关于与更新",
+    desc: "当前版本 v" + SCRIPT_VERSION,
+  });
+
+  $p.find("#ms-body").html('<div class="ms-page-minh">' + html + "</div>");
+  $p.find("#ms-footer").hide();
+  bindAllEvents();
+  _msBindSetRows($p);
+}
+
+function renderSettingsInject() {
+  var $p = setupPage("注入功能");
+  var on = !!data.settings.stageInjectEnabled;
+  var isMacro = data.settings.stageInjectMode === "macro";
+
+  var html = "";
+  html += _msSetHead(
+    "总开关",
+    "开启后，选中的剧场会随下一次发送注入到 AI 提示词中",
+  );
+  html += _msSetRow({
+    icon: "fa-syringe",
+    title: "启用注入功能",
+    sw: "ms-inject-enabled-toggle",
+    on: on,
+  });
+
+  if (on) {
+    html += _msSetHead(
+      "注入方式",
+      "深度注入由脚本插入到聊天记录中；自定义宏需要你在预设里手动放占位符",
+    );
+    html +=
+      '<div class="ms-set-seg">' +
+      '<button class="ms-set-segbtn' +
+      (isMacro ? "" : " active") +
+      '" data-inject-mode="depth"><i class="fa-solid fa-layer-group"></i>深度注入</button>' +
+      '<button class="ms-set-segbtn' +
+      (isMacro ? " active" : "") +
+      '" data-inject-mode="macro"><i class="fa-solid fa-code"></i>自定义宏</button>' +
+      "</div>";
+
+    if (!isMacro) {
+      html += _msSetField(
+        "",
+        '<div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>注入深度</label><input type="number" id="ms-inject-depth" min="0" max="999" value="' +
+          (data.settings.stageInjectDepth || 0) +
+          '"></div><div class="ms-field" style="flex:1;"><label>消息角色</label><select id="ms-inject-role"><option value="system"' +
+          (data.settings.stageInjectRole === "system" ? " selected" : "") +
+          '>System</option><option value="user"' +
+          (data.settings.stageInjectRole === "user" ? " selected" : "") +
+          '>User</option><option value="assistant"' +
+          (data.settings.stageInjectRole === "assistant" ? " selected" : "") +
+          ">Assistant</option></select></div></div>",
+      );
+    }
+
+    html += _msSetRow({
+      act: "macro-help",
+      icon: "fa-wand-magic-sparkles",
+      title: "可用宏速查",
+    });
+
+    html += _msSetHead(
+      "前缀模板",
+      stripZeroWidth(
+        "用 <code>{\u200B{stage}}</code> 标记剧场插入位置；不写则直接拼接在末尾",
+      ),
+    );
+    html += _msSetField(
+      '默认前缀指令 <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-default-prefix" data-fs-title="编辑默认前缀指令" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i>',
+      '<textarea id="ms-default-prefix" style="min-height:120px;resize:vertical;" placeholder="例：在正文最后输出以下剧场内容...">' +
+        esc(data.settings.defaultStagePrefix || "") +
+        "</textarea>",
+    );
+    html += _msSetField(
+      '多条外壳模板 <i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-multi-prefix" data-fs-title="编辑多条外壳模板" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.7;font-size:11px;margin-left:4px;padding:2px 4px;border-radius:3px;"></i>',
+      '<textarea id="ms-multi-prefix" style="min-height:80px;resize:vertical;" placeholder="留空使用内置默认模板">' +
+        esc(data.settings.multiStagePrefix || "") +
+        "</textarea>",
+    );
+    html += _msSetNote(
+      stripZeroWidth(
+        '<i class="fa-solid fa-triangle-exclamation" style="color:var(--ms-danger);margin-right:4px;"></i>多条外壳模板中必须包含 <code style="background:rgba(var(--ms-accent-rgb),0.12);color:var(--ms-accent);padding:1px 5px;border-radius:3px;">{\u200B{stage_tasks}}</code>，否则会自动回退到内置默认模板',
+      ),
+    );
+
+    html += _msSetHead(
+      "生成后行为",
+      "API 报错、空回复或用户中止时不会清除，方便直接重试",
+    );
+    html += _msSetRow({
+      icon: "fa-broom",
+      title: "生成完成后自动清除注入",
+      sw: "ms-clear-after-gen-toggle",
+      on: !!data.settings.clearStageAfterGeneration,
+    });
+  }
+
+  $p.find("#ms-body").html('<div class="ms-page-minh">' + html + "</div>");
+  $p.find("#ms-footer").hide();
+  bindAllEvents();
+  _msBindSetRows($p);
+
+  var $body = $p.find("#ms-body");
+  $body.on("change.ms", "#ms-inject-enabled-toggle", function () {
     data.settings.stageInjectEnabled = $(this).is(":checked");
     saveData();
     updateInjectIndicator();
-    $p.find("#ms-inject-details").toggle($(this).is(":checked"));
+    renderSettingsInject();
   });
-  $p.find("#ms-body").on("click.ms", ".ms-inject-radio", function () {
-    var mode = $(this).data("mode");
+  $body.on("click.ms", "[data-inject-mode]", function () {
+    var mode = $(this).attr("data-inject-mode");
+    if (data.settings.stageInjectMode === mode) return;
     data.settings.stageInjectMode = mode;
     saveData();
-    $p.find(".ms-inject-radio").removeClass("active");
-    $(this).addClass("active");
-    if (mode === "depth") $p.find("#ms-depth-opts").show();
-    else $p.find("#ms-depth-opts").hide();
+    renderSettingsInject();
   });
-  $p.find("#ms-body").on("input.ms", "#ms-inject-depth", function () {
+  $body.on("input.ms", "#ms-inject-depth", function () {
     var val = parseInt($(this).val());
     if (isNaN(val) || val < 0) val = 0;
+    if (val > 999) val = 999;
     data.settings.stageInjectDepth = val;
     saveData();
   });
-  $p.find("#ms-body").on("change.ms", "#ms-inject-role", function () {
+  $body.on("change.ms", "#ms-inject-role", function () {
     data.settings.stageInjectRole = $(this).val();
     saveData();
   });
-  $p.find("#ms-body").on("input.ms", "#ms-default-prefix", function () {
+  $body.on("click.ms", "[data-set-act='macro-help']", function () {
+    _msShowMacroHelp();
+  });
+  $body.on("input.ms", "#ms-default-prefix", function () {
     data.settings.defaultStagePrefix = $(this).val();
     saveData();
   });
-  $p.find("#ms-body").on("input.ms", "#ms-multi-prefix", function () {
+  $body.on("input.ms", "#ms-multi-prefix", function () {
     data.settings.multiStagePrefix = $(this).val();
     saveData();
   });
-  $p.find("#ms-body").on(
-    "change.ms",
-    "#ms-clear-after-gen-toggle",
-    function () {
-      data.settings.clearStageAfterGeneration = $(this).is(":checked");
-      saveData();
-    },
-  );
+  $body.on("change.ms", "#ms-clear-after-gen-toggle", function () {
+    data.settings.clearStageAfterGeneration = $(this).is(":checked");
+    saveData();
+    renderSettingsInject();
+  });
+}
 
-  $p.find("#ms-body").on("change.ms", "#ms-random-toggle", function () {
-    if (!data.settings.randomInject)
-      data.settings.randomInject = {
-        enabled: false,
-        excludedGroupIds: [],
-        excludedSeries: [],
-        excludedPromptIds: [],
-        multiEnabled: false,
-        multiCount: 2,
-      };
-    data.settings.randomInject.enabled = $(this).is(":checked");
+function renderSettingsPools() {
+  var $p = setupPage("随机与固定序列");
+  if (!data.settings.randomInject) {
+    data.settings.randomInject = {
+      enabled: false,
+      excludedGroupIds: [],
+      excludedSeries: [],
+      excludedPromptIds: [],
+      excludedSubGroups: [],
+      multiEnabled: false,
+      multiCount: 2,
+    };
+  }
+  if (!data.settings.pinnedInject) {
+    data.settings.pinnedInject = { enabled: false, sequence: [] };
+  }
+  var ri = data.settings.randomInject;
+  var pi = data.settings.pinnedInject;
+  var poolCnt = _msRandomPoolCount();
+
+  var html = "";
+  if (!data.settings.stageInjectEnabled) {
+    html += _msSetNote(
+      '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>注入总开关当前是关闭的，这里的设置要等开启后才会生效',
+    );
+  }
+
+  html += _msSetHead("随机注入", "没有手动选中剧场时，自动从随机池里抽取");
+  html += _msSetRow({
+    icon: "fa-dice",
+    title: "启用随机注入",
+    sw: "ms-random-toggle",
+    on: !!ri.enabled,
+  });
+  if (ri.enabled) {
+    html += _msSetRow({
+      icon: "fa-layer-group",
+      title: "一次抽取多条",
+      desc: ri.multiEnabled
+        ? "每次抽取 " + (parseInt(ri.multiCount) || 2) + " 条"
+        : "每次只抽 1 条",
+      sw: "ms-random-multi-toggle",
+      on: !!ri.multiEnabled,
+    });
+    if (ri.multiEnabled) {
+      html += _msSetField(
+        "抽取数量",
+        '<div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-random-multi-count" min="1" max="10" step="1" value="' +
+          (parseInt(ri.multiCount) || 2) +
+          '" style="width:90px;"><span style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);">条（建议 2-5 条，过多会污染上下文）</span></div>',
+      );
+    }
+  }
+  html += _msSetRow({
+    nav: "random-pool",
+    icon: "fa-sliders",
+    title: "管理随机池",
+    desc: "按分组、文件夹、系列或单条排除内容",
+    value: "可用 " + poolCnt + " 条",
+  });
+
+  html += _msSetHead(
+    "固定注入",
+    "没有手动选中时，按你排好的序列注入；序列里的骰子占位需要同时开启随机注入",
+  );
+  html += _msSetRow({
+    icon: "fa-thumbtack",
+    title: "启用固定序列",
+    sw: "ms-pinned-toggle",
+    on: !!pi.enabled,
+  });
+  html += _msSetRow({
+    nav: "pinned-pool",
+    icon: "fa-list-ol",
+    title: "管理固定池",
+    value: _msPinnedSeqCount() + " 项",
+  });
+
+  $p.find("#ms-body").html('<div class="ms-page-minh">' + html + "</div>");
+  $p.find("#ms-footer").hide();
+  bindAllEvents();
+  _msBindSetRows($p);
+
+  var $body = $p.find("#ms-body");
+  $body.on("change.ms", "#ms-random-toggle", function () {
+    ri.enabled = $(this).is(":checked");
     saveData();
     updateInjectIndicator();
-    $p.find("#ms-random-multi-wrap").toggle($(this).is(":checked"));
+    renderSettingsPools();
   });
-  $p.find("#ms-body").on("change.ms", "#ms-random-multi-toggle", function () {
-    if (!data.settings.randomInject) return;
-    data.settings.randomInject.multiEnabled = $(this).is(":checked");
+  $body.on("change.ms", "#ms-random-multi-toggle", function () {
+    ri.multiEnabled = $(this).is(":checked");
     saveData();
-    $p.find("#ms-random-multi-count-wrap").toggle($(this).is(":checked"));
+    renderSettingsPools();
   });
-  $p.find("#ms-body").on("input.ms", "#ms-random-multi-count", function () {
+  $body.on("input.ms", "#ms-random-multi-count", function () {
     var val = parseInt($(this).val());
     if (isNaN(val) || val < 1) val = 1;
     if (val > 10) val = 10;
-    if (!data.settings.randomInject) return;
-    data.settings.randomInject.multiCount = val;
+    ri.multiCount = val;
     saveData();
   });
-  $p.find("#ms-body").on("click.ms", "#ms-go-random-pool", function () {
-    navigateTo({ name: "random-pool" });
-  });
-  $p.find("#ms-body").on("change.ms", "#ms-pinned-toggle", function () {
-    if (!data.settings.pinnedInject)
-      data.settings.pinnedInject = { enabled: false, sequence: [] };
-    data.settings.pinnedInject.enabled = $(this).is(":checked");
+  $body.on("change.ms", "#ms-pinned-toggle", function () {
+    pi.enabled = $(this).is(":checked");
     saveData();
     updateInjectIndicator();
+    renderSettingsPools();
   });
-  $p.find("#ms-body").on("click.ms", "#ms-go-pinned-pool", function () {
-    navigateTo({ name: "pinned-pool" });
+}
+
+function renderSettingsContent() {
+  var $p = setupPage("创作与订阅");
+  var html = "";
+
+  html += _msSetHead("创作默认值", "新建剧场时自动带上的内容");
+  html += _msSetField(
+    "默认作者署名",
+    '<input type="text" id="ms-default-author" placeholder="新建时自动填入" value="' +
+      esc(data.settings.defaultAuthor || "") +
+      '">',
+  );
+  html += _msSetRow({
+    nav: "quick-phrases",
+    icon: "fa-bolt",
+    title: "快捷短语",
+    desc: "在编辑器工具栏一键插入的常用片段",
+    value: data.quickPhrases.length + " 条",
   });
-  $p.find("#ms-body").on("input.ms", "#ms-default-author", function () {
+
+  html += _msSetHead(
+    "订阅",
+    "打开面板时，超过设定时间未检查的订阅会自动静默检查",
+  );
+  html += _msSetField(
+    "自动检查间隔",
+    '<div style="display:flex;align-items:center;gap:8px;"><input type="number" id="ms-auto-check-interval" min="0" max="168" step="1" value="' +
+      (data.settings.autoCheckInterval === undefined
+        ? 6
+        : data.settings.autoCheckInterval) +
+      '" style="width:90px;"><span style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);">小时（设为 0 关闭自动检查）</span></div>',
+  );
+  html += _msSetRow({
+    nav: "subscriptions",
+    icon: "fa-rss",
+    title: "订阅管理",
+    desc: "添加作者分享的链接，一键同步更新",
+    value: data.subscriptions.length + " 个",
+  });
+
+  $p.find("#ms-body").html('<div class="ms-page-minh">' + html + "</div>");
+  $p.find("#ms-footer").hide();
+  bindAllEvents();
+  _msBindSetRows($p);
+
+  var $body = $p.find("#ms-body");
+  $body.on("input.ms", "#ms-default-author", function () {
     data.settings.defaultAuthor = $(this).val().trim();
     saveData();
   });
-  $p.find("#ms-body").on("input.ms", "#ms-auto-check-interval", function () {
+  $body.on("input.ms", "#ms-auto-check-interval", function () {
     var val = parseInt($(this).val());
     if (isNaN(val) || val < 0) val = 0;
     if (val > 168) val = 168;
     data.settings.autoCheckInterval = val;
     saveData();
   });
-  $p.find("#ms-body").on("click.ms", "#ms-go-qp", () =>
-    navigateTo({ name: "quick-phrases" }),
+}
+
+function renderSettingsAppearance() {
+  var $p = setupPage("界面与主题");
+  var isBall = data.settings.collapseMode === "ball";
+  var uiOn = !!data.settings.uiCustomEnabled;
+  var themeCnt = Object.keys(data.settings.themeBindings || {}).length;
+
+  var html = "";
+  html += _msSetHead(
+    "收起方式",
+    "折叠条会把面板缩成一条标题栏；悬浮球会完全隐藏面板，只留一个可拖动的小球",
   );
-  $p.find("#ms-body").on("click.ms", "#ms-go-stats", () =>
-    navigateTo({ name: "stats" }),
+  html +=
+    '<div class="ms-set-seg">' +
+    '<button class="ms-set-segbtn' +
+    (isBall ? "" : " active") +
+    '" data-collapse-mode="bar"><i class="fa-solid fa-window-minimize"></i>折叠条</button>' +
+    '<button class="ms-set-segbtn' +
+    (isBall ? " active" : "") +
+    '" data-collapse-mode="ball"><i class="fa-solid fa-circle-dot"></i>悬浮球</button>' +
+    "</div>";
+
+  html += _msSetHead("面板尺寸", "关闭后跟随脚本默认尺寸，随窗口自适应");
+  html += _msSetRow({
+    icon: "fa-up-right-and-down-left-from-center",
+    title: "自定义字号与尺寸",
+    desc: uiOn
+      ? "字号 " +
+        data.settings.uiFontSize +
+        "px · 宽 " +
+        data.settings.uiPanelWidth +
+        "px · 高 " +
+        data.settings.uiPanelHeight +
+        "vh"
+      : "使用默认尺寸",
+    sw: "ms-ui-custom-toggle",
+    on: uiOn,
+  });
+  if (uiOn) {
+    html += _msSetField(
+      "",
+      '<div class="ms-form-row"><div class="ms-field" style="flex:1;"><label>字号 (px)</label><input type="number" id="ms-ui-font-size" min="10" max="24" value="' +
+        data.settings.uiFontSize +
+        '"></div><div class="ms-field" style="flex:1;"><label>宽度 (px)</label><input type="number" id="ms-ui-panel-width" min="320" max="1400" value="' +
+        data.settings.uiPanelWidth +
+        '"></div><div class="ms-field" style="flex:1;"><label>最大高度 (vh)</label><input type="number" id="ms-ui-panel-height" min="40" max="100" value="' +
+        data.settings.uiPanelHeight +
+        '"></div></div>',
+    );
+  }
+
+  html += _msSetHead(
+    "主题适配",
+    "为抓取背景失败、撞色严重的美化主题单独指定面板背景与文字色",
   );
-  $p.find("#ms-body").on("click.ms", "#ms-go-subs", () =>
-    navigateTo({ name: "subscriptions" }),
-  );
-  $p.find("#ms-body").on("change.ms", "#ms-ui-custom-toggle", function () {
-    data.settings.uiCustomEnabled = $(this).is(":checked");
-    saveData();
-    $p.find("#ms-ui-custom-details").toggle($(this).is(":checked"));
-    applyUICustomization();
+  html += _msSetRow({
+    nav: "theme-binding",
+    icon: "fa-palette",
+    title: "主题绑定",
+    desc: themeCnt > 0 ? "已为 " + themeCnt + " 个主题设定专属配色" : "尚未绑定任何主题",
+    value: themeCnt + " 个",
   });
-  $p.find("#ms-body").on("input.ms", "#ms-ui-font-size", function () {
-    var v = parseInt($(this).val());
-    if (!isNaN(v) && v >= 10 && v <= 24) {
-      data.settings.uiFontSize = v;
-      saveData();
-      applyUICustomization();
-    }
-  });
-  $p.find("#ms-body").on("input.ms", "#ms-ui-panel-width", function () {
-    var v = parseInt($(this).val());
-    if (!isNaN(v) && v >= 320 && v <= 1400) {
-      data.settings.uiPanelWidth = v;
-      saveData();
-      applyUICustomization();
-    }
-  });
-  $p.find("#ms-body").on("input.ms", "#ms-ui-panel-height", function () {
-    var v = parseInt($(this).val());
-    if (!isNaN(v) && v >= 40 && v <= 100) {
-      data.settings.uiPanelHeight = v;
-      saveData();
-      applyUICustomization();
-    }
-  });
-  $p.find("#ms-body").on("click.ms", "[data-collapse-mode]", function () {
+
+  $p.find("#ms-body").html('<div class="ms-page-minh">' + html + "</div>");
+  $p.find("#ms-footer").hide();
+  bindAllEvents();
+  _msBindSetRows($p);
+
+  var $body = $p.find("#ms-body");
+  $body.on("click.ms", "[data-collapse-mode]", function () {
     var mode = $(this).attr("data-collapse-mode");
     if (data.settings.collapseMode === mode) return;
     data.settings.collapseMode = mode;
@@ -15047,110 +17288,166 @@ function renderSettings() {
       hideFloatBall();
     }
     saveData();
-    renderSettings();
+    renderSettingsAppearance();
   });
-  $p.find("#ms-body").on("click.ms", "#ms-tb-open", function () {
-    navigateTo({ name: "theme-binding" });
+  $body.on("change.ms", "#ms-ui-custom-toggle", function () {
+    data.settings.uiCustomEnabled = $(this).is(":checked");
+    saveData();
+    applyUICustomization();
+    renderSettingsAppearance();
   });
-  $p.find("#ms-body").on("click.ms", "#ms-regen-guide", function () {
-    msConfirm(
-      "将重置「使用指南」分组下的5个内置文档（预览示例、使用说明、注入功能指南、订阅功能指南、角色绑定指南、），并立即从云端拉取最新内容，确定吗？",
-      { title: "重新生成使用说明", okText: "生成" },
-    ).then(async function (ok) {
-      if (!ok) return;
-      createBuiltinGuide();
-      toast("info", "正在从云端拉取最新内容...");
-      try {
-        var allDone = await updateBuiltinGuidesFromRemote(true);
-        if (allDone) {
-          toast("success", "使用说明已全部更新到最新版");
-        } else {
-          toast(
-            "warning",
-            "部分指南拉取失败，下次打开面板会自动重试失败的部分",
-          );
-        }
-      } catch (e) {
-        toast("error", "拉取失败：" + e.message);
-      }
-    });
-  });
-  $p.find("#ms-body").on("click.ms", "#ms-update-script", async function () {
-    var $btn = $(this);
-    $btn
-      .prop("disabled", true)
-      .html('<i class="fa-solid fa-spinner fa-spin"></i> 正在更新...');
-    try {
-      await msFetch(
-        "https://cdn.jsdelivr.net/gh/Sanjs333/stage/stage.js",
-        { cache: "reload" },
-        15000,
-      );
-      toast("success", "缓存已刷新，3秒后自动刷新页面...");
-      setTimeout(function () {
-        try {
-          triggerSlash("/reload-page");
-        } catch (e2) {
-          window.location.reload();
-        }
-      }, 2000);
-    } catch (e) {
-      if (isShutdownFetchError(e)) return;
-      toast("error", "更新失败: " + e.message);
-      $btn
-        .prop("disabled", false)
-        .html('<i class="fa-solid fa-arrows-rotate"></i> 检查脚本更新');
+  $body.on("input.ms", "#ms-ui-font-size", function () {
+    var v = parseInt($(this).val());
+    if (!isNaN(v) && v >= 10 && v <= 24) {
+      data.settings.uiFontSize = v;
+      saveData();
+      applyUICustomization();
     }
   });
-  $p.find("#ms-body").on("click.ms", "#ms-view-changelog", async function () {
-    var $btn = $(this);
-    var origHtml = $btn.html();
-    $btn
-      .prop("disabled", true)
-      .html('<i class="fa-solid fa-spinner fa-spin"></i> 加载中...');
-    try {
-      var content = await fetchRemoteGuide(GUIDE_REMOTE_URLS.changelog);
-      if (!content) {
-        toast("error", "更新日志加载失败，请检查网络");
-        $btn.prop("disabled", false).html(origHtml);
-        return;
-      }
-      showModal({
-        title: "小剧场 更新日志",
-        iconType: "info",
-        icon: "fa-clipboard-list",
-        modalStyle:
-          "min-width:400px;max-width:94vw;width:600px;max-height:80vh;",
-        body:
-          '<div class="ms-preview-content" style="padding:0;">' +
-          renderMd(content) +
-          "</div>",
-        buttons: [{ text: "关闭", cls: "primary", primary: true, value: true }],
-      });
-    } catch (e) {
-      toast("error", "加载失败: " + e.message);
+  $body.on("input.ms", "#ms-ui-panel-width", function () {
+    var v = parseInt($(this).val());
+    if (!isNaN(v) && v >= 320 && v <= 1400) {
+      data.settings.uiPanelWidth = v;
+      saveData();
+      applyUICustomization();
     }
-    $btn.prop("disabled", false).html(origHtml);
+  });
+  $body.on("input.ms", "#ms-ui-panel-height", function () {
+    var v = parseInt($(this).val());
+    if (!isNaN(v) && v >= 40 && v <= 100) {
+      data.settings.uiPanelHeight = v;
+      saveData();
+      applyUICustomization();
+    }
+  });
+}
+
+function renderSettingsData() {
+  var $p = setupPage("数据管理");
+  var sizeInfo = _msDataSize();
+  var histTotal = _msHistoryTotal();
+  var histPrompts = data.prompts.filter(function (p) {
+    return p.history && p.history.length > 0;
+  }).length;
+  var usedCount = data.prompts.filter(function (p) {
+    return p.usageCount > 0 || p.lastUsedAt;
+  }).length;
+
+  var html = "";
+  html += _msSetHead(
+    "存储占用",
+    "数据全部保存在酒馆的扩展设置里，超过 2 MB 建议清理版本历史",
+  );
+  html += _msSetRow({
+    plain: true,
+    icon: "fa-database",
+    title: "当前数据体积",
+    desc:
+      data.prompts.length +
+      " 条剧场 · " +
+      data.groups.length +
+      " 个分组 · " +
+      (data.settings.definedTags || []).length +
+      " 个标签",
+    value:
+      sizeInfo.kb > 2048
+        ? '<span style="color:var(--ms-danger);">' + esc(sizeInfo.text) + "</span>"
+        : esc(sizeInfo.text),
   });
 
-  $p.find("#ms-body").on("change.ms", "#ms-history-warn-toggle", function () {
+  html += _msSetHead("备份", "导出的 JSON 可以在其它设备或酒馆账号里导入还原");
+  html += _msSetRow({
+    act: "export",
+    icon: "fa-file-export",
+    title: "导出数据",
+    desc: "自由勾选要导出的剧场、分组与标签",
+  });
+  html += _msSetRow({
+    act: "import",
+    icon: "fa-file-import",
+    title: "导入数据",
+    desc: "从本地 JSON 文件导入，可选择合并或覆盖",
+  });
+
+  html += _msSetHead(
+    "版本历史",
+    "每条剧场最多保留 5 个历史版本，是体积增长的主要来源",
+  );
+  html += _msSetRow({
+    icon: "fa-bell",
+    title: "历史过多时提醒",
+    desc: "超过 30 条时在列表底栏标红提示",
+    sw: "ms-history-warn-toggle",
+    on: !!data.settings.historyWarnEnabled,
+  });
+  html += _msSetRow({
+    nav: "history-list",
+    icon: "fa-clock-rotate-left",
+    title: "有历史记录的剧场",
+    value: histPrompts + " 条 / " + histTotal + " 版",
+  });
+  html += _msSetRow({
+    act: "clear-history",
+    icon: "fa-broom",
+    title: "清空全部版本历史",
+    desc: "只删历史版本，剧场正文不受影响",
+    danger: true,
+  });
+
+  html += _msSetHead(
+    "角色数据",
+    "角色卡被删除或改名后，原有绑定会变成失联状态",
+  );
+  html += _msSetRow({
+    nav: "lost-chars",
+    icon: "fa-user-slash",
+    title: "处理失联角色",
+    desc: "重绑到本地现有角色卡，或直接解绑",
+  });
+
+  html += _msSetHead("危险操作", "以下操作不可撤销，执行前请务必先导出备份");
+  html += _msSetRow({
+    act: "reset-usage",
+    icon: "fa-arrow-rotate-left",
+    title: "重置使用统计",
+    desc:
+      usedCount > 0
+        ? usedCount + " 条剧场的使用次数与最近使用时间将归零"
+        : "当前没有需要重置的记录",
+    danger: true,
+  });
+  html += _msSetRow({
+    act: "wipe-all",
+    icon: "fa-skull-crossbones",
+    title: "彻底清空所有本地数据",
+    desc: "剧场、分组、标签、订阅、生日、设置全部删除",
+    danger: true,
+  });
+
+  $p.find("#ms-body").html('<div class="ms-page-minh">' + html + "</div>");
+  $p.find("#ms-footer").hide();
+  bindAllEvents();
+  _msBindSetRows($p);
+
+  var $body = $p.find("#ms-body");
+  $body.on("click.ms", "[data-set-act='export']", function () {
+    navigateTo({ name: "export" });
+  });
+  $body.on("click.ms", "[data-set-act='import']", function () {
+    $p.find("#ms-file-input").trigger("click");
+  });
+  $body.on("change.ms", "#ms-history-warn-toggle", function () {
     data.settings.historyWarnEnabled = $(this).is(":checked");
     saveData();
   });
-  $p.find("#ms-body").on("click.ms", "#ms-go-history-list", () =>
-    navigateTo({ name: "history-list" }),
-  );
-  $p.find("#ms-body").on("click.ms", "#ms-clear-all-history", function () {
-    var total = data.prompts.reduce(function (s, p) {
-      return s + (p.history ? p.history.length : 0);
-    }, 0);
-    if (total === 0) {
+  $body.on("click.ms", "[data-set-act='clear-history']", function () {
+    if (histTotal === 0) {
       toast("info", "没有需要清空的历史");
       return;
     }
     msConfirm(
       "确定清空所有剧场的版本历史吗？\n\n共 " +
-        total +
+        histTotal +
         " 条历史记录将被删除\n此操作不可撤销",
       { title: "清空全部版本历史", dangerous: true, okText: "清空" },
     ).then(function (ok) {
@@ -15159,10 +17456,32 @@ function renderSettings() {
         p.history = [];
       });
       saveData();
-      toast("success", "已清空全部版本历史（" + total + " 条）");
+      toast("success", "已清空全部版本历史（" + histTotal + " 条）");
+      renderSettingsData();
     });
   });
-  $p.find("#ms-body").on("click.ms", "#ms-wipe-all-data", function () {
+  $body.on("click.ms", "[data-set-act='reset-usage']", function () {
+    if (usedCount === 0) {
+      toast("info", "没有需要重置的记录");
+      return;
+    }
+    msConfirm(
+      "确定重置所有使用统计吗？\n\n" +
+        usedCount +
+        " 条剧场的使用次数和最近使用时间将归零\n此操作不可撤销",
+      { title: "重置使用统计", dangerous: true, okText: "重置" },
+    ).then(function (ok) {
+      if (!ok) return;
+      data.prompts.forEach(function (p) {
+        p.usageCount = 0;
+        p.lastUsedAt = null;
+      });
+      saveData();
+      toast("success", "已重置（" + usedCount + " 条）");
+      renderSettingsData();
+    });
+  });
+  $body.on("click.ms", "[data-set-act='wipe-all']", function () {
     var stats = [
       data.prompts.length + " 条剧场",
       data.groups.length + " 个分组",
@@ -15176,16 +17495,16 @@ function renderSettings() {
       })
       .join("、");
     msPrompt(
-      "⚠️ 这会清空小剧场的所有本地数据，包括：\n" +
+      "这会清空小剧场的所有本地数据，包括：\n" +
         "· 剧场内容、分组、标签、订阅\n" +
         "· 快捷短语、版本历史、使用统计\n" +
         "· 角色生日、祝福、打卡记录\n" +
         "· 所有界面设置和面板位置\n\n" +
         (stats ? "当前有：" + stats + "\n\n" : "") +
-        "⚠️⚠️⚠️ 此操作无法撤销，强烈建议先导出备份！\n\n" +
+        "此操作无法撤销，强烈建议先导出备份。\n\n" +
         "如确认继续，请在下方输入「删除全部」四个字：",
       {
-        title: "⚠️ 彻底清空所有数据",
+        title: "彻底清空所有数据",
         icon: "fa-skull-crossbones",
         placeholder: "请输入「删除全部」",
         okText: "我已备份，立即清空",
@@ -15227,32 +17546,219 @@ function renderSettings() {
       }
     });
   });
+}
 
-  $p.find("#ms-body").on("click.ms", "#ms-clean-lost-chars", function () {
-    navigateTo({ name: "lost-chars" });
+function renderSettingsTransfer() {
+  var $p = setupPage("格式转换台");
+  var html = "";
+
+  html += _msSetHead(
+    "自动直连",
+    "在酒馆页面内全屏打开转换台，自动同步本地分组、文件夹与标签；转换台内还可直接多选读取本地世界书和聊天补全预设",
+  );
+  html += _msSetRow({
+    act: "ts-open",
+    icon: "fa-arrow-up-right-from-square",
+    title: "打开转换台",
+    desc: "设置完成后可直接推送回本面板",
   });
 
-  $p.find("#ms-body").on("click.ms", "#ms-reset-usage", function () {
-    var usedCount = data.prompts.filter(function (p) {
-      return p.usageCount > 0 || p.lastUsedAt;
-    }).length;
-    if (usedCount === 0) {
-      toast("info", "没有需要重置的记录");
+  html += _msSetHead(
+    "手动交换",
+    "无法自动直连，或想单独在浏览器里打开网页时使用；快照仅供转换台读取，不会修改本地数据",
+  );
+  html += _msSetRow({
+    act: "ts-copy",
+    icon: "fa-copy",
+    title: "复制分组标签快照",
+    desc: "复制后在转换台中粘贴",
+  });
+  html += _msSetRow({
+    act: "ts-paste",
+    icon: "fa-paste",
+    title: "从剪贴板接收推送",
+    desc: "与本地完全重复的剧场会自动跳过",
+  });
+
+  $p.find("#ms-body").html('<div class="ms-page-minh">' + html + "</div>");
+  $p.find("#ms-footer").hide();
+  bindAllEvents();
+  _msBindSetRows($p);
+
+  var $body = $p.find("#ms-body");
+  $body.on("click.ms", "[data-set-act='ts-open']", function () {
+    openTransferStation();
+  });
+  $body.on("click.ms", "[data-set-act='ts-copy']", function () {
+    var snap;
+    try {
+      snap = buildTransferSnapshot();
+    } catch (e) {
+      toast("error", "生成快照失败: " + e.message);
       return;
     }
-    msConfirm(
-      "确定重置所有使用统计吗？\n\n" +
-        usedCount +
-        " 条剧场的使用次数和最近使用时间将归零\n此操作不可撤销",
-      { title: "重置使用统计", dangerous: true, okText: "重置" },
-    ).then(function (ok) {
-      if (!ok) return;
-      data.prompts.forEach(function (p) {
-        p.usageCount = 0;
-        p.lastUsedAt = null;
+    copyToClipboard(JSON.stringify(snap))
+      .then(function () {
+        toast(
+          "success",
+          "已复制快照：" +
+            snap.groups.length +
+            " 个分组 · " +
+            snap.tags.length +
+            " 个标签",
+        );
+      })
+      .catch(function () {
+        toast("error", "复制失败，请检查浏览器剪贴板权限");
       });
-      saveData();
-      toast("success", "已重置（" + usedCount + " 条）");
+  });
+  $body.on("click.ms", "[data-set-act='ts-paste']", function () {
+    receiveTransferFromPaste();
+  });
+}
+
+function renderSettingsAbout() {
+  var $p = setupPage("关于与更新");
+  var html = "";
+
+  html += _msSetHead("版本", "");
+  html += _msSetRow({
+    plain: true,
+    icon: "fa-masks-theater",
+    title: "小剧场",
+    value: "v" + SCRIPT_VERSION,
+  });
+
+  html += _msSetHead("更新", "刷新浏览器缓存并重载脚本，获取最新版本");
+  html += _msSetRow({
+    act: "check-update",
+    id: "ms-update-script",
+    icon: "fa-arrows-rotate",
+    title: "检查脚本更新",
+    desc: "完成后会自动刷新页面",
+  });
+  html += _msSetRow({
+    act: "changelog",
+    id: "ms-view-changelog",
+    icon: "fa-clipboard-list",
+    title: "查看更新日志",
+  });
+
+  html += _msSetHead(
+    "使用说明",
+    "重置「使用指南」分组下的内置文档，并立即从云端拉取最新内容",
+  );
+  if (getPrompt("_builtin_guide")) {
+    html += _msSetRow({
+      act: "open-guide",
+      icon: "fa-book-open",
+      title: "打开使用说明",
+    });
+  }
+  html += _msSetRow({
+    act: "regen-guide",
+    icon: "fa-book",
+    title: "重新生成使用说明",
+    desc: "会重置预览示例、使用说明、注入 / 订阅 / 角色绑定指南",
+  });
+
+  $p.find("#ms-body").html('<div class="ms-page-minh">' + html + "</div>");
+  $p.find("#ms-footer").hide();
+  bindAllEvents();
+  _msBindSetRows($p);
+
+  var $body = $p.find("#ms-body");
+  $body.on("click.ms", "[data-set-act='open-guide']", function () {
+    if (getPrompt("_builtin_guide")) {
+      navigateTo({ name: "preview", promptId: "_builtin_guide" });
+    } else {
+      toast("warning", "找不到使用说明，可先重新生成");
+    }
+  });
+  $body.on("click.ms", "[data-set-act='check-update']", async function () {
+    var $row = $(this);
+    var $title = $row.find(".ms-set-title");
+    var $desc = $row.find(".ms-set-desc");
+    if ($row.data("ms-busy")) return;
+    $row.data("ms-busy", true);
+    $title.html('<i class="fa-solid fa-spinner fa-spin" style="margin-right:6px;"></i>正在刷新缓存...');
+    try {
+      await msFetch(
+        "https://cdn.jsdelivr.net/gh/Sanjs333/stage/stage.js",
+        { cache: "reload" },
+        15000,
+      );
+      $desc.text("缓存已刷新，即将重载页面");
+      toast("success", "缓存已刷新，即将刷新页面");
+      setTimeout(function () {
+        try {
+          triggerSlash("/reload-page");
+        } catch (e2) {
+          window.location.reload();
+        }
+      }, 2000);
+    } catch (e) {
+      if (isShutdownFetchError(e)) return;
+      toast("error", "更新失败: " + e.message);
+      $row.data("ms-busy", false);
+      $title.text("检查脚本更新");
+      $desc.text("完成后会自动刷新页面");
+    }
+  });
+  $body.on("click.ms", "[data-set-act='changelog']", async function () {
+    var $row = $(this);
+    var $title = $row.find(".ms-set-title");
+    if ($row.data("ms-busy")) return;
+    $row.data("ms-busy", true);
+    $title.html('<i class="fa-solid fa-spinner fa-spin" style="margin-right:6px;"></i>加载中...');
+    try {
+      var content = await fetchRemoteGuide(GUIDE_REMOTE_URLS.changelog);
+      if (!content) {
+        toast("error", "更新日志加载失败，请检查网络");
+      } else {
+        showModal({
+          title: "小剧场 更新日志",
+          iconType: "info",
+          icon: "fa-clipboard-list",
+          modalStyle:
+            "min-width:400px;max-width:94vw;width:600px;max-height:80vh;",
+          body:
+            '<div class="ms-preview-content" style="padding:0;">' +
+            renderMd(content) +
+            "</div>",
+          buttons: [
+            { text: "关闭", cls: "primary", primary: true, value: true },
+          ],
+        });
+      }
+    } catch (e) {
+      toast("error", "加载失败: " + e.message);
+    }
+    $row.data("ms-busy", false);
+    $title.text("查看更新日志");
+  });
+  $body.on("click.ms", "[data-set-act='regen-guide']", function () {
+    msConfirm(
+      "将重置「使用指南」分组下的 5 个内置文档（预览示例、使用说明、注入功能指南、订阅功能指南、角色绑定指南），并立即从云端拉取最新内容，确定吗？",
+      { title: "重新生成使用说明", okText: "生成" },
+    ).then(async function (ok) {
+      if (!ok) return;
+      createBuiltinGuide();
+      toast("info", "正在从云端拉取最新内容...");
+      try {
+        var allDone = await updateBuiltinGuidesFromRemote(true);
+        if (allDone) {
+          toast("success", "使用说明已全部更新到最新版");
+        } else {
+          toast(
+            "warning",
+            "部分指南拉取失败，下次打开面板会自动重试失败的部分",
+          );
+        }
+      } catch (e) {
+        toast("error", "拉取失败：" + e.message);
+      }
+      renderSettingsAbout();
     });
   });
 }
@@ -15307,6 +17813,48 @@ function renderSettings() {
         });
         return h;
       }
+      function _renderExpSubGroups(items, gid, baseIndent) {
+        var gObj = gid === "_ungrouped" ? null : getGroup(gid);
+        if (!isSubGroupEnabled(gObj) || getSubGroups(gObj).length === 0) {
+          return _renderExpPromptList(items, gid, baseIndent);
+        }
+        var buckets = {};
+        var noneList = [];
+        items.forEach(function (p) {
+          if (p.subGroupId && getSubGroup(gid, p.subGroupId)) {
+            if (!buckets[p.subGroupId]) buckets[p.subGroupId] = [];
+            buckets[p.subGroupId].push(p);
+          } else {
+            noneList.push(p);
+          }
+        });
+        var h = "";
+        getSubGroups(gObj).forEach(function (sg) {
+          var b = buckets[sg.id];
+          if (!b || b.length === 0) return;
+          h +=
+            '<div style="font-size:10px;color:' +
+            sg.color +
+            ";padding:4px 0 2px " +
+            (baseIndent || 0) +
+            'px;font-weight:600;"><i class="fa-solid fa-folder-open" style="font-size:9px;margin-right:3px;"></i>' +
+            esc(sg.name) +
+            " (" +
+            b.length +
+            ")</div>";
+          h += _renderExpPromptList(b, gid, (baseIndent || 0) + 14);
+        });
+        if (noneList.length > 0) {
+          h +=
+            '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);padding:4px 0 2px ' +
+            (baseIndent || 0) +
+            'px;font-weight:600;"><i class="fa-solid fa-inbox" style="font-size:9px;margin-right:3px;opacity:0.7;"></i>未分类 (' +
+            noneList.length +
+            ")</div>";
+          h += _renderExpPromptList(noneList, gid, (baseIndent || 0) + 14);
+        }
+        return h;
+      }
       data.groups.forEach((g) => {
         const items = grouped[g.id] || [];
         if (items.length === 0) return;
@@ -15339,7 +17887,7 @@ function renderSettings() {
               '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);padding:4px 0 2px;font-weight:600;"><i class="fa-solid fa-scroll" style="margin-right:3px;color:var(--ms-accent);"></i>通用剧场 (' +
               general.length +
               ")</div>";
-            html += _renderExpPromptList(general, gid, 0);
+            html += _renderExpSubGroups(general, gid, 0);
           }
           var order = getCharDisplayOrder(g);
           var sortedCharKeys = [];
@@ -15365,10 +17913,10 @@ function renderSettings() {
               " (" +
               ps.length +
               ")</div>";
-            html += _renderExpPromptList(ps, gid, 14);
+            html += _renderExpSubGroups(ps, gid, 14);
           });
         } else {
-          html += _renderExpPromptList(items, gid, 0);
+          html += _renderExpSubGroups(items, gid, 0);
         }
         html += `</div></div>`;
       });
@@ -15624,6 +18172,49 @@ function renderSettings() {
         });
         return h;
       }
+      function _renderExpgSubGroups(items, baseIndent) {
+        var _gid = v.groupId;
+        var gObj = getGroup(_gid);
+        if (!isSubGroupEnabled(gObj) || getSubGroups(gObj).length === 0) {
+          return _renderExpgPromptList(items, baseIndent);
+        }
+        var buckets = {};
+        var noneList = [];
+        items.forEach(function (p) {
+          if (p.subGroupId && getSubGroup(_gid, p.subGroupId)) {
+            if (!buckets[p.subGroupId]) buckets[p.subGroupId] = [];
+            buckets[p.subGroupId].push(p);
+          } else {
+            noneList.push(p);
+          }
+        });
+        var h = "";
+        getSubGroups(gObj).forEach(function (sg) {
+          var b = buckets[sg.id];
+          if (!b || b.length === 0) return;
+          h +=
+            '<div style="font-size:10px;color:' +
+            sg.color +
+            ";padding:4px 0 2px " +
+            (baseIndent || 0) +
+            'px;font-weight:600;"><i class="fa-solid fa-folder-open" style="font-size:9px;margin-right:3px;"></i>' +
+            esc(sg.name) +
+            " (" +
+            b.length +
+            ")</div>";
+          h += _renderExpgPromptList(b, (baseIndent || 0) + 14);
+        });
+        if (noneList.length > 0) {
+          h +=
+            '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);padding:4px 0 2px ' +
+            (baseIndent || 0) +
+            'px;font-weight:600;"><i class="fa-solid fa-inbox" style="font-size:9px;margin-right:3px;opacity:0.7;"></i>未分类 (' +
+            noneList.length +
+            ")</div>";
+          h += _renderExpgPromptList(noneList, (baseIndent || 0) + 14);
+        }
+        return h;
+      }
       var _expgG = getGroup(v.groupId);
       if (_expgG && isIPGroup(_expgG)) {
         var general = [];
@@ -15641,7 +18232,7 @@ function renderSettings() {
             '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);padding:4px 0 2px;font-weight:600;"><i class="fa-solid fa-scroll" style="margin-right:3px;color:var(--ms-accent);"></i>通用剧场 (' +
             general.length +
             ")</div>";
-          listH += _renderExpgPromptList(general, 0);
+          listH += _renderExpgSubGroups(general, 0);
         }
         var order = getCharDisplayOrder(_expgG);
         var sortedCharKeys = [];
@@ -15667,10 +18258,10 @@ function renderSettings() {
             " (" +
             ps.length +
             ")</div>";
-          listH += _renderExpgPromptList(ps, 14);
+          listH += _renderExpgSubGroups(ps, 14);
         });
       } else {
-        listH += _renderExpgPromptList(allPrompts, 0);
+        listH += _renderExpgSubGroups(allPrompts, 0);
       }
       listH += `</div></div>`;
       return `<div class="ms-form">${infoH}${listH}<div class="ms-divider"></div><div class="ms-export-opts-tight">
@@ -15832,6 +18423,48 @@ function renderSettings() {
       });
       return h;
     }
+    function _renderBatchWithSub(items, gid, baseIndent) {
+      var gObj = gid === "_ungrouped" ? null : getGroup(gid);
+      if (!isSubGroupEnabled(gObj) || getSubGroups(gObj).length === 0) {
+        return _renderBatchSubSeries(items, baseIndent);
+      }
+      var buckets = {};
+      var noneList = [];
+      items.forEach(function (p) {
+        if (p.subGroupId && getSubGroup(gid, p.subGroupId)) {
+          if (!buckets[p.subGroupId]) buckets[p.subGroupId] = [];
+          buckets[p.subGroupId].push(p);
+        } else {
+          noneList.push(p);
+        }
+      });
+      var h = "";
+      getSubGroups(gObj).forEach(function (sg) {
+        var b = buckets[sg.id];
+        if (!b || b.length === 0) return;
+        h +=
+          '<div style="font-size:9px;color:' +
+          sg.color +
+          ";padding:2px 0 1px " +
+          baseIndent +
+          'px;"><i class="fa-solid fa-folder-open" style="font-size:8px;margin-right:2px;"></i>' +
+          esc(sg.name) +
+          " (" +
+          b.length +
+          ")</div>";
+        h += _renderBatchSubSeries(b, baseIndent + 12);
+      });
+      if (noneList.length > 0) {
+        h +=
+          '<div style="font-size:9px;color:var(--SmartThemeQuoteColor,#888);padding:2px 0 1px ' +
+          baseIndent +
+          'px;"><i class="fa-solid fa-inbox" style="font-size:8px;margin-right:2px;"></i>未分类 (' +
+          noneList.length +
+          ")</div>";
+        h += _renderBatchSubSeries(noneList, baseIndent + 12);
+      }
+      return h;
+    }
     orderedGids.forEach(function (gid) {
       var gObj = gid === "_ungrouped" ? null : getGroup(gid);
       var gpItems = psByGroup[gid];
@@ -15865,7 +18498,7 @@ function renderSettings() {
             '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);padding:2px 0 1px 14px;"><i class="fa-solid fa-scroll" style="margin-right:3px;font-size:9px;color:var(--ms-accent);"></i>通用 (' +
             general.length +
             ")</div>";
-          listH += _renderBatchSubSeries(general, 24);
+          listH += _renderBatchWithSub(general, gid, 24);
         }
         var order = getCharDisplayOrder(gObj);
         var sortedCharKeys = [];
@@ -15891,10 +18524,10 @@ function renderSettings() {
             " (" +
             cps.length +
             ")</div>";
-          listH += _renderBatchSubSeries(cps, 24);
+          listH += _renderBatchWithSub(cps, gid, 24);
         });
       } else {
-        listH += _renderBatchSubSeries(gpItems, 12);
+        listH += _renderBatchWithSub(gpItems, gid, 12);
       }
     });
     listH += `</div></div>`;
@@ -15968,6 +18601,32 @@ function renderSettings() {
       previewH += `<div class="ms-imp-preview"><div class="ms-imp-preview-title"><i class="fa-solid fa-folder" style="margin-right:4px;"></i>包含 ${ig.length} 个分组</div><div class="ms-imp-preview-list">${ig.map((g) => `<span style="background:${g.color || "#666"};">${esc(g.name)}</span>`).join("")}</div></div>`;
     if (itags.length > 0)
       previewH += `<div class="ms-imp-preview"><div class="ms-imp-preview-title"><i class="fa-solid fa-tags" style="margin-right:4px;"></i>包含 ${itags.length} 个标签</div><div class="ms-imp-preview-list">${itags.map((t) => `<span style="background:${t.color || "#666"};">${esc(t.name)}</span>`).join("")}</div></div>`;
+    var _impSgCount = 0;
+    var _impSgNames = [];
+    [].concat(ig, icgs).forEach(function (x) {
+      if (!x || !Array.isArray(x.subGroups)) return;
+      x.subGroups.forEach(function (sg) {
+        if (!sg || !sg.name) return;
+        _impSgCount++;
+        if (_impSgNames.indexOf(sg.name) < 0) _impSgNames.push(sg.name);
+      });
+    });
+    if (_impSgCount > 0) {
+      previewH +=
+        '<div class="ms-imp-preview"><div class="ms-imp-preview-title"><i class="fa-solid fa-folder-open" style="margin-right:4px;"></i>包含 ' +
+        _impSgCount +
+        ' 个文件夹</div><div class="ms-imp-preview-list">' +
+        _impSgNames
+          .map(function (n) {
+            return (
+              '<span style="background:var(--SmartThemeQuoteColor,#666);">' +
+              esc(n) +
+              "</span>"
+            );
+          })
+          .join("") +
+        "</div></div>";
+    }
     var ibdMsgCount = Object.keys(v.importedBdMessages || {}).length;
     var ibdDateCount = Object.keys(v.importedBdDates || {}).length;
     if (ibdMsgCount > 0 || ibdDateCount > 0) {
@@ -16066,8 +18725,8 @@ function renderSettings() {
       <div class="ms-field" id="ms-imp-target-wrap" style="display:none;padding:0 14px;"><label>放入分组</label><select id="ms-imp-target">${groupOpts}</select></div>
       <div class="ms-divider"></div><div class="ms-section-label">导入方式</div>
       <div class="ms-import-opt" data-mode="merge"><div class="ms-import-opt-title"><i class="fa-solid fa-code-merge"></i> 合并更新 <span style="font-size:10px;color:#c9957a;font-weight:normal;">推荐</span></div><div class="ms-import-opt-desc">智能检测 — 新内容添加，作者修改过的自动更新，完全相同的跳过</div></div>
-      <div class="ms-import-opt" data-mode="append"><div class="ms-import-opt-title"><i class="fa-solid fa-plus"></i> 全部追加</div><div class="ms-import-opt-desc">不做任何检查，全部作为新内容添加（可能产生重复）</div></div>
-      <div class="ms-import-opt" data-mode="replace"><div class="ms-import-opt-title"><i class="fa-solid fa-rotate"></i> 覆盖替换（范围内）</div><div class="ms-import-opt-desc"><i class="fa-solid fa-triangle-exclamation" style="color:#e55;margin-right:3px;"></i>只替换导入涉及的范围——同名分组里的本地剧场会被清空再填入，<strong>其他分组和剧场保留</strong>；同名标签、涉及角色的生日/祝福也会被替换</div></div>
+      <div class="ms-import-opt" data-mode="append"><div class="ms-import-opt-title"><i class="fa-solid fa-plus"></i> 全部追加</div><div class="ms-import-opt-desc">不做任何检查，全部作为新内容添加（可能产生重复）。若内容指定了酒馆里已有的分组，这里也会另建一个同名分组</div></div>
+      <div class="ms-import-opt" data-mode="replace"><div class="ms-import-opt-title"><i class="fa-solid fa-rotate"></i> 覆盖替换（范围内）</div><div class="ms-import-opt-desc"><i class="fa-solid fa-triangle-exclamation" style="color:#e55;margin-right:3px;"></i>只替换导入涉及的范围——同名分组里的本地剧场会被清空再填入，<strong>其他分组和剧场保留</strong>；同名标签会更新颜色等属性、但不影响本地已有的标签引用；涉及角色的生日/祝福会被替换</div></div>
       <button class="ms-btn" id="ms-import-cancel" style="width:100%;">取消</button></div>`);
     $p.find("#ms-footer").hide();
     bindAllEvents();
@@ -16680,6 +19339,27 @@ function renderReorderTags() {
     },
   });
 }
+function renderReorderSubGroups(v) {
+  var g = getGroup(v.groupId);
+  if (!g || !Array.isArray(g.subGroups) || g.subGroups.length < 2) {
+    navigateBack();
+    return;
+  }
+  renderReorderList({
+    title: "调整文件夹顺序",
+    getList: function () {
+      var gg = getGroup(v.groupId);
+      return gg && Array.isArray(gg.subGroups) ? gg.subGroups : [];
+    },
+    renderIcon: function (sg) {
+      return (
+        '<i class="fa-solid fa-folder-open" style="color:' +
+        sg.color +
+        ';font-size:13px;flex-shrink:0;"></i>'
+      );
+    },
+  });
+}
 
 function renderReorderPrompts(v) {
   if (data.settings.sortMode !== "custom") {
@@ -16688,10 +19368,38 @@ function renderReorderPrompts(v) {
   }
   var g = getGroup(v.groupId);
   var title = g ? g.name : "条目";
+  if (v.subGroupId) {
+    var _roSg =
+      v.subGroupId === SUBGROUP_NONE
+        ? null
+        : getSubGroup(v.groupId, v.subGroupId);
+    title += " / " + (_roSg ? _roSg.name : "未分类");
+  }
+  if (v.charScope) {
+    title +=
+      " / " +
+      (v.charScope === "_general" ? "通用" : getCharDisplayName(v.charScope));
+  }
   var $p = setupPage("调整条目顺序", "调整 " + esc(title) + " 内顺序");
-  var groupPrompts = data.prompts.filter(function (p) {
-    return p.groupId === v.groupId;
-  });
+  function _roMatchScope(p) {
+    if (p.groupId !== v.groupId) return false;
+    if (v.subGroupId) {
+      if (v.subGroupId === SUBGROUP_NONE) {
+        if (p.subGroupId && getSubGroup(v.groupId, p.subGroupId)) return false;
+      } else if (p.subGroupId !== v.subGroupId) {
+        return false;
+      }
+    }
+    if (v.charScope === "_general") {
+      /* 其余四处判「通用」都是 !p.character。这里若只排除「有 character 且 key
+         有效」的，绑定了已失效角色的剧场就只在排序页冒出来，拖动还会连带改它。 */
+      if (p.character) return false;
+    } else if (v.charScope) {
+      if (p.character !== v.charScope) return false;
+    }
+    return true;
+  }
+  var groupPrompts = data.prompts.filter(_roMatchScope);
 
   function buildItemBody(p, anchorBadge, smaller, hideSeries, hideCharacter) {
     anchorBadge = anchorBadge || "";
@@ -16703,6 +19411,18 @@ function renderReorderPrompts(v) {
         "</div>"
       : "";
     var metaParts = [];
+    if (!v.subGroupId && p.subGroupId) {
+      var _sgRo = getSubGroup(v.groupId, p.subGroupId);
+      if (_sgRo) {
+        metaParts.push(
+          '<span style="color:' +
+            _sgRo.color +
+            ';display:inline-flex;align-items:center;gap:2px;font-size:9px;"><i class="fa-solid fa-folder-open" style="font-size:8px;"></i>' +
+            esc(_sgRo.name) +
+            "</span>",
+        );
+      }
+    }
     if (!hideSeries && p.series && p.series.trim()) {
       metaParts.push(
         '<span style="color:var(--ms-accent);opacity:0.75;display:inline-flex;align-items:center;gap:2px;font-size:9px;"><i class="fa-solid fa-layer-group" style="font-size:8px;"></i>' +
@@ -16791,7 +19511,12 @@ function renderReorderPrompts(v) {
       "</div>",
   );
 
-  var isIP = g && isIPGroup(g);
+  var isIP = g && isIPGroup(g) && !v.charScope;
+  var hasSub =
+    g &&
+    !v.subGroupId &&
+    isSubGroupEnabled(g) &&
+    getSubGroups(g).length > 0;
   var expandedSeries = new Set(v._reorderExpandedSeries || []);
   var collapsedSections = new Set(v._reorderCollapsedSections || []);
 
@@ -16817,6 +19542,24 @@ function renderReorderPrompts(v) {
     return { general: general, byChar: byChar, orderedChars: orderedChars };
   }
 
+  function partitionBySubgroup(list) {
+    var bySubgroup = {};
+    var none = [];
+    var orderedSgids = [];
+    if (g && Array.isArray(g.subGroups)) {
+      orderedSgids = g.subGroups.map(function (sg) { return sg.id; });
+    }
+    list.forEach(function (p) {
+      var sgid = p.subGroupId && getSubGroup(v.groupId, p.subGroupId) ? p.subGroupId : null;
+      if (sgid) {
+        if (!bySubgroup[sgid]) bySubgroup[sgid] = [];
+        bySubgroup[sgid].push(p);
+      } else {
+        none.push(p);
+      }
+    });
+    return { bySubgroup: bySubgroup, none: none, orderedSgids: orderedSgids };
+  }
   function buildBlocksFromList(list) {
     var blocks = [];
     var rendered = new Set();
@@ -16852,16 +19595,23 @@ function renderReorderPrompts(v) {
     if (scope.indexOf("::series::") >= 0) {
       var parts = scope.split("::series::");
       var section = parts[0];
-      var sn = parts[1];
-      var sectionLabel =
-        section === "_general"
-          ? "通用剧场"
-          : section.indexOf("char_") === 0
-            ? "角色「" + getCharDisplayName(section.substring(5)) + "」"
-            : section;
-      return sectionLabel + " · 系列「" + sn + "」内";
+      var sn = parts.slice(1).join("::series::");
+      return getScopeLabel(section) + " · 系列「" + sn + "」内";
     }
     if (scope === "_general") return "通用剧场";
+    if (scope.indexOf("::sub_") >= 0) {
+      var _slIdx = scope.indexOf("::sub_");
+      var _slParent = getScopeLabel(scope.substring(0, _slIdx));
+      var _slSub = scope.substring(_slIdx + 6);
+      if (_slSub === "none") return _slParent + " / 未分类";
+      var _slSg = getSubGroup(v.groupId, _slSub);
+      return _slParent + " / 文件夹「" + (_slSg ? _slSg.name : _slSub) + "」";
+    }
+    if (scope.indexOf("sub_") === 0) {
+      if (scope === "sub_none") return "未分类";
+      var _slSg2 = getSubGroup(v.groupId, scope.substring(4));
+      return "文件夹「" + (_slSg2 ? _slSg2.name : scope.substring(4)) + "」";
+    }
     if (scope.indexOf("char_") === 0) {
       return "角色「" + getCharDisplayName(scope.substring(5)) + "」";
     }
@@ -16874,8 +19624,9 @@ function renderReorderPrompts(v) {
     if (scope.indexOf("::series::") >= 0) {
       var partsS = scope.split("::series::");
       var sectionListS = getListForSection(partsS[0]);
+      var seriesNameS = partsS.slice(1).join("::series::");
       sectionListS.forEach(function (p) {
-        if (p.series && p.series.trim() === partsS[1]) {
+        if (p.series && p.series.trim() === seriesNameS) {
           result.push("c_" + p.id);
         }
       });
@@ -17148,6 +19899,105 @@ function renderReorderPrompts(v) {
     return html;
   }
 
+  function buildSubSections(list, parentKey) {
+    var subParts = partitionBySubgroup(list);
+    var html = "";
+    var canReorderFolders = !parentKey && !multiMode;
+    var visibleSgids = subParts.orderedSgids.filter(function (sid) {
+      if (!getSubGroup(v.groupId, sid)) return false;
+      if (parentKey && (subParts.bySubgroup[sid] || []).length === 0)
+        return false;
+      return true;
+    });
+    visibleSgids.forEach(function (sgid, visIdx) {
+      var sg = getSubGroup(v.groupId, sgid);
+      if (!sg) return;
+      var sectionKey = parentKey
+        ? parentKey + "::sub_" + sgid
+        : "sub_" + sgid;
+      var items = subParts.bySubgroup[sgid] || [];
+      var isCollapsed = collapsedSections.has(sectionKey);
+      var realIdx = subParts.orderedSgids.indexOf(sgid);
+      var gripH = canReorderFolders
+        ? '<i class="fa-solid fa-grip-vertical ms-sub-section-grip" data-sub-idx="' +
+          realIdx +
+          '" style="cursor:grab;color:var(--SmartThemeQuoteColor,#888);font-size:12px;flex-shrink:0;" title="拖动调整文件夹顺序"></i>'
+        : "";
+      var arrowsH = canReorderFolders
+        ? '<div class="ms-reorder-arrows"><button data-sub-dir="up" data-sub-idx="' +
+          realIdx +
+          '"' +
+          (visIdx === 0 ? " disabled style='opacity:0.3;'" : "") +
+          '><i class="fa-solid fa-angle-up"></i></button><button data-sub-dir="down" data-sub-idx="' +
+          realIdx +
+          '"' +
+          (visIdx === visibleSgids.length - 1
+            ? " disabled style='opacity:0.3;'"
+            : "") +
+          '><i class="fa-solid fa-angle-down"></i></button></div>'
+        : "";
+      var indentCss = parentKey ? "padding-left:24px;" : "";
+      html +=
+        '<div class="ms-reorder-section-header ms-sub-section-header" data-section-key="' +
+        escAttr(sectionKey) +
+        '" data-sub-idx="' +
+        realIdx +
+        '" style="display:flex;align-items:center;gap:8px;padding:7px 14px;' +
+        indentCss +
+        "background:" +
+        sg.color +
+        '14;border-top:1px solid rgba(255,255,255,0.05);border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;user-select:none;">' +
+        gripH +
+        '<i class="fa-solid fa-angle-' +
+        (isCollapsed ? "right" : "down") +
+        '" style="font-size:10px;color:' +
+        sg.color +
+        ';width:12px;flex-shrink:0;"></i>' +
+        '<i class="fa-solid fa-folder-open" style="color:' +
+        sg.color +
+        ';font-size:11px;flex-shrink:0;"></i>' +
+        '<span style="flex:1;min-width:0;font-size:12px;font-weight:600;color:var(--SmartThemeBodyColor,#ddd);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+        esc(sg.name) +
+        ' <span style="font-weight:400;font-size:10px;color:var(--SmartThemeQuoteColor,#888);">(' +
+        items.length +
+        " 条)</span></span>" +
+        arrowsH +
+        "</div>";
+      if (!isCollapsed) {
+        if (items.length === 0) {
+          html +=
+            '<div style="padding:8px 14px 8px ' +
+            (parentKey ? "38" : "26") +
+            'px;font-size:10px;color:var(--SmartThemeQuoteColor,#666);font-style:italic;">该文件夹暂无内容</div>';
+        } else {
+          html += renderBlocks(buildBlocksFromList(items), sectionKey);
+        }
+      }
+    });
+    var noneItems = subParts.none;
+    if (noneItems.length > 0) {
+      var noneKey = parentKey ? parentKey + "::sub_none" : "sub_none";
+      var noneCollapsed = collapsedSections.has(noneKey);
+      var noneIndent = parentKey ? "padding-left:24px;" : "";
+      html +=
+        '<div class="ms-reorder-section-header" data-section-key="' +
+        escAttr(noneKey) +
+        '" style="display:flex;align-items:center;gap:8px;padding:7px 14px;' +
+        noneIndent +
+        'background:rgba(255,255,255,0.03);border-top:1px solid rgba(255,255,255,0.05);border-bottom:1px solid rgba(255,255,255,0.05);cursor:pointer;user-select:none;">' +
+        '<i class="fa-solid fa-angle-' +
+        (noneCollapsed ? "right" : "down") +
+        '" style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);width:12px;flex-shrink:0;"></i>' +
+        '<i class="fa-solid fa-inbox" style="color:var(--SmartThemeQuoteColor,#888);font-size:11px;flex-shrink:0;"></i>' +
+        '<span style="flex:1;min-width:0;font-size:12px;font-weight:600;color:var(--SmartThemeBodyColor,#bbb);">未分类 <span style="font-weight:400;font-size:10px;color:var(--SmartThemeQuoteColor,#888);">(' +
+        noneItems.length +
+        ' 条)</span></span><span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;">固定置底</span></div>';
+      if (!noneCollapsed) {
+        html += renderBlocks(buildBlocksFromList(noneItems), noneKey);
+      }
+    }
+    return html;
+  }
   function buildReorderBody() {
     if (groupPrompts.length === 0) {
       return '<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>该分组没有条目</div>';
@@ -17181,6 +20031,9 @@ function renderReorderPrompts(v) {
         "</div>";
     }
     if (!isIP) {
+      if (hasSub) {
+        return prefix + buildSubSections(groupPrompts, null);
+      }
       var blocks = buildBlocksFromList(groupPrompts);
       return prefix + renderBlocks(blocks, "_all");
     }
@@ -17195,8 +20048,12 @@ function renderReorderPrompts(v) {
         parts.general.length +
         " 条)</span><span style='font-size:10px;color:var(--SmartThemeQuoteColor,#666);'>固定置顶</span></div>";
       if (!generalCollapsed) {
-        var blocks2 = buildBlocksFromList(parts.general);
-        html += renderBlocks(blocks2, "_general");
+        if (hasSub) {
+          html += buildSubSections(parts.general, "_general");
+        } else {
+          var blocks2 = buildBlocksFromList(parts.general);
+          html += renderBlocks(blocks2, "_general");
+        }
       }
     }
     parts.orderedChars.forEach(function (k, ci) {
@@ -17251,8 +20108,12 @@ function renderReorderPrompts(v) {
         charArrowsHtml +
         "</div>";
       if (!isCollapsed) {
-        var blocks3 = buildBlocksFromList(ps);
-        html += renderBlocks(blocks3, sectionKey);
+        if (hasSub) {
+          html += buildSubSections(ps, sectionKey);
+        } else {
+          var blocks3 = buildBlocksFromList(ps);
+          html += renderBlocks(blocks3, sectionKey);
+        }
       }
     });
     return html;
@@ -17261,7 +20122,7 @@ function renderReorderPrompts(v) {
   function syncGroupPrompts() {
     var positions = [];
     data.prompts.forEach(function (p, i) {
-      if (p.groupId === v.groupId) positions.push(i);
+      if (_roMatchScope(p)) positions.push(i);
     });
     positions.forEach(function (pos, i) {
       data.prompts[pos] = groupPrompts[i];
@@ -17269,7 +20130,27 @@ function renderReorderPrompts(v) {
   }
 
   function getListForSection(sectionKey) {
-    if (!isIP || sectionKey === "_all") return groupPrompts;
+    if (!sectionKey) return groupPrompts;
+    if (sectionKey === "_all") return groupPrompts;
+    if (hasSub && sectionKey.indexOf("sub_") === 0) {
+      var sgid = sectionKey === "sub_none" ? null : sectionKey.substring(4);
+      return groupPrompts.filter(function (p) {
+        var pSgid = p.subGroupId && getSubGroup(v.groupId, p.subGroupId) ? p.subGroupId : null;
+        return sgid === null ? pSgid === null : pSgid === sgid;
+      });
+    }
+    if (hasSub && sectionKey.indexOf("::sub_") >= 0) {
+      var colonIdx = sectionKey.indexOf("::sub_");
+      var parentKey = sectionKey.substring(0, colonIdx);
+      var subPart = sectionKey.substring(colonIdx + 6);
+      var sgid2 = subPart === "none" ? null : subPart;
+      var parentList = getListForSection(parentKey);
+      return parentList.filter(function (p) {
+        var pSgid2 = p.subGroupId && getSubGroup(v.groupId, p.subGroupId) ? p.subGroupId : null;
+        return sgid2 === null ? pSgid2 === null : pSgid2 === sgid2;
+      });
+    }
+    if (!isIP) return groupPrompts;
     if (sectionKey === "_general") {
       return groupPrompts.filter(function (p) {
         return !(p.character && isLocalCharKey(p.character));
@@ -17285,6 +20166,47 @@ function renderReorderPrompts(v) {
   }
 
   function applySectionList(sectionKey, newList) {
+    if (hasSub && sectionKey && sectionKey.indexOf("sub_") === 0) {
+      var sgidA = sectionKey === "sub_none" ? null : sectionKey.substring(4);
+      var subPartsA = partitionBySubgroup(groupPrompts);
+      if (sgidA === null) subPartsA.none = newList;
+      else subPartsA.bySubgroup[sgidA] = newList;
+      var mergedA = [];
+      subPartsA.orderedSgids.forEach(function (sid) {
+        (subPartsA.bySubgroup[sid] || []).forEach(function (p) {
+          mergedA.push(p);
+        });
+      });
+      subPartsA.none.forEach(function (p) {
+        mergedA.push(p);
+      });
+      groupPrompts.length = 0;
+      mergedA.forEach(function (p) {
+        groupPrompts.push(p);
+      });
+      return;
+    }
+    if (hasSub && sectionKey && sectionKey.indexOf("::sub_") >= 0) {
+      var colonIdxB = sectionKey.indexOf("::sub_");
+      var parentKeyB = sectionKey.substring(0, colonIdxB);
+      var subPartB = sectionKey.substring(colonIdxB + 6);
+      var sgidB = subPartB === "none" ? null : subPartB;
+      var parentListB = getListForSection(parentKeyB);
+      var subPartsB = partitionBySubgroup(parentListB);
+      if (sgidB === null) subPartsB.none = newList;
+      else subPartsB.bySubgroup[sgidB] = newList;
+      var newParentListB = [];
+      subPartsB.orderedSgids.forEach(function (sid) {
+        (subPartsB.bySubgroup[sid] || []).forEach(function (p) {
+          newParentListB.push(p);
+        });
+      });
+      subPartsB.none.forEach(function (p) {
+        newParentListB.push(p);
+      });
+      applySectionList(parentKeyB, newParentListB);
+      return;
+    }
     if (!isIP || sectionKey === "_all") {
       groupPrompts.length = 0;
       newList.forEach(function (p) {
@@ -17369,6 +20291,31 @@ function renderReorderPrompts(v) {
 
   var $body = $p.find("#ms-body");
   function refreshPrompts() {
+    if (v._lastViewedId) {
+      var _lastViewedPrompt = getPrompt(v._lastViewedId);
+      if (_lastViewedPrompt) {
+        var _lastViewedParentKey = null;
+        if (isIP) {
+          _lastViewedParentKey =
+            _lastViewedPrompt.character &&
+            isLocalCharKey(_lastViewedPrompt.character)
+              ? "char_" + _lastViewedPrompt.character
+              : "_general";
+          collapsedSections.delete(_lastViewedParentKey);
+        }
+        if (hasSub) {
+          var _lastViewedSubKey =
+            _lastViewedPrompt.subGroupId &&
+            getSubGroup(v.groupId, _lastViewedPrompt.subGroupId)
+              ? "sub_" + _lastViewedPrompt.subGroupId
+              : "sub_none";
+          var _lastViewedSectionKey = _lastViewedParentKey
+            ? _lastViewedParentKey + "::" + _lastViewedSubKey
+            : _lastViewedSubKey;
+          collapsedSections.delete(_lastViewedSectionKey);
+        }
+      }
+    }
     $body.html(buildReorderBody());
     $p.find("#ms-footer").html(buildFooter()).show();
     $p.find("#ms-reorder-prompts-multi").toggleClass("active", multiMode);
@@ -17510,13 +20457,31 @@ function renderReorderPrompts(v) {
       var block = fromBlocks[fromIdx2];
       var fromItems =
         block.type === "single" ? [block.item] : block.items.slice();
+      var fromParentSection = fromSection;
+      var targetParentSection = targetSection;
+      var fromSubSection = null;
+      var targetSubSection = null;
+      var fromSubIdx = fromSection ? fromSection.indexOf("::sub_") : -1;
+      var targetSubIdx = targetSection ? targetSection.indexOf("::sub_") : -1;
+      if (fromSubIdx >= 0) {
+        fromParentSection = fromSection.substring(0, fromSubIdx);
+        fromSubSection = fromSection.substring(fromSubIdx + 2);
+      }
+      if (targetSubIdx >= 0) {
+        targetParentSection = targetSection.substring(0, targetSubIdx);
+        targetSubSection = targetSection.substring(targetSubIdx + 2);
+      }
+      if (hasSub && fromSubSection !== targetSubSection) return;
       var targetCharKey = null;
       var targetLabel = "";
-      if (targetSection === "_general") {
+      if (targetParentSection === "_general") {
         targetCharKey = "";
         targetLabel = "通用剧场（解除角色绑定）";
-      } else if (targetSection && targetSection.indexOf("char_") === 0) {
-        targetCharKey = targetSection.substring(5);
+      } else if (
+        targetParentSection &&
+        targetParentSection.indexOf("char_") === 0
+      ) {
+        targetCharKey = targetParentSection.substring(5);
         targetLabel = "角色「" + getCharDisplayName(targetCharKey) + "」";
       } else {
         return;
@@ -17663,7 +20628,9 @@ function renderReorderPrompts(v) {
     ".ms-reorder-section-header",
     function (e) {
       if (
-        $(e.target).closest(".ms-reorder-arrows, .ms-char-section-grip").length
+        $(e.target).closest(
+          ".ms-reorder-arrows, .ms-char-section-grip, .ms-sub-section-grip",
+        ).length
       )
         return;
       var key = $(this).data("section-key");
@@ -17673,6 +20640,20 @@ function renderReorderPrompts(v) {
     },
   );
 
+  $p.find("#ms-body").on("click.ms", "[data-sub-dir]", function (e) {
+    e.stopPropagation();
+    var dir = $(this).data("sub-dir");
+    var si = parseInt($(this).data("sub-idx"));
+    var gg = getGroup(v.groupId);
+    if (!gg || !Array.isArray(gg.subGroups) || isNaN(si)) return;
+    var swapIdx = dir === "up" ? si - 1 : si + 1;
+    if (swapIdx < 0 || swapIdx >= gg.subGroups.length) return;
+    var tmp = gg.subGroups[si];
+    gg.subGroups[si] = gg.subGroups[swapIdx];
+    gg.subGroups[swapIdx] = tmp;
+    saveData();
+    refreshPrompts();
+  });
   $p.find("#ms-body").on("click.ms", "[data-char-dir]", function (e) {
     e.stopPropagation();
     var dir = $(this).data("char-dir");
@@ -17691,6 +20672,60 @@ function renderReorderPrompts(v) {
     refreshPrompts();
   });
 
+  $p.find("#ms-body").on(
+    "pointerdown.msdrag3",
+    ".ms-sub-section-grip",
+    function (e) {
+      if (multiMode) return;
+      var oe = e.originalEvent || e;
+      if (oe.pointerType === "mouse" && oe.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      var fromIdx = parseInt($(this).data("sub-idx"));
+      if (isNaN(fromIdx)) return;
+      var gripEl = this;
+      var dragging = true;
+      var panelEl2 = $("#" + PANEL_ID)[0];
+      var ownerDoc2 = panelEl2 ? panelEl2.ownerDocument : document;
+      try {
+        gripEl.setPointerCapture(oe.pointerId);
+      } catch (ex) {}
+      function onMove2(ev) {
+        if (!dragging) return;
+        ev.preventDefault();
+        var el = ownerDoc2.elementFromPoint(ev.clientX, ev.clientY);
+        var targetHdr = el ? el.closest(".ms-sub-section-header") : null;
+        $body.find(".ms-sub-section-header").removeClass("ms-drag-over");
+        if (targetHdr) targetHdr.classList.add("ms-drag-over");
+      }
+      function onEnd2(ev) {
+        if (!dragging) return;
+        dragging = false;
+        $body.find(".ms-sub-section-header").removeClass("ms-drag-over");
+        gripEl.removeEventListener("pointermove", onMove2);
+        gripEl.removeEventListener("pointerup", onEnd2);
+        gripEl.removeEventListener("pointercancel", onEnd2);
+        gripEl.removeEventListener("lostpointercapture", onEnd2);
+        if (!ev || ev.type === "lostpointercapture") return;
+        var el2 = ownerDoc2.elementFromPoint(ev.clientX, ev.clientY);
+        var targetHdr2 = el2 ? el2.closest(".ms-sub-section-header") : null;
+        if (!targetHdr2) return;
+        var targetIdx = parseInt(targetHdr2.getAttribute("data-sub-idx"));
+        if (isNaN(targetIdx) || targetIdx === fromIdx) return;
+        var gg = getGroup(v.groupId);
+        if (!gg || !Array.isArray(gg.subGroups)) return;
+        var moved = gg.subGroups.splice(fromIdx, 1)[0];
+        var insertIdx = fromIdx < targetIdx ? targetIdx - 1 : targetIdx;
+        gg.subGroups.splice(insertIdx, 0, moved);
+        saveData();
+        refreshPrompts();
+      }
+      gripEl.addEventListener("pointermove", onMove2);
+      gripEl.addEventListener("pointerup", onEnd2);
+      gripEl.addEventListener("pointercancel", onEnd2);
+      gripEl.addEventListener("lostpointercapture", onEnd2);
+    },
+  );
   $p.find("#ms-body").on(
     "pointerdown.msdrag2",
     ".ms-char-section-grip",
@@ -18249,6 +21284,7 @@ function renderReorderPrompts(v) {
             series: p.series || "",
             tags: (p.tags || []).slice().sort(),
             groupId: p.groupId || "",
+            subGroupId: p.subGroupId || "",
             character: p.character || "",
           };
         })
@@ -18273,6 +21309,17 @@ function renderReorderPrompts(v) {
             defaultAuthor: g.defaultAuthor || "",
             stagePrefix: g.stagePrefix || "",
             multiStagePrefix: g.multiStagePrefix || "",
+            subGroupEnabled: g.subGroupEnabled === true,
+            subGroups: Array.isArray(g.subGroups)
+              ? g.subGroups.map(function (sg) {
+                  return {
+                    id: sg.id || "",
+                    name: sg.name || "",
+                    color: sg.color || "",
+                    note: sg.note || "",
+                  };
+                })
+              : [],
             multiPrefixEnabled: g.multiPrefixEnabled === true,
             prefixTemplates: Array.isArray(g.prefixTemplates)
               ? g.prefixTemplates.map(function (t) {
@@ -18321,6 +21368,17 @@ function renderReorderPrompts(v) {
             iconCharKey: cg.iconCharKey || "",
             charKeys: (cg.charKeys || []).slice().sort(),
             charDisplayOrder: (cg.charDisplayOrder || []).slice(),
+            subGroupEnabled: cg.subGroupEnabled === true,
+            subGroups: Array.isArray(cg.subGroups)
+              ? cg.subGroups.map(function (sg) {
+                  return {
+                    id: sg.id || "",
+                    name: sg.name || "",
+                    color: sg.color || "",
+                    note: sg.note || "",
+                  };
+                })
+              : [],
             multiPrefixEnabled: cg.multiPrefixEnabled === true,
             prefixTemplates: Array.isArray(cg.prefixTemplates)
               ? cg.prefixTemplates.map(function (t) {
@@ -18375,6 +21433,10 @@ function renderReorderPrompts(v) {
     var itags = imported.tags || [];
     var conflicts = [];
     var _subNameMap = _buildLocalNameIndex();
+    var subSgidMap = {};
+    function _subSgKey(gid, sgid) {
+      return (gid || "") + "|" + (sgid || "");
+    }
     try {
       ip.forEach(function (p) {
         _rebindPromptChar(p, _subNameMap);
@@ -18412,6 +21474,10 @@ function renderReorderPrompts(v) {
         });
         if (ex) {
           gidMap[g.id] = ex.id;
+          var _subM = mergeSubGroupsByName(ex, g);
+          Object.keys(_subM).forEach(function (k) {
+            subSgidMap[_subSgKey(g.id, k)] = _subM[k];
+          });
           if (sub.updateExisting !== false) {
             if (g.color !== undefined) ex.color = g.color;
             if (g.note !== undefined) ex.note = g.note;
@@ -18431,8 +21497,15 @@ function renderReorderPrompts(v) {
           }
         } else {
           var ng = Object.assign({}, g, { id: uid() });
+          ng.subGroups = Array.isArray(g.subGroups)
+            ? JSON.parse(JSON.stringify(g.subGroups))
+            : [];
+          ng.subGroupEnabled = ng.subGroups.length > 0;
           data.groups.push(ng);
           gidMap[g.id] = ng.id;
+          ng.subGroups.forEach(function (sg) {
+            subSgidMap[_subSgKey(g.id, sg.id)] = sg.id;
+          });
         }
       });
     }
@@ -18504,8 +21577,21 @@ function renderReorderPrompts(v) {
         existingBySource.fingerprint = fp;
         existingBySource._lastSubFingerprint = fp;
         existingBySource.updatedAt = Date.now();
-        if (sub.importGroups && p.groupId)
+        if (sub.importGroups && p.groupId) {
           existingBySource.groupId = gidMap[p.groupId] || p.groupId;
+          var _impGSg = (ig || []).find(function (x) {
+            return x && x.id === p.groupId;
+          });
+          if (
+            _impGSg &&
+            Array.isArray(_impGSg.subGroups) &&
+            _impGSg.subGroups.length > 0
+          ) {
+            // 远端明确给出归类才覆盖；远端该条没归类时保留本地归类
+            var _mappedSg = subSgidMap[_subSgKey(p.groupId, p.subGroupId)];
+            if (_mappedSg) existingBySource.subGroupId = _mappedSg;
+          }
+        }
         if (sub.importTags && p.tags)
           existingBySource.tags = p.tags.map(function (tid) {
             return tagIdMap[tid] || tid;
@@ -18537,6 +21623,9 @@ function renderReorderPrompts(v) {
       np.groupId = sub.importGroups
         ? gidMap[p.groupId] || p.groupId || null
         : sub.targetGroupId || null;
+      np.subGroupId = sub.importGroups
+        ? subSgidMap[_subSgKey(p.groupId, p.subGroupId)] || null
+        : null;
       np.tags = sub.importTags
         ? (p.tags || []).map(function (tid) {
             return tagIdMap[tid] || tid;
@@ -18569,6 +21658,14 @@ function renderReorderPrompts(v) {
               if (oi >= 0) other.charKeys.splice(oi, 1);
             });
             if (existing.charKeys.indexOf(k) < 0) existing.charKeys.push(k);
+          });
+          /* 注意：这里登记 subSgidMap 的时机晚于上面 prompt 循环里消费它的地方。
+             目前不出问题，只因为导出端会把 IP 分组同时放进 groups 数组、在那边已经
+             登记过一遍；一旦哪天导出端把 IP 分组从 groups 里裁掉，这些剧场的文件夹
+             归属就会在订阅更新时静默丢成 null。改动顺序前先确认这个前提。 */
+          var _subCgM = mergeSubGroupsByName(existing, icg);
+          Object.keys(_subCgM).forEach(function (k) {
+            subSgidMap[_subSgKey(icg.id, k)] = _subCgM[k];
           });
           if (!existing.stagePrefix && icg.stagePrefix)
             existing.stagePrefix = icg.stagePrefix;
@@ -18750,6 +21847,7 @@ function renderReorderPrompts(v) {
       );
     })();
     dedupePromptTags();
+    cleanOrphanSubGroupIds();
     _invalidateCharGroupCache();
     saveData();
     return {
@@ -19218,7 +22316,11 @@ function renderReorderPrompts(v) {
 async function autoCheckSubscriptions() {
   if (data.subscriptions.length === 0) return;
   if (autoCheckSubscriptions._running) return;
-  var interval = (data.settings.autoCheckInterval || 6) * 3600000;
+  var _aci =
+    data.settings.autoCheckInterval === undefined
+      ? 6
+      : data.settings.autoCheckInterval;
+  var interval = _aci * 3600000;
   if (interval <= 0) return;
   var now = Date.now();
   var needsCheck = data.subscriptions.some(function (s) {
@@ -19731,6 +22833,83 @@ function renderThemeBinding() {
   });
 }
 
+function buildPoolTagFilterRow(opts) {
+  if (data.settings.definedTags.length === 0) return "";
+  var activeIds = opts.activeIds || [];
+  var isExact = data.settings.tagFilterExactMatch === true;
+  var mappingCount = (data.settings.tagMappings || []).length;
+  var tagsToShow = data.settings.definedTags;
+  if (!isExact && mappingCount > 0) {
+    var hideSet = new Set();
+    (data.settings.tagMappings || []).forEach(function (mm) {
+      if (Array.isArray(mm.tagIds) && mm.primaryTagId) {
+        mm.tagIds.forEach(function (tid) {
+          if (tid !== mm.primaryTagId) hideSet.add(tid);
+        });
+      }
+    });
+    if (hideSet.size > 0) {
+      tagsToShow = tagsToShow.filter(function (t) {
+        if (!hideSet.has(t.id)) return true;
+        return activeIds.indexOf(t.id) >= 0;
+      });
+    }
+  }
+  var modeLabel =
+    data.settings.filterTagMode === "and" ? "全部匹配" : "任一匹配";
+  var html =
+    '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center;">';
+  html +=
+    '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;margin-right:2px;"><i class="fa-solid fa-tags" style="margin-right:2px;"></i></span>';
+  tagsToShow.forEach(function (t) {
+    var isActive = activeIds.indexOf(t.id) >= 0;
+    html +=
+      '<span class="ms-tag-toggle' +
+      (isActive ? " active" : "") +
+      '" ' +
+      opts.tagAttr +
+      '="' +
+      t.id +
+      '" style="font-size:10px;padding:2px 6px;' +
+      (isActive ? "background:" + t.color + ";" : "") +
+      '">' +
+      esc(t.name) +
+      "</span>";
+  });
+  if (mappingCount > 0) {
+    var mappingTitle = isExact
+      ? "当前为独立模式：只筛选你选中的标签\n点击切换到映射模式（同映射组的标签一起参与筛选）"
+      : "当前为映射模式：选中主标签时，同映射组的其他标签也会参与筛选\n点击切换到独立模式";
+    html +=
+      '<button class="ms-filter-mode-btn" id="' +
+      opts.mappingBtnId +
+      '" title="' +
+      escAttr(mappingTitle) +
+      '" style="margin-left:4px;' +
+      (isExact
+        ? ""
+        : "background:rgba(var(--ms-accent-rgb),0.15);color:var(--ms-accent);border-color:var(--ms-accent);") +
+      '"><i class="fa-solid ' +
+      (isExact ? "fa-link-slash" : "fa-link") +
+      '"></i> ' +
+      (isExact ? "独立" : "映射") +
+      "</button>";
+  }
+  html +=
+    '<button class="ms-filter-mode-btn" id="' +
+    opts.modeBtnId +
+    '" style="margin-left:4px;">' +
+    modeLabel +
+    "</button>";
+  if (activeIds.length > 0) {
+    html +=
+      '<span style="font-size:10px;color:var(--ms-accent);cursor:pointer;margin-left:2px;" id="' +
+      opts.clearBtnId +
+      '">× 清除</span>';
+  }
+  html += "</div>";
+  return html;
+}
 function renderRandomPool() {
   var ri = data.settings.randomInject;
   if (!ri) {
@@ -19745,6 +22924,7 @@ function renderRandomPool() {
   var $p = setupPage("随机池管理", "随机注入池");
   var _expandedGroups = new Set();
   var _expandedRpoolSeries = new Set();
+  var _expandedRpoolSub = new Set();
   var _rpoolSearch = "";
   var _rpoolFilterTags = [];
   function matchesRpoolFilter(p) {
@@ -19759,22 +22939,21 @@ function renderRandomPool() {
         return false;
     }
     if (_rpoolFilterTags.length > 0) {
+      if (!p.tags) return false;
       if (data.settings.filterTagMode === "and") {
-        if (
-          !p.tags ||
-          !_rpoolFilterTags.every(function (tid) {
-            return p.tags.indexOf(tid) >= 0;
-          })
-        )
-          return false;
+        var _rAll = _rpoolFilterTags.every(function (tid) {
+          var linked = expandTagsByMapping([tid]);
+          return linked.some(function (ltid) {
+            return p.tags.indexOf(ltid) >= 0;
+          });
+        });
+        if (!_rAll) return false;
       } else {
-        if (
-          !p.tags ||
-          !_rpoolFilterTags.some(function (tid) {
-            return p.tags.indexOf(tid) >= 0;
-          })
-        )
-          return false;
+        var _rEff = expandTagsByMapping(_rpoolFilterTags);
+        var _rAny = _rEff.some(function (tid) {
+          return p.tags.indexOf(tid) >= 0;
+        });
+        if (!_rAny) return false;
       }
     }
     return true;
@@ -19795,6 +22974,26 @@ function renderRandomPool() {
   }
   function isPromptExcluded(pid) {
     return ri.excludedPromptIds && ri.excludedPromptIds.indexOf(pid) >= 0;
+  }
+  function isSubGroupExcluded(gid, sgid) {
+    if (!sgid || !ri.excludedSubGroups) return false;
+    return ri.excludedSubGroups.some(function (x) {
+      return x && x.groupId === gid && x.subGroupId === sgid;
+    });
+  }
+  function toggleSubGroupExclude(gid, sgid) {
+    if (!Array.isArray(ri.excludedSubGroups)) ri.excludedSubGroups = [];
+    var idx = -1;
+    for (var i = 0; i < ri.excludedSubGroups.length; i++) {
+      var x = ri.excludedSubGroups[i];
+      if (x && x.groupId === gid && x.subGroupId === sgid) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx >= 0) ri.excludedSubGroups.splice(idx, 1);
+    else ri.excludedSubGroups.push({ groupId: gid, subGroupId: sgid });
+    saveData();
   }
   function toggleGroupExclude(gid) {
     if (!ri.excludedGroupIds) ri.excludedGroupIds = [];
@@ -19824,7 +23023,8 @@ function renderRandomPool() {
     var allExcluded =
       ri.excludedGroupIds.length > 0 ||
       ri.excludedSeries.length > 0 ||
-      ri.excludedPromptIds.length > 0;
+      ri.excludedPromptIds.length > 0 ||
+      (Array.isArray(ri.excludedSubGroups) && ri.excludedSubGroups.length > 0);
     var html = '<div style="padding:8px 14px 4px;">';
     html +=
       '<div style="position:relative;display:flex;align-items:center;"><input class="ms-search" id="ms-rpool-search" type="text" placeholder="搜索标题、内容、作者、系列..." value="' +
@@ -19832,36 +23032,13 @@ function renderRandomPool() {
       '" style="flex:1;padding-right:24px;"><span id="ms-rpool-search-clear" style="position:absolute;right:8px;cursor:pointer;color:var(--SmartThemeQuoteColor,#666);font-size:11px;display:' +
       (_rpoolSearch ? "block" : "none") +
       ';line-height:1;">×</span></div>';
-    if (data.settings.definedTags.length > 0) {
-      var modeLabel =
-        data.settings.filterTagMode === "and" ? "全部匹配" : "任一匹配";
-      html +=
-        '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center;">';
-      html +=
-        '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;margin-right:2px;"><i class="fa-solid fa-tags" style="margin-right:2px;"></i></span>';
-      data.settings.definedTags.forEach(function (t) {
-        var isActive = _rpoolFilterTags.indexOf(t.id) >= 0;
-        html +=
-          '<span class="ms-tag-toggle' +
-          (isActive ? " active" : "") +
-          '" data-rpool-filter-tag="' +
-          t.id +
-          '" style="font-size:10px;padding:2px 6px;' +
-          (isActive ? "background:" + t.color + ";" : "") +
-          '">' +
-          esc(t.name) +
-          "</span>";
-      });
-      if (_rpoolFilterTags.length > 0) {
-        html +=
-          '<span style="font-size:10px;color:var(--ms-accent);cursor:pointer;margin-left:2px;" id="ms-rpool-clear-tags">× 清除</span>';
-        html +=
-          '<button class="ms-filter-mode-btn" id="ms-rpool-tag-mode" style="margin-left:4px;">' +
-          modeLabel +
-          "</button>";
-      }
-      html += "</div>";
-    }
+    html += buildPoolTagFilterRow({
+      activeIds: _rpoolFilterTags,
+      tagAttr: "data-rpool-filter-tag",
+      modeBtnId: "ms-rpool-tag-mode",
+      mappingBtnId: "ms-rpool-tag-mapping",
+      clearBtnId: "ms-rpool-clear-tags",
+    });
     html += "</div>";
 
     html +=
@@ -19919,61 +23096,95 @@ function renderRandomPool() {
         ';" data-rpool-body="' +
         gid +
         '">';
-      var seriesMap = {};
-      var noSeries = [];
-      displayPrompts.forEach(function (p) {
-        var sn = (p.series || "").trim();
-        if (sn) {
-          if (!seriesMap[sn]) seriesMap[sn] = [];
-          seriesMap[sn].push(p);
-        } else {
-          noSeries.push(p);
-        }
-      });
-      Object.keys(seriesMap).forEach(function (sn) {
-        var sExcluded = isSeriesExcluded(gid, sn);
-        var sChecked = sExcluded ? "" : " checked";
-        var sCls = sExcluded || gExcluded ? " ms-rpool-excluded" : "";
-        var sDisabled = gExcluded ? " disabled" : "";
-        var _rpSid = gid + "_s_" + simpleHash(sn);
-        var _rpSOpen = _expandedRpoolSeries.has(_rpSid) || hasFilter;
-        blockH +=
-          '<div class="ms-rpool-series-label' +
-          (gExcluded ? " ms-rpool-excluded" : "") +
-          '" data-rpool-series-id="' +
-          _rpSid +
-          '">' +
-          '<input type="checkbox" class="ms-rpool-scb" data-gid="' +
-          gid +
-          '" data-sn="' +
-          esc(sn) +
-          '"' +
-          sChecked +
-          sDisabled +
-          '><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:11px;"></i><span class="' +
-          sCls +
-          '">' +
-          esc(sn) +
-          " (" +
-          seriesMap[sn].length +
-          ')</span><i class="fa-solid fa-angle-right ms-series-arrow' +
-          (_rpSOpen ? " open" : "") +
-          '" style="font-size:9px;margin-left:auto;"></i></div>';
-        blockH +=
-          '<div class="ms-rpool-series-items" data-rpool-series-body="' +
-          _rpSid +
-          '" style="display:' +
-          (_rpSOpen ? "block" : "none") +
-          ';">';
-        seriesMap[sn].forEach(function (p) {
+
+      function renderRpoolItems(items, sgid, upperExcluded, indentPx) {
+        var h = "";
+        var seriesMap = {};
+        var noSeries = [];
+        items.forEach(function (p) {
+          var sn = (p.series || "").trim();
+          if (sn) {
+            if (!seriesMap[sn]) seriesMap[sn] = [];
+            seriesMap[sn].push(p);
+          } else {
+            noSeries.push(p);
+          }         });
+        var padCss = indentPx ? "padding-left:" + indentPx + "px;" : "";
+        Object.keys(seriesMap).forEach(function (sn) {
+          var sExcluded = isSeriesExcluded(gid, sn);
+          var sChecked = sExcluded ? "" : " checked";
+          var sCls = sExcluded || upperExcluded ? " ms-rpool-excluded" : "";
+          var sDisabled = upperExcluded ? " disabled" : "";
+          var _rpSid = gid + "_" + (sgid || "_") + "_s_" + simpleHash(sn);
+          var _rpSOpen = _expandedRpoolSeries.has(_rpSid) || hasFilter;
+          h +=
+            '<div class="ms-rpool-series-label' +
+            (upperExcluded ? " ms-rpool-excluded" : "") +
+            '" data-rpool-series-id="' +
+            _rpSid +
+            '" style="' +
+            padCss +
+            '">' +
+            '<input type="checkbox" class="ms-rpool-scb" data-gid="' +
+            gid +
+            '" data-sn="' +
+            esc(sn) +
+            '"' +
+            sChecked +
+            sDisabled +
+            '><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:11px;"></i><span class="' +
+            sCls +
+            '">' +
+            esc(sn) +
+            " (" +
+            seriesMap[sn].length +
+            ')</span><i class="fa-solid fa-angle-right ms-series-arrow' +
+            (_rpSOpen ? " open" : "") +
+            '" style="font-size:9px;margin-left:auto;"></i></div>';
+          h +=
+            '<div class="ms-rpool-series-items" data-rpool-series-body="' +
+            _rpSid +
+            '" style="display:' +
+            (_rpSOpen ? "block" : "none") +
+            ";" +
+            padCss +
+            '">';
+          seriesMap[sn].forEach(function (p) {
+            var pExcluded = isPromptExcluded(p.id);
+            var pChecked = pExcluded ? "" : " checked";
+            var pCls =
+              pExcluded || sExcluded || upperExcluded
+                ? " ms-rpool-excluded"
+                : "";
+            var pDisabled = upperExcluded || sExcluded ? " disabled" : "";
+            h +=
+              '<div class="ms-rpool-item' +
+              (upperExcluded || sExcluded ? " disabled" : "") +
+              '"><input type="checkbox" class="ms-rpool-pcb" data-pid="' +
+              p.id +
+              '"' +
+              pChecked +
+              pDisabled +
+              '><span class="' +
+              pCls +
+              '" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+              (hasFilter && _rpoolSearch
+                ? highlightText(p.title, _rpoolSearch)
+                : esc(truncate(p.title, 30))) +
+              "</span></div>";
+          });
+          h += "</div>";
+        });
+        noSeries.forEach(function (p) {
           var pExcluded = isPromptExcluded(p.id);
           var pChecked = pExcluded ? "" : " checked";
-          var pCls =
-            pExcluded || sExcluded || gExcluded ? " ms-rpool-excluded" : "";
-          var pDisabled = gExcluded || sExcluded ? " disabled" : "";
-          blockH +=
+          var pCls = pExcluded || upperExcluded ? " ms-rpool-excluded" : "";
+          var pDisabled = upperExcluded ? " disabled" : "";
+          h +=
             '<div class="ms-rpool-item' +
-            (gExcluded || sExcluded ? " disabled" : "") +
+            (upperExcluded ? " disabled" : "") +
+            '" style="' +
+            padCss +
             '"><input type="checkbox" class="ms-rpool-pcb" data-pid="' +
             p.id +
             '"' +
@@ -19987,29 +23198,86 @@ function renderRandomPool() {
               : esc(truncate(p.title, 30))) +
             "</span></div>";
         });
-        blockH += "</div>";
-      });
-      noSeries.forEach(function (p) {
-        var pExcluded = isPromptExcluded(p.id);
-        var pChecked = pExcluded ? "" : " checked";
-        var pCls = pExcluded || gExcluded ? " ms-rpool-excluded" : "";
-        var pDisabled = gExcluded ? " disabled" : "";
-        blockH +=
-          '<div class="ms-rpool-item' +
-          (gExcluded ? " disabled" : "") +
-          '"><input type="checkbox" class="ms-rpool-pcb" data-pid="' +
-          p.id +
-          '"' +
-          pChecked +
-          pDisabled +
-          '><span class="' +
-          pCls +
-          '" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
-          (hasFilter && _rpoolSearch
-            ? highlightText(p.title, _rpoolSearch)
-            : esc(truncate(p.title, 30))) +
-          "</span></div>";
-      });
+        return h;
+      }
+
+      var sgOnForRpool =
+        gObj && isSubGroupEnabled(gObj) && getSubGroups(gObj).length > 0;
+      if (!sgOnForRpool) {
+        blockH += renderRpoolItems(displayPrompts, null, gExcluded, 0);
+      } else {
+        var rBuckets = {};
+        var rNone = [];
+        displayPrompts.forEach(function (p) {
+          if (p.subGroupId && getSubGroup(gid, p.subGroupId)) {
+            if (!rBuckets[p.subGroupId]) rBuckets[p.subGroupId] = [];
+            rBuckets[p.subGroupId].push(p);
+          } else {
+            rNone.push(p);
+          }
+        });
+        function _rpoolSubBlock(sgid, label, color, iconCls, items) {
+          var sgExcluded = isSubGroupExcluded(gid, sgid);
+          var sgCls = sgExcluded || gExcluded ? " ms-rpool-excluded" : "";
+          var _rpSgId = gid + "_sg_" + sgid;
+          var _rpSgOpen = _expandedRpoolSub.has(_rpSgId) || hasFilter;
+          var s =
+            '<div class="ms-rpool-series-label' +
+            (gExcluded ? " ms-rpool-excluded" : "") +
+            '" data-rpool-sub-id="' +
+            _rpSgId +
+            '">' +
+            '<input type="checkbox" class="ms-rpool-sgcb" data-gid="' +
+            gid +
+            '" data-sgid="' +
+            escAttr(sgid) +
+            '"' +
+            (sgExcluded ? "" : " checked") +
+            (gExcluded ? " disabled" : "") +
+            '><i class="fa-solid ' +
+            iconCls +
+            '" style="color:' +
+            color +
+            ';font-size:11px;"></i><span class="' +
+            sgCls +
+            '">' +
+            esc(label) +
+            " (" +
+            items.length +
+            ')</span><i class="fa-solid fa-angle-right ms-series-arrow' +
+            (_rpSgOpen ? " open" : "") +
+            '" style="font-size:9px;margin-left:auto;"></i></div>';
+          s +=
+            '<div data-rpool-sub-body="' +
+            _rpSgId +
+            '" style="display:' +
+            (_rpSgOpen ? "block" : "none") +
+            ';">' +
+            renderRpoolItems(items, sgid, gExcluded || sgExcluded, 12) +
+            "</div>";
+          return s;
+        }
+        getSubGroups(gObj).forEach(function (sg) {
+          var bucket = rBuckets[sg.id];
+          if (!bucket || bucket.length === 0) return;
+          blockH += _rpoolSubBlock(
+            sg.id,
+            sg.name,
+            sg.color,
+            "fa-folder-open",
+            bucket,
+          );
+        });
+        if (rNone.length > 0) {
+          blockH += _rpoolSubBlock(
+            SUBGROUP_NONE,
+            "未分类",
+            "var(--SmartThemeQuoteColor,#888)",
+            "fa-inbox",
+            rNone,
+          );
+        }
+      }
       blockH += "</div></div>";
       return blockH;
     }
@@ -20131,31 +23399,57 @@ function renderRandomPool() {
     saveData();
     refreshPool();
   });
+  $p.find("#ms-body").on("click.ms", "#ms-rpool-tag-mapping", function () {
+    data.settings.tagFilterExactMatch = !data.settings.tagFilterExactMatch;
+    saveData();
+    refreshPool();
+  });
   $p.find("#ms-body").on("click.ms", "#ms-rpool-selall", function () {
     var allExcluded =
       ri.excludedGroupIds.length > 0 ||
       ri.excludedSeries.length > 0 ||
-      ri.excludedPromptIds.length > 0;
+      ri.excludedPromptIds.length > 0 ||
+      (Array.isArray(ri.excludedSubGroups) && ri.excludedSubGroups.length > 0);
 
     if (allExcluded) {
       ri.excludedGroupIds = [];
       ri.excludedSeries = [];
       ri.excludedPromptIds = [];
+      ri.excludedSubGroups = [];
     } else {
       var visiblePrompts = data.prompts.filter(matchesRpoolFilter);
       var visibleGroupIds = new Set();
       var visibleSeriesKeys = new Set();
+      var visibleSubKeys = new Set();
       visiblePrompts.forEach(function (p) {
         var gid = p.groupId && getGroup(p.groupId) ? p.groupId : "_ungrouped";
         visibleGroupIds.add(gid);
         var sn = (p.series || "").trim();
         if (sn) visibleSeriesKeys.add(gid + "||" + sn);
+        var _gObj = gid === "_ungrouped" ? null : getGroup(gid);
+        if (isSubGroupEnabled(_gObj) && getSubGroups(_gObj).length > 0) {
+          var _sgk =
+            p.subGroupId && getSubGroup(gid, p.subGroupId)
+              ? p.subGroupId
+              : SUBGROUP_NONE;
+          visibleSubKeys.add(gid + "||" + _sgk);
+        }
       });
       if (!Array.isArray(ri.excludedGroupIds)) ri.excludedGroupIds = [];
       if (!Array.isArray(ri.excludedSeries)) ri.excludedSeries = [];
       if (!Array.isArray(ri.excludedPromptIds)) ri.excludedPromptIds = [];
+      if (!Array.isArray(ri.excludedSubGroups)) ri.excludedSubGroups = [];
       visibleGroupIds.forEach(function (gid) {
         if (ri.excludedGroupIds.indexOf(gid) < 0) ri.excludedGroupIds.push(gid);
+      });
+      visibleSubKeys.forEach(function (key) {
+        var parts = key.split("||");
+        var gid = parts[0],
+          sgid = parts.slice(1).join("||");
+        var exists = ri.excludedSubGroups.some(function (x) {
+          return x && x.groupId === gid && x.subGroupId === sgid;
+        });
+        if (!exists) ri.excludedSubGroups.push({ groupId: gid, subGroupId: sgid });
       });
       visibleSeriesKeys.forEach(function (key) {
         var parts = key.split("||");
@@ -20202,6 +23496,21 @@ function renderRandomPool() {
     toggleGroupExclude(gid);
     refreshPool();
   });
+  $p.find("#ms-body").on("click.ms", ".ms-rpool-series-label", function (e) {
+    if ($(e.target).is("input[type='checkbox']")) return;
+    var subId = $(this).attr("data-rpool-sub-id");
+    if (!subId) return;
+    $(this).find(".ms-series-arrow").toggleClass("open");
+    var $sb = $p.find('[data-rpool-sub-body="' + subId + '"]');
+    $sb.toggle();
+    if ($sb.is(":visible")) _expandedRpoolSub.add(subId);
+    else _expandedRpoolSub.delete(subId);
+  });
+  $p.find("#ms-body").on("change.ms", ".ms-rpool-sgcb", function (e) {
+    e.stopPropagation();
+    toggleSubGroupExclude($(this).data("gid"), $(this).attr("data-sgid"));
+    refreshPool();
+  });
   $p.find("#ms-body").on("change.ms", ".ms-rpool-scb", function (e) {
     e.stopPropagation();
     var gid = $(this).data("gid");
@@ -20224,6 +23533,7 @@ function renderPinnedPool() {
   var $p = setupPage("固定池管理", "固定注入池");
   var _pexpGroups = new Set();
   var _pexpSeries = new Set();
+  var _pexpSub = new Set();
   var _psearch = "";
   var _pfilterTags = [];
 
@@ -20239,22 +23549,21 @@ function renderPinnedPool() {
         return false;
     }
     if (_pfilterTags.length > 0) {
+      if (!p.tags) return false;
       if (data.settings.filterTagMode === "and") {
-        if (
-          !p.tags ||
-          !_pfilterTags.every(function (tid) {
-            return p.tags.indexOf(tid) >= 0;
-          })
-        )
-          return false;
+        var _pAll = _pfilterTags.every(function (tid) {
+          var linked = expandTagsByMapping([tid]);
+          return linked.some(function (ltid) {
+            return p.tags.indexOf(ltid) >= 0;
+          });
+        });
+        if (!_pAll) return false;
       } else {
-        if (
-          !p.tags ||
-          !_pfilterTags.some(function (tid) {
-            return p.tags.indexOf(tid) >= 0;
-          })
-        )
-          return false;
+        var _pEff = expandTagsByMapping(_pfilterTags);
+        var _pAny = _pEff.some(function (tid) {
+          return p.tags.indexOf(tid) >= 0;
+        });
+        if (!_pAny) return false;
       }
     }
     return true;
@@ -20355,36 +23664,13 @@ function renderPinnedPool() {
       '" style="flex:1;padding-right:24px;"><span id="ms-ppool-search-clear" style="position:absolute;right:8px;cursor:pointer;color:var(--SmartThemeQuoteColor,#666);font-size:11px;display:' +
       (_psearch ? "block" : "none") +
       ';line-height:1;">×</span></div>';
-    if (data.settings.definedTags.length > 0) {
-      var modeLabel =
-        data.settings.filterTagMode === "and" ? "全部匹配" : "任一匹配";
-      html +=
-        '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center;">';
-      html +=
-        '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;margin-right:2px;"><i class="fa-solid fa-tags" style="margin-right:2px;"></i></span>';
-      data.settings.definedTags.forEach(function (t) {
-        var isActive = _pfilterTags.indexOf(t.id) >= 0;
-        html +=
-          '<span class="ms-tag-toggle' +
-          (isActive ? " active" : "") +
-          '" data-ppool-filter-tag="' +
-          t.id +
-          '" style="font-size:10px;padding:2px 6px;' +
-          (isActive ? "background:" + t.color + ";" : "") +
-          '">' +
-          esc(t.name) +
-          "</span>";
-      });
-      if (_pfilterTags.length > 0) {
-        html +=
-          '<span style="font-size:10px;color:var(--ms-accent);cursor:pointer;margin-left:2px;" id="ms-ppool-clear-tags">× 清除</span>';
-        html +=
-          '<button class="ms-filter-mode-btn" id="ms-ppool-tag-mode" style="margin-left:4px;">' +
-          modeLabel +
-          "</button>";
-      }
-      html += "</div>";
-    }
+    html += buildPoolTagFilterRow({
+      activeIds: _pfilterTags,
+      tagAttr: "data-ppool-filter-tag",
+      modeBtnId: "ms-ppool-tag-mode",
+      mappingBtnId: "ms-ppool-tag-mapping",
+      clearBtnId: "ms-ppool-clear-tags",
+    });
     html += "</div>";
 
     function itemH(p) {
@@ -20445,44 +23731,118 @@ function renderPinnedPool() {
         ';" data-ppool-body="' +
         gid +
         '">';
-      var seriesMap = {};
-      var noSeries = [];
-      list.forEach(function (p) {
-        var sn = (p.series || "").trim();
-        if (sn) {
-          if (!seriesMap[sn]) seriesMap[sn] = [];
-          seriesMap[sn].push(p);
-        } else {
-          noSeries.push(p);
-        }
-      });
-      Object.keys(seriesMap).forEach(function (sn) {
-        var sid = gid + "_s_" + simpleHash(sn);
-        var sOpen = _pexpSeries.has(sid) || hasFilter;
-        h +=
-          '<div class="ms-rpool-series-label" data-ppool-series-id="' +
-          sid +
-          '"><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:11px;"></i><span>' +
-          esc(sn) +
-          " (" +
-          seriesMap[sn].length +
-          ')</span><i class="fa-solid fa-angle-right ms-series-arrow' +
-          (sOpen ? " open" : "") +
-          '" style="font-size:9px;margin-left:auto;"></i></div>';
-        h +=
-          '<div class="ms-rpool-series-items" data-ppool-series-body="' +
-          sid +
-          '" style="display:' +
-          (sOpen ? "block" : "none") +
-          ';">';
-        seriesMap[sn].forEach(function (p) {
-          h += itemH(p);
+      function renderPpoolItems(items, sgid, indentPx) {
+        var out = "";
+        var seriesMap = {};
+        var noSeries = [];
+        items.forEach(function (p) {
+          var sn = (p.series || "").trim();
+          if (sn) {
+            if (!seriesMap[sn]) seriesMap[sn] = [];
+            seriesMap[sn].push(p);
+          } else {
+            noSeries.push(p);
+          }
         });
-        h += "</div>";
-      });
-      noSeries.forEach(function (p) {
-        h += itemH(p);
-      });
+        var padCss = indentPx ? "padding-left:" + indentPx + "px;" : "";
+        Object.keys(seriesMap).forEach(function (sn) {
+          var sid = gid + "_" + (sgid || "_") + "_s_" + simpleHash(sn);
+          var sOpen = _pexpSeries.has(sid) || hasFilter;
+          out +=
+            '<div class="ms-rpool-series-label" data-ppool-series-id="' +
+            sid +
+            '" style="' +
+            padCss +
+            '"><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:11px;"></i><span>' +
+            esc(sn) +
+            " (" +
+            seriesMap[sn].length +
+            ')</span><i class="fa-solid fa-angle-right ms-series-arrow' +
+            (sOpen ? " open" : "") +
+            '" style="font-size:9px;margin-left:auto;"></i></div>';
+          out +=
+            '<div class="ms-rpool-series-items" data-ppool-series-body="' +
+            sid +
+            '" style="display:' +
+            (sOpen ? "block" : "none") +
+            ";" +
+            padCss +
+            '">';
+          seriesMap[sn].forEach(function (p) {
+            out += itemH(p);
+          });
+          out += "</div>";
+        });
+        if (noSeries.length > 0) {
+          out += '<div style="' + padCss + '">';
+          noSeries.forEach(function (p) {
+            out += itemH(p);
+          });
+          out += "</div>";
+        }
+        return out;
+      }
+      var sgOnForPpool =
+        gObj && isSubGroupEnabled(gObj) && getSubGroups(gObj).length > 0;
+      if (!sgOnForPpool) {
+        h += renderPpoolItems(list, null, 0);
+      } else {
+        var pBuckets = {};
+        var pNone = [];
+        list.forEach(function (p) {
+          if (p.subGroupId && getSubGroup(gid, p.subGroupId)) {
+            if (!pBuckets[p.subGroupId]) pBuckets[p.subGroupId] = [];
+            pBuckets[p.subGroupId].push(p);
+          } else {
+            pNone.push(p);
+          }
+        });
+        function _ppoolSubBlock(sgid, label, color, iconCls, items) {
+          var _sid = gid + "_sg_" + sgid;
+          var _open = _pexpSub.has(_sid) || hasFilter;
+          var _pinned = items.filter(function (p) {
+            return _pIsPinned(p.id);
+          }).length;
+          var s =
+            '<div class="ms-rpool-series-label" data-ppool-sub-id="' +
+            _sid +
+            '"><i class="fa-solid ' +
+            iconCls +
+            '" style="color:' +
+            color +
+            ';font-size:11px;"></i><span>' +
+            esc(label) +
+            " (" +
+            (_pinned > 0 ? _pinned + "/" : "") +
+            items.length +
+            ')</span><i class="fa-solid fa-angle-right ms-series-arrow' +
+            (_open ? " open" : "") +
+            '" style="font-size:9px;margin-left:auto;"></i></div>';
+          s +=
+            '<div data-ppool-sub-body="' +
+            _sid +
+            '" style="display:' +
+            (_open ? "block" : "none") +
+            ';">' +
+            renderPpoolItems(items, sgid, 12) +
+            "</div>";
+          return s;
+        }
+        getSubGroups(gObj).forEach(function (sg) {
+          var bucket = pBuckets[sg.id];
+          if (!bucket || bucket.length === 0) return;
+          h += _ppoolSubBlock(sg.id, sg.name, sg.color, "fa-folder-open", bucket);
+        });
+        if (pNone.length > 0) {
+          h += _ppoolSubBlock(
+            SUBGROUP_NONE,
+            "未分类",
+            "var(--SmartThemeQuoteColor,#888)",
+            "fa-inbox",
+            pNone,
+          );
+        }
+      }
       h += "</div></div>";
       return h;
     }
@@ -20611,6 +23971,15 @@ function renderPinnedPool() {
     if ($sb.is(":visible")) _pexpSeries.add(sid);
     else _pexpSeries.delete(sid);
   });
+  $p.find("#ms-body").on("click.ms", ".ms-rpool-series-label", function () {
+    var subId = $(this).attr("data-ppool-sub-id");
+    if (!subId) return;
+    $(this).find(".ms-series-arrow").toggleClass("open");
+    var $sb = $p.find('[data-ppool-sub-body="' + subId + '"]');
+    $sb.toggle();
+    if ($sb.is(":visible")) _pexpSub.add(subId);
+    else _pexpSub.delete(subId);
+  });
   $p.find("#ms-body").on("compositionstart.ms", "#ms-ppool-search", function () {
     this._composing = true;
   });
@@ -20645,6 +24014,11 @@ function renderPinnedPool() {
   $p.find("#ms-body").on("click.ms", "#ms-ppool-tag-mode", function () {
     data.settings.filterTagMode =
       data.settings.filterTagMode === "and" ? "or" : "and";
+    saveData();
+    refreshAll();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-ppool-tag-mapping", function () {
+    data.settings.tagFilterExactMatch = !data.settings.tagFilterExactMatch;
     saveData();
     refreshAll();
   });
@@ -22163,6 +25537,28 @@ function showPanel() {
       e.stopImmediatePropagation();
       e.stopPropagation();
       e.preventDefault();
+      /* 全屏编辑浮层不是 .ms-modal-overlay，走不到上面的模态放行分支，
+         再往下就会一路退到 navigateBack()——浮层还压在最上面，背后的页面
+         却已经换掉了，此时点浮层里的「保存」会写进一个游离节点。 */
+      var $fsOverlay = $pp.find(".ms-fs-editor-overlay");
+      if ($fsOverlay.length) {
+        var $fsCancel = $fsOverlay.find("#ms-fs-cancel");
+        if ($fsCancel.length) $fsCancel.trigger("click");
+        else $fsOverlay.remove();
+        return;
+      }
+      var $msPopup = $pp.find(
+        "#ms-gp-popup, #ms-sp-popup, #ms-char-search-popup",
+      );
+      if ($msPopup.length) {
+        $msPopup.remove();
+        $pp.off(
+          "pointerdown.ms-gp keydown.ms-gp pointerdown.ms-sp keydown.ms-sp pointerdown.ms-char-search-close",
+        );
+        $pp.find("#ms-body").off("scroll.ms-gp scroll.ms-sp");
+        $pp.find(".ms-gp-trigger").removeClass("open");
+        return;
+      }
       var $findBar = $pp.find("#ms-find-bar");
       if ($findBar.is(":visible")) {
         $findBar.hide();
@@ -22273,6 +25669,7 @@ function showPanel() {
       excludeTags: [],
       tagSelectMode: "include",
       groupId: null,
+      subGroupId: null,
       onlyCurrentChar: false,
     };
   }
@@ -23569,6 +26966,68 @@ function togglePanel() {
   else showPanel();
 }
 
+function msGetVisibleBand() {
+  var panelEl = document.getElementById(PANEL_ID);
+  var win =
+    (panelEl && panelEl.ownerDocument && panelEl.ownerDocument.defaultView) ||
+    window;
+  var winH = Math.round(
+    win.innerHeight ||
+      (win.document && win.document.documentElement.clientHeight) ||
+      0,
+  );
+  var winW = Math.round(
+    win.innerWidth ||
+      (win.document && win.document.documentElement.clientWidth) ||
+      0,
+  );
+  var band = {
+    top: 0,
+    left: 0,
+    width: winW,
+    height: winH,
+    keyboard: 0,
+    crossOrigin: false,
+  };
+  var topWin = win;
+  var offTop = 0;
+  var offLeft = 0;
+  try {
+    var guard = 0;
+    while (guard < 12 && topWin.parent && topWin.parent !== topWin) {
+      void topWin.parent.document;
+      var fe = topWin.frameElement;
+      if (!fe) break;
+      var fr = fe.getBoundingClientRect();
+      offTop += fr.top;
+      offLeft += fr.left;
+      topWin = topWin.parent;
+      guard++;
+    }
+  } catch (e) {
+    band.crossOrigin = true;
+  }
+  var tvv = null;
+  try {
+    tvv = topWin.visualViewport || win.visualViewport || null;
+  } catch (e) {
+    tvv = win.visualViewport || null;
+  }
+  if (!tvv || !tvv.height || !winH) return band;
+  var vTop = Math.round((tvv.offsetTop || 0) - offTop);
+  var vLeft = Math.round((tvv.offsetLeft || 0) - offLeft);
+  var bTop = Math.max(0, vTop);
+  var bLeft = Math.max(0, vLeft);
+  var bBottom = Math.min(winH, vTop + Math.round(tvv.height));
+  var bRight = Math.min(winW, vLeft + Math.round(tvv.width || winW));
+  if (bBottom - bTop < 120) return band;
+  band.top = bTop;
+  band.left = bLeft;
+  band.height = bBottom - bTop;
+  band.width = Math.max(120, bRight - bLeft);
+  band.keyboard = Math.max(0, winH - bBottom);
+  return band;
+}
 function setupKeyboardAdapt() {
   if (setupKeyboardAdapt._bound) return;
   var vv = window.visualViewport || null;
@@ -23586,6 +27045,21 @@ function setupKeyboardAdapt() {
     el.style.removeProperty("zoom");
     el.removeAttribute("data-ms-kb");
   }
+  function clearSoftClamp(el) {
+    if (el.getAttribute("data-ms-kb") === "2") {
+      el.style.removeProperty("top");
+      el.style.removeProperty("max-height");
+      el.removeAttribute("data-ms-kb");
+      if (data.settings.panelPos && data.settings.panelPos.top) {
+        el.style.setProperty("top", data.settings.panelPos.top, "important");
+      }
+      applyUICustomization();
+    }
+    /* 这一句故意留在守卫外：data-ms-kb 会被 exitFocusMode 抹掉，若跟着守卫走，
+       标记一没就再也清不到正文框，inline max-height 会一直卡着。 */
+    var softTa = el.querySelector("#ms-edit-content");
+    if (softTa) softTa.style.removeProperty("max-height");
+  }
 
   function adapt() {
     _kbRaf = null;
@@ -23598,22 +27072,18 @@ function setupKeyboardAdapt() {
       el.classList.contains("ms-modal-expand-mode") ||
       el.classList.contains("ms-fs-editor-mode");
 
+    var band = msGetVisibleBand();
     var isMobileLike =
       /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
       Math.min(window.innerWidth || 0, window.innerHeight || 0) <= 900 ||
-      Math.min(vv.width || 0, vv.height || 0) <= 900;
+      Math.min(band.width || 0, band.height || 0) <= 900;
 
     if (isFull && isMobileLike) {
-      var viewW = Math.round(
-        vv.width || window.innerWidth || document.documentElement.clientWidth,
-      );
-      var viewH = Math.round(
-        vv.height ||
-          window.innerHeight ||
-          document.documentElement.clientHeight,
-      );
-      var viewLeft = Math.round(vv.offsetLeft || 0);
-      var viewTop = Math.round(vv.offsetTop || 0);
+      clearSoftClamp(el);
+      var viewW = band.width;
+      var viewH = band.height;
+      var viewLeft = band.left;
+      var viewTop = band.top;
 
       el.style.setProperty("left", viewLeft + "px", "important");
       el.style.setProperty("top", viewTop + "px", "important");
@@ -23631,7 +27101,28 @@ function setupKeyboardAdapt() {
     if (el.getAttribute("data-ms-kb") === "1") {
       clearKeyboardPatch(el);
       el.style.removeProperty("border-radius");
+      applyUICustomization();
     }
+
+    if (!isMobileLike) {
+      clearSoftClamp(el);
+    } else if (band.keyboard > 120) {
+      var softAvail = Math.max(200, band.height - 12);
+      el.style.setProperty("top", band.top + 6 + "px", "important");
+      el.style.setProperty("max-height", softAvail + "px", "important");
+      el.setAttribute("data-ms-kb", "2");
+      var softTa = el.querySelector("#ms-edit-content");
+      if (softTa) {
+        softTa.style.setProperty(
+          "max-height",
+          Math.max(120, Math.round(softAvail * 0.55)) + "px",
+          "important",
+        );
+      }
+    } else {
+      clearSoftClamp(el);
+    }
+
   }
 
   function schedule() {
@@ -23645,6 +27136,24 @@ function setupKeyboardAdapt() {
     vv.addEventListener("resize", schedule);
     vv.addEventListener("scroll", schedule);
   }
+  try {
+    var _topWin = window;
+    var _tGuard = 0;
+    while (_tGuard < 12 && _topWin.parent && _topWin.parent !== _topWin) {
+      void _topWin.parent.document;
+      _topWin = _topWin.parent;
+      _tGuard++;
+    }
+    if (_topWin !== window) {
+      if (_topWin.visualViewport) {
+        _topWin.visualViewport.addEventListener("resize", schedule);
+        _topWin.visualViewport.addEventListener("scroll", schedule);
+      }
+      _topWin.addEventListener("resize", function () {
+        setTimeout(schedule, 80);
+      });
+    }
+  } catch (e) {}
   window.addEventListener("resize", function () {
     setTimeout(schedule, 80);
   });
@@ -24402,4 +27911,2050 @@ else {
     } else if (att > 40) clearInterval(w);
   }, 500);
 }
+
+function showGroupAssignDialog(opts) {
+  var allPrompts = getPromptsInGroup(opts.groupId);
+  if (allPrompts.length === 0) {
+    toast("info", "本分组还没有剧场");
+    return;
+  }
+  enterBirthdayPanelMode();
+  var working = {};
+  allPrompts.forEach(function (p) {
+    var owner = opts.getOwner(p);
+    if (owner) working[p.id] = owner;
+  });
+  var cfgKw = "";
+
+  function buildCfgBody() {
+    var lkw = cfgKw.trim().toLowerCase();
+    var filtered = allPrompts.filter(function (p) {
+      if (!lkw) return true;
+      return (
+        (p.title || "").toLowerCase().indexOf(lkw) >= 0 ||
+        (p.content || "").toLowerCase().indexOf(lkw) >= 0 ||
+        (p.series || "").toLowerCase().indexOf(lkw) >= 0
+      );
+    });
+    var mineCnt = 0;
+    var otherCnt = 0;
+    allPrompts.forEach(function (p) {
+      if (working[p.id] === opts.ownerId) mineCnt++;
+      else if (working[p.id]) otherCnt++;
+    });
+    var html =
+      '<div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:8px;line-height:1.6;"><i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>' +
+      opts.desc +
+      "</div>" +
+      '<input type="text" class="ms-modal-search" id="ms-ga-search" placeholder="搜索剧场标题、内容、系列..." value="' +
+      escAttr(cfgKw) +
+      '">' +
+      '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:11px;flex-wrap:wrap;">' +
+      '<span style="color:var(--SmartThemeQuoteColor,#888);flex:1;min-width:0;">共 ' +
+      allPrompts.length +
+      ' 条 · 当前已选 <strong style="color:var(--ms-accent);">' +
+      mineCnt +
+      "</strong> 条" +
+      (otherCnt > 0
+        ? ' · <span style="color:var(--ms-accent);opacity:0.85;">' +
+          otherCnt +
+          " 条" +
+          opts.otherLabel +
+          "</span>"
+        : "") +
+      "</span>" +
+      '<button class="ms-tbtn" data-ga-action="select-free" style="font-size:10px;padding:3px 8px;flex-shrink:0;" title="' +
+      escAttr(opts.freeHint) +
+      '">勾选空闲</button>' +
+      '<button class="ms-tbtn" data-ga-action="clear" style="font-size:10px;padding:3px 8px;color:var(--ms-danger);border-color:var(--ms-danger);flex-shrink:0;">清空</button>' +
+      "</div>";
+    if (filtered.length === 0) {
+      html +=
+        '<div class="ms-empty" style="padding:20px;font-size:11px;"><i class="fa-solid fa-magnifying-glass"></i>没有匹配的剧场</div>';
+      return html;
+    }
+    html +=
+      '<div id="ms-ga-list" style="min-height:44vh;max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:3px;border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;padding:6px;">';
+    filtered.forEach(function (p) {
+      var cur = working[p.id];
+      var isMine = cur === opts.ownerId;
+      var otherName =
+        cur && cur !== opts.ownerId ? opts.ownerNameOf(cur) : null;
+      var rowBg = isMine
+        ? "background:rgba(var(--ms-accent-rgb),0.12);"
+        : otherName
+          ? "background:rgba(255,255,255,0.02);opacity:0.6;"
+          : "";
+      var metaParts = [];
+      if (p.character && isLocalCharKey(p.character)) {
+        metaParts.push(
+          '<span style="color:#b48cc8;"><i class="fa-solid fa-user" style="font-size:8px;margin-right:2px;"></i>' +
+            esc(getCharDisplayName(p.character)) +
+            "</span>",
+        );
+      }
+      if (p.series && String(p.series).trim()) {
+        metaParts.push(
+          '<span style="color:var(--ms-accent);opacity:0.8;"><i class="fa-solid fa-layer-group" style="font-size:8px;margin-right:2px;"></i>' +
+            esc(String(p.series).trim()) +
+            "</span>",
+        );
+      }
+      html +=
+        '<div class="ms-ga-row" data-pid="' +
+        p.id +
+        '" style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;transition:background 0.12s;' +
+        rowBg +
+        '">' +
+        '<div class="ms-gitem-check" style="' +
+        (isMine
+          ? "background:var(--ms-accent);border-color:var(--ms-accent);color:#fff;"
+          : "") +
+        '"><i class="fa-solid fa-check"></i></div>' +
+        '<div style="flex:1;min-width:0;overflow:hidden;">' +
+        (metaParts.length > 0
+          ? '<div style="font-size:9px;line-height:1.4;margin-bottom:2px;display:flex;gap:6px;flex-wrap:wrap;">' +
+            metaParts.join("") +
+            "</div>"
+          : "") +
+        '<div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--SmartThemeBodyColor,#ddd);">' +
+        esc(p.title || "未命名") +
+        "</div></div>" +
+        (otherName
+          ? '<span style="font-size:9px;color:var(--ms-accent);background:rgba(var(--ms-accent-rgb),0.12);padding:1px 6px;border-radius:3px;flex-shrink:0;">已属于「' +
+            esc(truncate(otherName, 10)) +
+            "」</span>"
+          : "") +
+        '<button class="ms-card-qbtn ms-ga-preview" data-pid="' +
+        p.id +
+        '" title="预览剧场内容" style="flex-shrink:0;width:24px;height:24px;font-size:10px;"><i class="fa-solid fa-eye"></i></button>' +
+        "</div>";
+    });
+    html += "</div>";
+    return html;
+  }
+
+  function refreshCfg($overlay, keepFocus) {
+    var $oldInput = $overlay.find("#ms-ga-search");
+    var caret = -1;
+    if (keepFocus && $oldInput.is(":focus") && $oldInput[0]) {
+      caret = $oldInput[0].selectionStart || 0;
+    }
+    var $oldList = $overlay.find("#ms-ga-list");
+    var savedScroll = $oldList.length ? $oldList[0].scrollTop : 0;
+    $overlay.find(".ms-modal-body").html(buildCfgBody());
+    var $newList = $overlay.find("#ms-ga-list");
+    if ($newList.length && savedScroll > 0) $newList[0].scrollTop = savedScroll;
+    if (caret >= 0) {
+      var $newInput = $overlay.find("#ms-ga-search");
+      if ($newInput.length) {
+        $newInput.focus();
+        try {
+          $newInput[0].setSelectionRange(caret, caret);
+        } catch (e) {}
+      }
+    }
+  }
+
+  showModal({
+    title: opts.title,
+    iconType: "info",
+    icon: "fa-list-check",
+    modalStyle: "min-width:380px;max-width:94vw;width:520px;",
+    body: buildCfgBody(),
+    buttons: [
+      { text: "取消", value: null },
+      {
+        text: "保存",
+        cls: "primary",
+        primary: true,
+        action: function () {
+          opts.apply(working, allPrompts);
+          return true;
+        },
+      },
+    ],
+    cancelValue: null,
+    onShow: function ($overlay) {
+      $overlay.on("input", "#ms-ga-search", function () {
+        cfgKw = $(this).val();
+        refreshCfg($overlay, true);
+      });
+      $overlay.on("click", ".ms-ga-preview", function (e) {
+        e.stopPropagation();
+        var pp = getPrompt($(this).data("pid"));
+        if (!pp) return;
+        showModal({
+          title: "预览：" + truncate(pp.title || "未命名", 24),
+          iconType: "info",
+          icon: "fa-eye",
+          modalStyle:
+            "min-width:340px;max-width:92vw;width:480px;max-height:80vh;",
+          body:
+            '<div class="ms-preview-content" style="padding:0;font-size:13px;">' +
+            renderMd(pp.content || "") +
+            "</div>",
+          buttons: [
+            { text: "关闭", cls: "primary", primary: true, value: true },
+          ],
+        });
+      });
+      $overlay.on("click", ".ms-ga-row", function () {
+        var pid = $(this).data("pid");
+        if (!pid) return;
+        if (working[pid] === opts.ownerId) delete working[pid];
+        else working[pid] = opts.ownerId;
+        refreshCfg($overlay, false);
+      });
+      $overlay.on("click", '[data-ga-action="select-free"]', function () {
+        allPrompts.forEach(function (p) {
+          if (!working[p.id]) working[p.id] = opts.ownerId;
+        });
+        refreshCfg($overlay, false);
+      });
+      $overlay.on("click", '[data-ga-action="clear"]', function () {
+        allPrompts.forEach(function (p) {
+          if (working[p.id] === opts.ownerId) delete working[p.id];
+        });
+        refreshCfg($overlay, false);
+      });
+    },
+  }).then(function () {
+    exitBirthdayPanelMode();
+  });
+}
+
+function showSubGroupEditDialog(gid, sgid, onDone) {
+  var g = getGroup(gid);
+  var sg = getSubGroup(gid, sgid);
+  if (!g || !sg) return;
+  var work = {
+    name: sg.name || "",
+    color: sg.color || GROUP_COLORS[0],
+    note: sg.note || "",
+  };
+  var _sgeSuffix = Math.random().toString(36).slice(2);
+  var nameId = "ms-sge-name-" + _sgeSuffix;
+  var noteId = "ms-sge-note-" + _sgeSuffix;
+  var cnt = getPromptsInSubGroup(gid, sgid).length;
+  var sgTotal = getSubGroups(g).length;
+
+  function captureInputs($overlay) {
+    var $n = $overlay.find("#" + nameId);
+    if ($n.length) work.name = $n.val();
+    var $note = $overlay.find("#" + noteId);
+    if ($note.length) work.note = $note.val();
+  }
+
+  function buildBody() {
+    var isCustom = GROUP_COLORS.indexOf(work.color) < 0;
+    var h = "";
+    h +=
+      '<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;margin-bottom:10px;background:rgba(255,255,255,0.03);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:6px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);">' +
+      '<i class="fa-solid fa-folder-open" id="ms-sge-preview-icon" style="color:' +
+      escAttr(work.color) +
+      ';font-size:13px;flex-shrink:0;"></i>' +
+      '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+      esc(g.name) +
+      " · 共 " +
+      sgTotal +
+      " 个文件夹</span>" +
+      '<span style="flex-shrink:0;"><i class="fa-solid fa-masks-theater" style="margin-right:3px;opacity:0.7;"></i>' +
+      cnt +
+      " 条</span></div>";
+    h +=
+      '<label style="font-size:12px;color:var(--SmartThemeBodyColor,#ccc);margin-bottom:4px;display:block;">名称</label>' +
+      '<input class="ms-modal-input" id="' +
+      nameId +
+      '" type="text" value="' +
+      escAttr(work.name) +
+      '" placeholder="文件夹名称" style="margin-top:0;">';
+    h +=
+      '<label style="font-size:12px;color:var(--SmartThemeBodyColor,#ccc);margin:10px 0 4px;display:block;">颜色</label><div class="ms-color-picker" style="padding:0;">';
+    GROUP_COLORS.forEach(function (c) {
+      h +=
+        '<span class="ms-color-opt' +
+        (work.color === c ? " selected" : "") +
+        '" data-sge-color="' +
+        c +
+        '" style="background:' +
+        c +
+        '"></span>';
+    });
+    h +=
+      '<span class="ms-color-opt ms-color-custom' +
+      (isCustom ? " selected" : "") +
+      '" title="+自定义"><input type="color" id="ms-sge-custom-color" value="' +
+      escAttr(work.color) +
+      '"></span></div>';
+    h +=
+      '<label style="font-size:12px;color:var(--SmartThemeBodyColor,#ccc);margin:10px 0 4px;display:block;">备注 <span style="font-weight:350;opacity:0.55;">(可选，显示在文件夹页顶部)</span></label>' +
+      '<textarea class="ms-modal-textarea" id="' +
+      noteId +
+      '" placeholder="给这个文件夹写点说明..." style="min-height:60px;margin-top:0;">' +
+      esc(work.note) +
+      "</textarea>";
+    h +=
+      '<div style="margin-top:10px;text-align:right;"><a id="ms-sge-goto-manage" style="font-size:11px;color:var(--ms-accent);cursor:pointer;text-decoration:none;"><i class="fa-solid fa-sliders" style="margin-right:4px;"></i>管理本分组全部文件夹</a></div>';
+    return h;
+  }
+
+  enterBirthdayPanelMode();
+  return showModal({
+    title: "文件夹设置",
+    iconType: "info",
+    icon: "fa-folder-open",
+    modalStyle: "min-width:320px;max-width:92vw;width:400px;",
+    body: buildBody(),
+    buttons: [
+      { text: "取消", value: null },
+      {
+        text: "保存",
+        cls: "primary",
+        primary: true,
+        action: function ($overlay) {
+          captureInputs($overlay);
+          var name = (work.name || "").trim();
+          if (!name) {
+            toast("warning", "名称不能为空");
+            return false;
+          }
+          updateSubGroup(gid, sgid, {
+            name: name,
+            color: work.color,
+            note: (work.note || "").trim(),
+          });
+          if (typeof onDone === "function") onDone("saved");
+          return true;
+        },
+      },
+    ],
+    cancelValue: null,
+    onShow: function ($overlay, close) {
+      var $nameInput = $overlay.find("#" + nameId);
+      $nameInput.focus();
+      if ($nameInput[0]) $nameInput[0].select();
+      function applyColor(c) {
+        if (!c) return;
+        work.color = c;
+        $overlay.find("[data-sge-color]").removeClass("selected");
+        $overlay.find('[data-sge-color="' + c + '"]').addClass("selected");
+        $overlay
+          .find(".ms-color-custom")
+          .toggleClass("selected", GROUP_COLORS.indexOf(c) < 0);
+        $overlay.find("#ms-sge-preview-icon").css("color", c);
+      }
+      $overlay.on("click", "[data-sge-color]", function () {
+        applyColor($(this).attr("data-sge-color"));
+      });
+      $overlay.on("input change", "#ms-sge-custom-color", function () {
+        applyColor($(this).val());
+      });
+      $overlay.on("click", "#ms-sge-goto-manage", function (e) {
+        e.preventDefault();
+        captureInputs($overlay);
+        close(null);
+        setTimeout(function () {
+          navigateTo({ name: "group-subgroups", groupId: gid });
+        }, 200);
+      });
+    },
+  }).then(function () {
+    exitBirthdayPanelMode();
+  });
+}
+function renderGroupSubGroups(v) {
+  var g = v.groupId ? getGroup(v.groupId) : null;
+  if (!g) {
+    navigateBack();
+    return;
+  }
+  var expandedSgColorId = null;
+  var $p = setupPage("文件夹", "文件夹 · " + truncate(g.name, 14));
+
+  function buildBody() {
+    return '<div class="ms-page-minh">' + buildBodyInner() + "</div>";
+  }
+
+  function buildBodyInner() {
+    var gg = getGroup(v.groupId);
+    if (!gg) return "";
+    if (!Array.isArray(gg.subGroups)) gg.subGroups = [];
+    var sgList = getSubGroups(gg);
+    var html = "";
+    var sgCounts = {};
+    var sgNoneCount = 0;
+    getPromptsInGroup(v.groupId).forEach(function (p) {
+      if (p.subGroupId && getSubGroup(v.groupId, p.subGroupId)) {
+        sgCounts[p.subGroupId] = (sgCounts[p.subGroupId] || 0) + 1;
+      } else {
+        sgNoneCount++;
+      }
+    });
+    html +=
+      '<div style="padding:6px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;line-height:1.6;">' +
+      '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>未归入任何文件夹的剧场会直接列在文件夹入口下方' +
+      "</div>";
+    html +=
+      '<div style="padding:4px 14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+      '<button class="ms-tbtn" id="ms-sgp-add" style="font-size:11px;padding:4px 10px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:3px;"></i>添加文件夹</button>' +
+      (sgList.length > 1
+        ? '<button class="ms-tbtn" id="ms-sgp-reorder" style="font-size:11px;padding:4px 10px;"><i class="fa-solid fa-arrows-up-down" style="margin-right:3px;"></i>拖动排序</button>'
+        : "") +
+      '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">' +
+      sgList.length +
+      " 个文件夹</span>" +
+      "</div>";
+    if (sgList.length === 0) {
+      html +=
+        '<div class="ms-empty" style="padding:14px;font-size:11px;"><i class="fa-solid fa-folder-open"></i>还没有文件夹，点上方「添加文件夹」开始创建</div>';
+      return html;
+    }
+    html += '<div style="padding:0 14px;">';
+    sgList.forEach(function (sg, sgIdx) {
+      var _sgCnt = sgCounts[sg.id] || 0;
+      html +=
+        '<div class="ms-sg-item">' +
+        '<div class="ms-sg-row">' +
+        '<span class="ms-sg-idx">#' +
+        (sgIdx + 1) +
+        "</span>" +
+        '<span class="ms-sg-dot" data-sg-color-toggle="' +
+        sg.id +
+        '" style="background:' +
+        sg.color +
+        ';" title="点击更换颜色"></span>' +
+        '<input type="text" class="ms-sg-input ms-sg-name-input" data-sg-id="' +
+        sg.id +
+        '" value="' +
+        escAttr(sg.name) +
+        '" placeholder="文件夹名称">' +
+        '<i class="fa-solid fa-angle-up ms-sg-icon-btn ms-sg-move" data-sg-dir="up" data-sg-id="' +
+        sg.id +
+        '" title="上移" style="color:var(--SmartThemeQuoteColor,#888);' +
+        (sgIdx === 0 ? "opacity:0.22;pointer-events:none;" : "") +
+        '"></i>' +
+        '<i class="fa-solid fa-angle-down ms-sg-icon-btn ms-sg-move" data-sg-dir="down" data-sg-id="' +
+        sg.id +
+        '" title="下移" style="color:var(--SmartThemeQuoteColor,#888);' +
+        (sgIdx === sgList.length - 1
+          ? "opacity:0.22;pointer-events:none;"
+          : "") +
+        '"></i>' +
+        '<i class="fa-solid fa-trash ms-sg-icon-btn ms-sg-del" data-sg-id="' +
+        sg.id +
+        '" title="删除文件夹" style="color:var(--ms-danger);"></i>' +
+        "</div>";
+      if (expandedSgColorId === sg.id) {
+        html +=
+          '<div class="ms-sg-color-wrap">' +
+          buildColorPickerHTML(sg.color, "data-sg-id", sg.id) +
+          "</div>";
+      }
+      html +=
+        '<div class="ms-sg-note"><input type="text" class="ms-sg-input ms-sg-note-input" data-sg-id="' +
+        sg.id +
+        '" value="' +
+        escAttr(sg.note || "") +
+        '" placeholder="备注（可选）"></div>' +
+        '<button class="ms-tbtn ms-sg-config" data-sg-id="' +
+        sg.id +
+        '" style="width:calc(100% - 30px);margin-left:30px;text-align:center;font-size:11px;padding:5px 10px;display:flex;align-items:center;justify-content:center;gap:6px;">' +
+        '<i class="fa-solid fa-list-check" style="color:var(--ms-accent);"></i><span>配置包含剧场</span>' +
+        (_sgCnt > 0
+          ? '<span style="font-size:11px;color:var(--ms-accent);font-weight:600;">已含 ' +
+            _sgCnt +
+            " 条</span>"
+          : '<span style="font-size:10px;opacity:0.55;">暂无剧场</span>') +
+        "</button></div>";
+    });
+    html +=
+      '</div><div style="padding:2px 14px 10px;"><div class="ms-sg-nosub"><i class="fa-solid fa-inbox" style="opacity:0.6;"></i>未分类：' +
+      sgNoneCount +
+      " 条剧场</div></div>";
+    return html;
+  }
+
+  function buildFooter() {
+    var gg = getGroup(v.groupId);
+    if (!gg) return "";
+    var total = getPromptsInGroup(v.groupId).length;
+    var cnt = Array.isArray(gg.subGroups) ? gg.subGroups.length : 0;
+    return (
+      '<span><i class="fa-solid fa-folder" style="color:' +
+      gg.color +
+      ';margin-right:4px;font-size:10px;"></i>' +
+      esc(gg.name) +
+      " · " +
+      cnt +
+      " 个文件夹 · " +
+      total +
+      " 条剧场</span>"
+    );
+  }
+
+  function refresh() {
+    var $body = $p.find("#ms-body");
+    var sc = $body.scrollTop();
+    $body.html(buildBody());
+    $body.scrollTop(sc);
+    $p.find("#ms-footer").html(buildFooter()).show();
+  }
+
+  $p.find("#ms-body").html(buildBody());
+  $p.find("#ms-footer").html(buildFooter()).show();
+  bindAllEvents();
+
+  $p.find("#ms-body").on("click.ms", "#ms-sgp-add", function () {
+    msPrompt("", {
+      title: "新建文件夹",
+      placeholder: "例如：日常 / 剧情 / 节日",
+      validate: function (val) {
+        if (!val || !val.trim()) return "名称不能为空";
+        return null;
+      },
+    }).then(function (name) {
+      if (!name || !name.trim()) return;
+      createSubGroup(v.groupId, name.trim());
+      refresh();
+    });
+  });
+
+  $p.find("#ms-body").on("click.ms", "#ms-sgp-reorder", function () {
+    navigateTo({ name: "reorder-subgroups", groupId: v.groupId });
+  });
+
+  $p.find("#ms-body").on("click.ms", "[data-sg-color-toggle]", function (e) {
+    e.stopPropagation();
+    var sgid = $(this).attr("data-sg-color-toggle");
+    expandedSgColorId = expandedSgColorId === sgid ? null : sgid;
+    refresh();
+  });
+
+  $p.find("#ms-body").on(
+    "click.ms",
+    ".ms-sg-color-wrap .ms-color-opt:not(.ms-color-custom)",
+    function (e) {
+      e.stopPropagation();
+      var sgid = $(this).attr("data-sg-id");
+      var color = $(this).data("color");
+      if (!sgid || !color) return;
+      updateSubGroup(v.groupId, sgid, { color: color });
+      refresh();
+    },
+  );
+
+  $p.find("#ms-body").on(
+    "change.ms",
+    ".ms-sg-color-wrap .ms-custom-color-input",
+    function (e) {
+      e.stopPropagation();
+      var sgid = $(this).attr("data-sg-id");
+      var color = $(this).val();
+      if (!sgid || !color) return;
+      updateSubGroup(v.groupId, sgid, { color: color });
+      refresh();
+    },
+  );
+
+  $p.find("#ms-body").on("click.ms", ".ms-sg-move", function () {
+    var sgid = $(this).data("sg-id");
+    var dir = $(this).data("sg-dir");
+    var gg = getGroup(v.groupId);
+    if (!gg || !Array.isArray(gg.subGroups)) return;
+    var idx = -1;
+    for (var i = 0; i < gg.subGroups.length; i++) {
+      if (gg.subGroups[i].id === sgid) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 0) return;
+    var swap = dir === "up" ? idx - 1 : idx + 1;
+    if (swap < 0 || swap >= gg.subGroups.length) return;
+    var tmp = gg.subGroups[idx];
+    gg.subGroups[idx] = gg.subGroups[swap];
+    gg.subGroups[swap] = tmp;
+    saveData();
+    refresh();
+  });
+
+  $p.find("#ms-body").on("input.ms", ".ms-sg-name-input", function () {
+    var sg = getSubGroup(v.groupId, $(this).data("sg-id"));
+    if (!sg) return;
+    sg.name = $(this).val();
+    saveData();
+  });
+
+  $p.find("#ms-body").on("change.ms", ".ms-sg-name-input", function () {
+    var sg = getSubGroup(v.groupId, $(this).data("sg-id"));
+    if (!sg) return;
+    var val = ($(this).val() || "").trim();
+    if (!val) {
+      val = "未命名";
+      $(this).val(val);
+    }
+    sg.name = val;
+    saveData();
+  });
+
+  $p.find("#ms-body").on("input.ms", ".ms-sg-note-input", function () {
+    var sg = getSubGroup(v.groupId, $(this).data("sg-id"));
+    if (!sg) return;
+    sg.note = $(this).val();
+    saveData();
+  });
+
+  $p.find("#ms-body").on("click.ms", ".ms-sg-del", function () {
+    var sgid = $(this).data("sg-id");
+    var sg = getSubGroup(v.groupId, sgid);
+    if (!sg) return;
+    var sgName = sg.name;
+    var affected = getPromptsInSubGroup(v.groupId, sgid);
+    if (affected.length === 0) {
+      msConfirm("确定删除文件夹「" + sgName + "」吗？", {
+        title: "删除文件夹",
+        dangerous: true,
+        okText: "删除",
+      }).then(function (ok) {
+        if (!ok) return;
+        deleteSubGroup(v.groupId, sgid);
+        expandedSgColorId = null;
+        refresh();
+      });
+      return;
+    }
+    var others = getSubGroups(getGroup(v.groupId)).filter(function (x) {
+      return x.id !== sgid;
+    });
+    var moveOptsH = "";
+    if (others.length > 0) {
+      moveOptsH =
+        '<div style="margin-top:8px;"><div style="font-size:11px;color:var(--SmartThemeQuoteColor,#888);margin-bottom:4px;">或移动到其它文件夹：</div>';
+      others.forEach(function (o) {
+        moveOptsH +=
+          '<div class="ms-import-opt" data-sg-del-mode="move" data-sg-del-target="' +
+          o.id +
+          '" style="padding:8px 12px;margin-bottom:4px;display:flex;align-items:center;gap:8px;">' +
+          '<span class="ms-sg-dot" style="cursor:default;background:' +
+          o.color +
+          ';"></span><span style="font-size:12px;">' +
+          esc(o.name) +
+          "</span></div>";
+      });
+      moveOptsH += "</div>";
+    }
+    showModal({
+      title: "删除文件夹",
+      iconType: "warning",
+      icon: "fa-folder-open",
+      modalStyle: "min-width:340px;max-width:92vw;width:420px;",
+      body:
+        '<div style="font-size:12px;color:var(--SmartThemeBodyColor,#ccc);line-height:1.6;margin-bottom:10px;">文件夹「<strong>' +
+        esc(sgName) +
+        "</strong>」下还有 <strong>" +
+        affected.length +
+        " 条剧场</strong>，请选择处理方式：</div>" +
+        '<div class="ms-import-opt" data-sg-del-mode="detach"><div class="ms-import-opt-title"><i class="fa-solid fa-inbox"></i> 仅解除归属</div><div class="ms-import-opt-desc">剧场保留，归入「未分类」</div></div>' +
+        '<div class="ms-import-opt" data-sg-del-mode="delete" style="border-color:rgba(var(--ms-danger-rgb),0.4);"><div class="ms-import-opt-title" style="color:var(--ms-danger);"><i class="fa-solid fa-trash"></i> 连剧场一起删除</div><div class="ms-import-opt-desc">' +
+        affected.length +
+        " 条剧场将被永久删除，不可撤销</div></div>" +
+        moveOptsH,
+      buttons: [{ text: "取消", value: null }],
+      cancelValue: null,
+      onShow: function ($overlay, close) {
+        $overlay.on("click", "[data-sg-del-mode]", function () {
+          var mode = $(this).attr("data-sg-del-mode");
+          var target = $(this).attr("data-sg-del-target") || null;
+          if (mode === "delete") {
+            close(null);
+            setTimeout(function () {
+              msConfirm(
+                "确定删除文件夹「" +
+                  sgName +
+                  "」及其下 " +
+                  affected.length +
+                  " 条剧场吗？\n\n此操作不可撤销",
+                { title: "二次确认", dangerous: true, okText: "删除" },
+              ).then(function (ok2) {
+                if (!ok2) return;
+                deleteSubGroup(v.groupId, sgid, "delete");
+                expandedSgColorId = null;
+                refresh();
+              });
+            }, 220);
+            return;
+          }
+          deleteSubGroup(
+            v.groupId,
+            sgid,
+            mode === "move" ? "move" : "detach",
+            target,
+          );
+          close("done");
+          expandedSgColorId = null;
+          refresh();
+        });
+      },
+    });
+  });
+
+  $p.find("#ms-body").on("click.ms", ".ms-sg-config", function () {
+    var sgid = $(this).data("sg-id");
+    var sg = getSubGroup(v.groupId, sgid);
+    if (!sg) return;
+    showGroupAssignDialog({
+      title: "配置「" + truncate(sg.name, 18) + "」的包含剧场",
+      groupId: v.groupId,
+      ownerId: sgid,
+      desc:
+        "勾选要归入「<strong>" +
+        esc(sg.name) +
+        "</strong>」的剧场。已属于其它文件夹的显示为灰色，点击可改到当前文件夹。",
+      otherLabel: "属于其它文件夹",
+      freeHint: "只勾选尚未归入任何文件夹的剧场",
+      getOwner: function (p) {
+        if (p.subGroupId && getSubGroup(v.groupId, p.subGroupId))
+          return p.subGroupId;
+        return null;
+      },
+      ownerNameOf: function (id) {
+        var o = getSubGroup(v.groupId, id);
+        return o ? o.name : "";
+      },
+      apply: function (working, allPrompts) {
+        allPrompts.forEach(function (p) {
+          var target = working[p.id] || null;
+          if ((p.subGroupId || null) !== target) {
+            p.subGroupId = target;
+            p.updatedAt = Date.now();
+          }
+        });
+        saveData();
+        refresh();
+      },
+    });
+  });
+}
+
+function renderGroupPrefixes(v) {
+  var g = v.groupId ? getGroup(v.groupId) : null;
+  if (!g) {
+    navigateBack();
+    return;
+  }
+  var $p = setupPage("多前缀模式", "多前缀 · " + truncate(g.name, 14));
+  var _pfxSaveTimer = null;
+
+  function _pfxTemplates() {
+    var gg = getGroup(v.groupId);
+    if (!gg) return [];
+    if (!Array.isArray(gg.prefixTemplates)) gg.prefixTemplates = [];
+    return gg.prefixTemplates;
+  }
+
+  function _pfxAssignments() {
+    var gg = getGroup(v.groupId);
+    if (!gg) return {};
+    if (!gg.prefixAssignments || typeof gg.prefixAssignments !== "object")
+      gg.prefixAssignments = {};
+    return gg.prefixAssignments;
+  }
+
+  function _pfxSaveDebounced() {
+    if (_pfxSaveTimer) clearTimeout(_pfxSaveTimer);
+    _pfxSaveTimer = setTimeout(function () {
+      _pfxSaveTimer = null;
+      saveData();
+    }, 400);
+  }
+
+  function buildBody() {
+    return '<div class="ms-page-minh">' + buildBodyInner() + "</div>";
+  }
+
+  function buildBodyInner() {
+    var gg = getGroup(v.groupId);
+    if (!gg) return "";
+    var html = "";
+    html +=
+      '<div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--SmartThemeBorderColor,#333);">' +
+      '<label class="ms-switch" style="margin:0;"><input type="checkbox" id="ms-pfx-toggle"' +
+      (gg.multiPrefixEnabled ? " checked" : "") +
+      '><span class="ms-switch-slider"></span></label>' +
+      '<div style="flex:1;min-width:0;"><div style="font-size:13px;color:var(--SmartThemeBodyColor,#ddd);font-weight:500;">启用多前缀模式</div>' +
+      '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);margin-top:2px;">创建多套前缀模板，分组内不同剧场使用不同前缀</div></div>' +
+      "</div>";
+    if (!gg.multiPrefixEnabled) {
+      html +=
+        '<div class="ms-empty"><i class="fa-solid fa-file-lines"></i>多前缀模式未启用<br><span style="font-size:11px;opacity:0.6;margin-top:6px;display:block;">打开上方开关后即可创建模板</span></div>';
+      return html;
+    }
+    var templates = _pfxTemplates();
+    var assignments = _pfxAssignments();
+    var groupPrompts = getPromptsInGroup(v.groupId);
+    var tplToPrompts = {};
+    Object.keys(assignments).forEach(function (pid) {
+      var tid = assignments[pid];
+      if (!tplToPrompts[tid]) tplToPrompts[tid] = [];
+      tplToPrompts[tid].push(pid);
+    });
+    html +=
+      '<div style="padding:6px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;line-height:1.6;">' +
+      '<i class="fa-solid fa-circle-info" style="color:var(--ms-accent);margin-right:4px;"></i>没被任何模板勾选的剧场，会自动用分组设置里的「注入前缀指令」作为默认' +
+      "</div>";
+    html +=
+      '<div style="padding:4px 14px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+      '<button class="ms-tbtn" id="ms-pfx-add" style="font-size:11px;padding:4px 10px;color:var(--ms-accent);border-color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:3px;"></i>添加前缀模板</button>' +
+      '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);">' +
+      templates.length +
+      " 个模板，" +
+      groupPrompts.length +
+      " 条剧场</span>" +
+      "</div>";
+    if (templates.length === 0) {
+      html +=
+        '<div class="ms-empty" style="padding:14px;font-size:11px;"><i class="fa-solid fa-file-lines"></i>还没有模板，点上方「添加前缀模板」开始创建</div>';
+      return html;
+    }
+    html +=
+      '<div style="padding:0 14px 10px;display:flex;flex-direction:column;gap:10px;">';
+    templates.forEach(function (tpl, tplIdx) {
+      var assignedIds = tplToPrompts[tpl.id] || [];
+      html +=
+        '<div class="ms-prefix-tpl-item" data-tpl-id="' +
+        tpl.id +
+        '" style="padding:6px 0 10px;border-bottom:1px dashed rgba(255,255,255,0.06);">' +
+        '<div style="display:flex;align-items:center;gap:4px;margin-bottom:5px;">' +
+        '<span style="font-size:10px;color:var(--ms-accent);font-weight:600;flex-shrink:0;min-width:28px;">#' +
+        (tplIdx + 1) +
+        "</span>" +
+        '<input type="text" class="ms-prefix-tpl-name" data-tpl-id="' +
+        tpl.id +
+        '" value="' +
+        escAttr(tpl.name || "未命名模板") +
+        '" placeholder="模板名" style="flex:1;min-width:0;padding:3px 8px;background:var(--SmartThemeBlurTintColor,#222);border:1px solid var(--SmartThemeBorderColor,#444);border-radius:4px;color:var(--ms-themed-input-color,var(--SmartThemeBodyColor,#ccc));font-size:12px;outline:none;">' +
+        '<i class="fa-solid fa-up-right-and-down-left-from-center ms-fs-edit-btn" data-fs-target="#ms-tpl-content-' +
+        tpl.id +
+        '" data-fs-title="编辑模板「' +
+        escAttr(truncate(tpl.name || "未命名模板", 20)) +
+        '」" title="全屏编辑" style="cursor:pointer;color:var(--ms-accent);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
+        '<i class="fa-solid fa-trash ms-prefix-tpl-del" data-tpl-id="' +
+        tpl.id +
+        '" title="删除模板" style="cursor:pointer;color:var(--ms-danger);opacity:0.65;font-size:11px;padding:4px;border-radius:3px;flex-shrink:0;"></i>' +
+        "</div>" +
+        '<textarea class="ms-prefix-tpl-content" id="ms-tpl-content-' +
+        tpl.id +
+        '" data-tpl-id="' +
+        tpl.id +
+        '" style="min-height:54px;width:100%;font-family:Consolas,monospace;font-size:11px;line-height:1.5;resize:vertical;box-sizing:border-box;margin-bottom:6px;" placeholder="模板内容，可用 {\u200B{stage}}、{\u200B{stage_title}} 等宏">' +
+        esc(tpl.content || "") +
+        "</textarea>";
+      if (groupPrompts.length === 0) {
+        html +=
+          '<div style="font-size:10px;color:var(--SmartThemeQuoteColor,#888);font-style:italic;padding-left:32px;">本分组还没有剧场</div>';
+      } else {
+        html +=
+          '<button class="ms-tbtn ms-prefix-tpl-config" data-tpl-id="' +
+          tpl.id +
+          '" style="width:100%;text-align:center;font-size:11px;padding:5px 10px;display:flex;align-items:center;justify-content:center;gap:6px;">' +
+          '<i class="fa-solid fa-list-check" style="color:var(--ms-accent);"></i>' +
+          "<span>配置适用剧场</span>" +
+          (assignedIds.length > 0
+            ? '<span style="font-size:11px;color:var(--ms-accent);font-weight:600;">已选 ' +
+              assignedIds.length +
+              " 条</span>"
+            : '<span style="font-size:10px;opacity:0.55;">未配置</span>') +
+          "</button>";
+      }
+      html += "</div>";
+    });
+    html += "</div>";
+    if (groupPrompts.length === 0) {
+      html +=
+        '<div class="ms-empty" style="padding:14px;font-size:11px;margin:6px 14px 0 ;"><i class="fa-solid fa-folder-open"></i>本分组还没有剧场，添加剧场后再来分配模板</div>';
+    }
+    return html;
+  }
+
+  function buildFooter() {
+    var gg = getGroup(v.groupId);
+    if (!gg) return "";
+    var total = getPromptsInGroup(v.groupId).length;
+    var cnt = Array.isArray(gg.prefixTemplates)
+      ? gg.prefixTemplates.length
+      : 0;
+    return (
+      '<span><i class="fa-solid fa-folder" style="color:' +
+      gg.color +
+      ';margin-right:4px;font-size:10px;"></i>' +
+      esc(gg.name) +
+      " · " +
+      cnt +
+      " 个模板 · " +
+      total +
+      " 条剧场</span>"
+    );
+  }
+
+  function refresh() {
+    var $body = $p.find("#ms-body");
+    var sc = $body.scrollTop();
+    $body.html(buildBody());
+    $body.scrollTop(sc);
+    $p.find("#ms-footer").html(buildFooter()).show();
+  }
+
+  $p.find("#ms-body").html(buildBody());
+  $p.find("#ms-footer").html(buildFooter()).show();
+  bindAllEvents();
+
+  $p.find("#ms-body").on("change.ms", "#ms-pfx-toggle", function () {
+    var gg = getGroup(v.groupId);
+    if (!gg) return;
+    gg.multiPrefixEnabled = $(this).is(":checked");
+    if (!Array.isArray(gg.prefixTemplates)) gg.prefixTemplates = [];
+    if (!gg.prefixAssignments || typeof gg.prefixAssignments !== "object")
+      gg.prefixAssignments = {};
+    saveData();
+    refresh();
+  });
+
+  $p.find("#ms-body").on("click.ms", "#ms-pfx-add", function () {
+    var templates = _pfxTemplates();
+    templates.push({
+      id: uid(),
+      name: "模板 " + (templates.length + 1),
+      content: "",
+    });
+    saveData();
+    refresh();
+  });
+
+  $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-name", function () {
+    var tid = $(this).data("tpl-id");
+    var tpl = _pfxTemplates().find(function (t) {
+      return t.id === tid;
+    });
+    if (!tpl) return;
+    tpl.name = $(this).val();
+    _pfxSaveDebounced();
+  });
+
+  $p.find("#ms-body").on("change.ms", ".ms-prefix-tpl-name", function () {
+    var tid = $(this).data("tpl-id");
+    var tpl = _pfxTemplates().find(function (t) {
+      return t.id === tid;
+    });
+    if (!tpl) return;
+    var val = ($(this).val() || "").trim();
+    if (!val) {
+      val = "未命名模板";
+      $(this).val(val);
+    }
+    tpl.name = val;
+    saveData();
+  });
+
+  $p.find("#ms-body").on("input.ms", ".ms-prefix-tpl-content", function () {
+    var tid = $(this).data("tpl-id");
+    var tpl = _pfxTemplates().find(function (t) {
+      return t.id === tid;
+    });
+    if (!tpl) return;
+    tpl.content = $(this).val();
+    _pfxSaveDebounced();
+  });
+
+  $p.find("#ms-body").on("change.ms", ".ms-prefix-tpl-content", function () {
+    var tid = $(this).data("tpl-id");
+    var tpl = _pfxTemplates().find(function (t) {
+      return t.id === tid;
+    });
+    if (!tpl) return;
+    tpl.content = $(this).val();
+    saveData();
+  });
+
+  $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-del", function () {
+    var tid = $(this).data("tpl-id");
+    var templates = _pfxTemplates();
+    var tpl = templates.find(function (t) {
+      return t.id === tid;
+    });
+    if (!tpl) return;
+    var assignments = _pfxAssignments();
+    var usedCount = 0;
+    Object.keys(assignments).forEach(function (pid) {
+      if (assignments[pid] === tid) usedCount++;
+    });
+    var msg =
+      usedCount > 0
+        ? "确定删除模板「" +
+          (tpl.name || "未命名") +
+          "」吗？\n\n有 " +
+          usedCount +
+          " 条剧场分配了这个模板，删除后会自动改用分组默认前缀。"
+        : "确定删除模板「" + (tpl.name || "未命名") + "」吗？";
+    msConfirm(msg, {
+      title: "删除模板",
+      dangerous: true,
+      okText: "删除",
+    }).then(function (ok) {
+      if (!ok) return;
+      var gg = getGroup(v.groupId);
+      if (!gg) return;
+      gg.prefixTemplates = templates.filter(function (t) {
+        return t.id !== tid;
+      });
+      Object.keys(assignments).forEach(function (pid) {
+        if (assignments[pid] === tid) delete assignments[pid];
+      });
+      saveData();
+      refresh();
+    });
+  });
+
+  $p.find("#ms-body").on("click.ms", ".ms-prefix-tpl-config", function () {
+    var tid = $(this).data("tpl-id");
+    var tpl = _pfxTemplates().find(function (t) {
+      return t.id === tid;
+    });
+    if (!tpl) return;
+    showGroupAssignDialog({
+      title: "配置「" + truncate(tpl.name || "未命名", 18) + "」的适用剧场",
+      groupId: v.groupId,
+      ownerId: tid,
+      desc:
+        "勾选要使用「<strong>" +
+        esc(tpl.name || "未命名") +
+        "</strong>」前缀的剧场。被其他模板占用的显示为灰色，点击可改到当前模板。",
+      otherLabel: "被其他模板占用",
+      freeHint: "只勾选未被任何模板占用的剧场",
+      getOwner: function (p) {
+        var assignments = _pfxAssignments();
+        return assignments[p.id] || null;
+      },
+      ownerNameOf: function (id) {
+        var o = _pfxTemplates().find(function (t) {
+          return t.id === id;
+        });
+        return o ? o.name || "未命名" : "";
+      },
+      apply: function (working, allPrompts) {
+        var assignments = _pfxAssignments();
+        allPrompts.forEach(function (p) {
+          var target = working[p.id] || null;
+          if (target) assignments[p.id] = target;
+          else delete assignments[p.id];
+        });
+        saveData();
+        refresh();
+      },
+    });
+  });
+}
+
+/* 正式转换台走 GitHub Pages；本地开发时可在设置中临时覆盖这个地址。 */
+var TRANSFER_STATION_URL = "https://sanjs333.github.io/stage/converter.html";
+
+var _tsOverlay = null;
+var _tsFrame = null;
+var _tsPort = null;
+var _tsToken = "";
+var _tsOrigin = "";
+var _tsHostWindow = null;
+var _tsWindowHandler = null;
+var _tsCloseTimer = null;
+
+function _tsEffectiveUrl() {
+  var custom =
+    data.settings && data.settings.transferStationUrl
+      ? String(data.settings.transferStationUrl).trim()
+      : "";
+  return custom || TRANSFER_STATION_URL;
+}
+
+function _tsGetHostWindow() {
+  return getParentWindowSafe() || window;
+}
+
+function _tsMakeToken(hostWindow) {
+  var cryptoObj = null;
+  try {
+    cryptoObj = (hostWindow && hostWindow.crypto) || window.crypto;
+  } catch (e) {}
+  if (!cryptoObj || typeof cryptoObj.getRandomValues !== "function") {
+    throw new Error("当前浏览器不支持安全随机数，无法建立转换台连接");
+  }
+  var bytes = new Uint8Array(16);
+  cryptoObj.getRandomValues(bytes);
+  var out = "";
+  for (var i = 0; i < bytes.length; i++) {
+    out += bytes[i].toString(16).padStart(2, "0");
+  }
+  return out;
+}
+
+function _tsSend(message) {
+  if (!_tsPort) return false;
+  try {
+    _tsPort.postMessage(message);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function _tsSendSnapshot() {
+  var snap;
+  try {
+    snap = buildTransferSnapshot();
+  } catch (e) {
+    toast("error", "生成快照失败: " + e.message);
+    return false;
+  }
+  var hostOrigin = "酒馆";
+  try {
+    hostOrigin = _tsHostWindow.location.origin || hostOrigin;
+  } catch (e) {}
+  return _tsSend({
+    __msTransfer: 1,
+    type: "snapshot",
+    snapshot: snap,
+    origin: hostOrigin,
+  });
+}
+
+function _tsGetSillyTavernContext() {
+  var candidates = [];
+  try {
+    if (_tsHostWindow && _tsHostWindow.SillyTavern) {
+      candidates.push(_tsHostWindow.SillyTavern);
+    }
+  } catch (e) {}
+  try {
+    if (typeof SillyTavern !== "undefined") candidates.push(SillyTavern);
+  } catch (e) {}
+  for (var i = 0; i < candidates.length; i++) {
+    var st = candidates[i];
+    try {
+      if (st && typeof st.getContext === "function") {
+        var ctx = st.getContext();
+        if (ctx) return ctx;
+      }
+    } catch (e) {}
+  }
+  return null;
+}
+
+function _tsCloneTransferValue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function _tsPresetNames(manager) {
+  if (!manager || typeof manager.getPresetList !== "function") return [];
+  var list = manager.getPresetList("openai") || {};
+  var names = list.preset_names;
+  if (Array.isArray(names)) return names.slice();
+  if (names && typeof names === "object") return Object.keys(names);
+  return [];
+}
+
+function _tsCleanPresetForTransfer(preset) {
+  var src = preset || {};
+  /* 白名单而非黑名单：转换台对预设的消费面只有 prompts 与 prompt_order
+     （detectFormat 判格式、buildPresetItems 建条目），其余字段一律不出酒馆。
+     黑名单挡不住酒馆升级或第三方扩展新塞进来的连接类字段，而这份 JSON 会
+     随工作区存进浏览器、还能被用户导出成文件分享出去。 */
+  var out = {};
+  if (Array.isArray(src.prompts)) {
+    out.prompts = _tsCloneTransferValue(src.prompts);
+  }
+  if (src.prompt_order !== undefined) {
+    out.prompt_order = _tsCloneTransferValue(src.prompt_order);
+  }
+  return out;
+}
+
+/* 数据交换原先只列酒馆自己的世界书和预设，脚本内的剧场反而读不进转换台——可「推送为世界书」
+   要转换的正好就是这批数据。这里把分组做成第三类可读资源，内容直接用导出用的
+   buildExportPayload 生成，和用户手动导出的 .json 一字不差，转换台那边按 ministage 认。 */
+
+/* 转换台原先没办法知道「这条剧场脚本里已经有了」——快照里只有分组和标签，没有正文可比，
+   所以同一本预设转两遍、或者把别人分享的世界书再转一次，页面上看不出哪些是重复的，
+   只能等推送到一半被去重逻辑默默跳过。这里补一张指纹表，两种口径各一列：
+
+     f = 推送去重用的那支 contentFingerprint（标题 + 正文），命中它就等于推送时会被跳过。
+         本地这一侧取 p.fingerprint 优先，和 _tsDedupePrompts 完全同一个口径，
+         否则页面说「会跳过」而实际没跳过，比不标还糟。
+     c = 只按正文算，且容忍 CRLF 与行尾空白，用来提示「正文重复但标题不同」——
+         这种推送不会跳过，所以必须和上面一条分开显示。
+
+   只发哈希与截短的标题，不发正文：一万条也就百来 KB，粘贴快照那条路也扛得住。 */
+
+var _TS_DUP_INDEX_MAX = 20000;
+
+function _tsNormDupContent(content) {
+  return String(content == null ? "" : content)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t　]+(?=\n)/g, "")
+    .replace(/[ \t　]+$/, "")
+    .replace(/^\n+/, "")
+    .replace(/\n+$/, "");
+}
+
+function _tsDupContentFingerprint(content) {
+  var text = _tsNormDupContent(content);
+  /* 空正文一律给空串：否则所有空条目会互相命中，标出一片假的「已有」 */
+  return text ? fastDualHash(text) : "";
+}
+
+function _tsBuildStageDupIndex() {
+  var list = data && Array.isArray(data.prompts) ? data.prompts : [];
+  var limit = Math.min(list.length, _TS_DUP_INDEX_MAX);
+  var entries = [];
+  for (var i = 0; i < limit; i++) {
+    var p = list[i];
+    if (!p || typeof p !== "object") continue;
+    entries.push({
+      f: p.fingerprint || contentFingerprint(p),
+      c: _tsDupContentFingerprint(p.content),
+      t: String(p.title == null ? "" : p.title).slice(0, 60),
+      g: p.groupId && getGroup(p.groupId) ? p.groupId : "",
+    });
+  }
+  return {
+    version: 1,
+    total: list.length,
+    truncated: list.length > limit,
+    entries: entries,
+  };
+}
+
+var _TS_STAGE_ALL = "_all";
+var _TS_STAGE_UNGROUPED = "_ungrouped";
+
+/* 与 _tsUniqueWorldName 的区别：这只是给列表去重显示名，撞多少次都不该抛错把整张目录带崩 */
+function _tsUniqueLabel(name, taken) {
+  if (taken.indexOf(name) < 0) return name;
+  for (var i = 2; i < 500; i++) {
+    var candidate = name + " (" + i + ")";
+    if (taken.indexOf(candidate) < 0) return candidate;
+  }
+  return name + " (" + (taken.length + 1) + ")";
+}
+
+function _tsStagePromptsFor(gid) {
+  var all = data && Array.isArray(data.prompts) ? data.prompts : [];
+  if (gid === _TS_STAGE_ALL) return all.slice();
+  if (gid === _TS_STAGE_UNGROUPED) {
+    return all.filter(function (p) {
+      return !(p.groupId && getGroup(p.groupId));
+    });
+  }
+  return all.filter(function (p) {
+    return p.groupId === gid;
+  });
+}
+
+function _tsBuildStageCatalog() {
+  var all = data && Array.isArray(data.prompts) ? data.prompts : [];
+  if (!all.length) return [];
+  var counts = {};
+  all.forEach(function (p) {
+    var gid =
+      p.groupId && getGroup(p.groupId) ? p.groupId : _TS_STAGE_UNGROUPED;
+    counts[gid] = (counts[gid] || 0) + 1;
+  });
+  /* 转换台按名字建文件、也按名字记勾选，两个同名分组会被当成同一个，所以显示名先在这里分开。
+     真正读的时候认的是 gid，不受这里改名影响。 */
+  var taken = [];
+  var out = [];
+  function add(gid, name, count) {
+    var label = _tsUniqueLabel(
+      String(name || "").trim() || "未命名分组",
+      taken,
+    );
+    taken.push(label);
+    out.push({ kind: "stage", gid: gid, name: label, count: count });
+  }
+  add(_TS_STAGE_ALL, "全部剧场", all.length);
+  (data.groups || []).forEach(function (g) {
+    if (!g || !g.id || !counts[g.id]) return;
+    add(g.id, g.name, counts[g.id]);
+  });
+  if (counts[_TS_STAGE_UNGROUPED]) {
+    add(_TS_STAGE_UNGROUPED, "未分组", counts[_TS_STAGE_UNGROUPED]);
+  }
+  return out;
+}
+
+async function _tsBuildLibraryCatalog() {
+  var ctx = _tsGetSillyTavernContext();
+  if (!ctx) throw new Error("无法读取 SillyTavern 扩展上下文");
+
+  var worldNames = [];
+  if (typeof ctx.getWorldInfoNames === "function") {
+    worldNames = ctx.getWorldInfoNames() || [];
+  }
+  if (!Array.isArray(worldNames)) worldNames = [];
+
+  var presetNames = [];
+  if (typeof ctx.getPresetManager === "function") {
+    try {
+      presetNames = _tsPresetNames(ctx.getPresetManager("openai"));
+    } catch (e) {}
+  }
+
+  worldNames = worldNames
+    .map(function (name) {
+      return String(name || "").trim();
+    })
+    .filter(Boolean)
+    .sort(function (a, b) {
+      return a.localeCompare(b, "zh-CN");
+    });
+  presetNames = presetNames
+    .map(function (name) {
+      return String(name || "").trim();
+    })
+    .filter(Boolean)
+    .sort(function (a, b) {
+      return a.localeCompare(b, "zh-CN");
+    });
+
+  var stages = [];
+  try {
+    stages = _tsBuildStageCatalog();
+  } catch (e) {}
+
+  return {
+    stages: stages,
+    worlds: worldNames.map(function (name) {
+      return { kind: "world", name: name };
+    }),
+    presets: presetNames.map(function (name) {
+      return { kind: "preset", apiId: "openai", name: name };
+    }),
+  };
+}
+
+async function _tsSendLibraryCatalog(requestId) {
+  try {
+    var catalog = await _tsBuildLibraryCatalog();
+    _tsSend({
+      __msTransfer: 1,
+      type: "library-catalog",
+      requestId: requestId || "",
+      ok: true,
+      catalog: catalog,
+    });
+  } catch (e) {
+    _tsSend({
+      __msTransfer: 1,
+      type: "library-catalog",
+      requestId: requestId || "",
+      ok: false,
+      error: e.message || String(e),
+    });
+  }
+}
+
+async function _tsReadLibraryResources(message) {
+  var requestId = String((message && message.requestId) || "");
+  var requested = Array.isArray(message && message.resources)
+    ? message.resources.slice(0, 200)
+    : [];
+  var ctx = _tsGetSillyTavernContext();
+  if (!ctx) {
+    _tsSend({
+      __msTransfer: 1,
+      type: "library-read-complete",
+      requestId: requestId,
+      ok: false,
+      imported: 0,
+      failed: requested.length,
+      error: "无法读取 SillyTavern 扩展上下文",
+    });
+    return;
+  }
+
+  var catalog;
+  try {
+    catalog = await _tsBuildLibraryCatalog();
+  } catch (e) {
+    _tsSend({
+      __msTransfer: 1,
+      type: "library-read-complete",
+      requestId: requestId,
+      ok: false,
+      imported: 0,
+      failed: requested.length,
+      error: e.message || String(e),
+    });
+    return;
+  }
+
+  var allowedWorlds = new Set(
+    catalog.worlds.map(function (item) {
+      return item.name;
+    }),
+  );
+  var allowedPresets = new Set(
+    catalog.presets.map(function (item) {
+      return item.name;
+    }),
+  );
+  var allowedStages = {};
+  (catalog.stages || []).forEach(function (item) {
+    if (item && item.gid) allowedStages[String(item.gid)] = item;
+  });
+  var presetManager = null;
+  if (typeof ctx.getPresetManager === "function") {
+    try {
+      presetManager = ctx.getPresetManager("openai");
+    } catch (e) {}
+  }
+
+  var imported = 0;
+  var failed = 0;
+  for (var i = 0; i < requested.length; i++) {
+    var item = requested[i] || {};
+    var kind = "world";
+    if (item.kind === "preset" || item.kind === "stage") kind = item.kind;
+    var name = String(item.name || "").trim();
+    var stageGid = String(item.gid || "");
+    try {
+      var value = null;
+      if (kind === "stage") {
+        var stageEntry = allowedStages[stageGid];
+        /* 早于 gid 落盘的工作区快照只留了分组名。目录里的显示名是去重过的，拿名字反查
+           不会撞到别的分组，比让用户重新勾一遍强。有 gid 时一律以 gid 为准。 */
+        if (!stageEntry && !stageGid && name) {
+          stageEntry = (catalog.stages || []).filter(function (s) {
+            return s && s.name === name;
+          })[0];
+          if (stageEntry) stageGid = String(stageEntry.gid || "");
+        }
+        if (!stageEntry) throw new Error("该剧场分组已不存在，请刷新列表");
+        name = stageEntry.name;
+        var stagePrompts = _tsStagePromptsFor(stageGid);
+        if (!stagePrompts.length) throw new Error("该分组下没有剧场");
+        if (typeof buildExportPayload !== "function") {
+          throw new Error("当前脚本版本不支持导出剧场数据");
+        }
+        /* 不带历史版本、不带角色信息：转世界书只用到标题、正文和标签，别的只是白占体积 */
+        value = buildExportPayload(
+          stagePrompts,
+          true,
+          true,
+          false,
+          false,
+          false,
+        );
+        /* includeCharacter=false 只清了 prompt 上的 character，而 groups 拿到的是
+           活的原始分组对象——charKeys、prefixAssignments、iconUrl 全在里面，IP 分组
+           下没被本次剧场引用的角色卡也会一起出去。转换台只读 id / name / subGroups，
+           这里按白名单重建一份。 */
+        if (value && Array.isArray(value.groups)) {
+          value.groups = value.groups.map(function (g) {
+            return {
+              id: g.id,
+              name: g.name,
+              color: g.color,
+              note: g.note,
+              subGroups: Array.isArray(g.subGroups)
+                ? g.subGroups.map(function (sg) {
+                    return {
+                      id: sg.id,
+                      name: sg.name,
+                      color: sg.color,
+                      note: sg.note,
+                    };
+                  })
+                : [],
+            };
+          });
+        }
+      } else if (kind === "world") {
+        if (!allowedWorlds.has(name)) throw new Error("世界书不存在");
+        if (typeof ctx.loadWorldInfo !== "function") {
+          throw new Error("当前酒馆版本不支持读取世界书");
+        }
+        value = await ctx.loadWorldInfo(name);
+      } else {
+        if (!allowedPresets.has(name)) throw new Error("预设不存在");
+        if (
+          !presetManager ||
+          typeof presetManager.getCompletionPresetByName !== "function"
+        ) {
+          throw new Error("当前酒馆版本不支持读取聊天补全预设");
+        }
+        value = presetManager.getCompletionPresetByName(name);
+        value = _tsCleanPresetForTransfer(value);
+      }
+      if (!value || typeof value !== "object") throw new Error("资源内容为空");
+      _tsSend({
+        __msTransfer: 1,
+        type: "library-resource",
+        requestId: requestId,
+        resource: {
+          kind: kind,
+          apiId: kind === "preset" ? "openai" : "",
+          gid: kind === "stage" ? stageGid : "",
+          name: name,
+          data: _tsCloneTransferValue(value),
+        },
+      });
+      imported++;
+    } catch (e) {
+      failed++;
+      _tsSend({
+        __msTransfer: 1,
+        type: "library-resource-error",
+        requestId: requestId,
+        resource: { kind: kind, name: name },
+        error: e.message || String(e),
+      });
+    }
+  }
+
+  _tsSend({
+    __msTransfer: 1,
+    type: "library-read-complete",
+    requestId: requestId,
+    ok: failed === 0,
+    imported: imported,
+    failed: failed,
+  });
+}
+
+/* ---------- 接收转换台推来的世界书 ---------- */
+/* 与 receiveTransferPayload 是两个方向：那边把条目收进小剧场，这边把条目写成酒馆的世界书。 */
+
+var _TS_WORLD_BAD_NAME = /[\\/:*?"<>|]/;
+
+function _tsWorldNames(ctx) {
+  if (typeof ctx.getWorldInfoNames !== "function") return [];
+  var list = ctx.getWorldInfoNames() || [];
+  if (!Array.isArray(list)) return [];
+  return list.map(function (name) {
+    return String(name || "").trim();
+  });
+}
+
+function _tsUniqueWorldName(name, taken) {
+  if (taken.indexOf(name) < 0) return name;
+  for (var i = 2; i < 200; i++) {
+    var candidate = name + " (" + i + ")";
+    if (taken.indexOf(candidate) < 0) return candidate;
+  }
+  throw new Error("同名世界书过多，请换一个名字");
+}
+
+/* 追加时必须重排编号：转换台生成的条目一律从 0 开始，直接塞进去会盖掉目标世界书的原有条目。 */
+function _tsMergeWorldEntries(base, incoming) {
+  var out = base && typeof base === "object" ? base : {};
+  if (!out.entries || typeof out.entries !== "object") out.entries = {};
+  var next = 0;
+  Object.keys(out.entries).forEach(function (key) {
+    var entry = out.entries[key];
+    var uid = Number(entry && entry.uid);
+    if (!isFinite(uid)) uid = Number(key);
+    if (isFinite(uid) && uid + 1 > next) next = uid + 1;
+  });
+  var added = 0;
+  Object.keys(incoming)
+    .sort(function (a, b) {
+      return Number(a) - Number(b);
+    })
+    .forEach(function (key) {
+      var entry = incoming[key];
+      if (!entry || typeof entry !== "object") return;
+      var copy = _tsCloneTransferValue(entry);
+      copy.uid = next;
+      copy.displayIndex = next;
+      out.entries[String(next)] = copy;
+      next++;
+      added++;
+    });
+  return { book: out, added: added, total: Object.keys(out.entries).length };
+}
+
+/* 面板可能跑在 iframe 里，相对地址会解析到 iframe 自己的文档上，所以拿宿主页的 origin 拼绝对地址 */
+function _tsApiUrl(path) {
+  var origin = "";
+  try {
+    origin =
+      (_tsHostWindow &&
+        _tsHostWindow.location &&
+        _tsHostWindow.location.origin) ||
+      "";
+  } catch (e) {}
+  if (!/^https?:\/\//i.test(origin)) {
+    try {
+      origin = window.location.origin || "";
+    } catch (e) {}
+  }
+  if (!/^https?:\/\//i.test(origin)) return path;
+  return origin.replace(/\/+$/, "") + path;
+}
+
+async function _tsSaveWorldBook(ctx, name, book) {
+  if (typeof ctx.saveWorldInfo === "function") {
+    await ctx.saveWorldInfo(name, book, true);
+    return;
+  }
+  /* 退路：老版本酒馆的 context 上没有 saveWorldInfo，直接打后端接口 */
+  if (typeof ctx.getRequestHeaders !== "function") {
+    throw new Error("当前酒馆版本不支持写入世界书");
+  }
+  var res = await msFetch(
+    _tsApiUrl("/api/worldinfo/edit"),
+    {
+      method: "POST",
+      headers: ctx.getRequestHeaders(),
+      body: JSON.stringify({ name: name, data: book }),
+    },
+    20000,
+  );
+  if (!res || !res.ok) {
+    throw new Error(
+      "酒馆拒绝写入世界书" + (res ? "（HTTP " + res.status + "）" : ""),
+    );
+  }
+}
+
+async function _tsReceiveWorldBook(payload) {
+  var ctx = _tsGetSillyTavernContext();
+  if (!ctx) throw new Error("无法读取 SillyTavern 扩展上下文");
+
+  var incoming = payload && payload.book && payload.book.entries;
+  if (!incoming || typeof incoming !== "object")
+    throw new Error("推送内容为空");
+  if (!Object.keys(incoming).length) throw new Error("推送内容里没有条目");
+
+  var mode =
+    payload.mode === "merge" || payload.mode === "replace"
+      ? payload.mode
+      : "new";
+  var name = String((payload && payload.name) || "").trim();
+  if (!name) throw new Error("世界书名称为空");
+  if (_TS_WORLD_BAD_NAME.test(name)) {
+    throw new Error('世界书名称不能含有 \\ / : * ? " < > | 这些字符');
+  }
+
+  var taken = _tsWorldNames(ctx);
+  var renamed = false;
+  var base = { entries: {} };
+
+  if (mode === "new") {
+    var unique = _tsUniqueWorldName(name, taken);
+    renamed = unique !== name;
+    name = unique;
+  } else {
+    /* 取不到列表时不拦，交给写入本身报错，免得旧版本上明明能写却被这里挡下 */
+    if (taken.length && taken.indexOf(name) < 0) {
+      throw new Error("世界书「" + name + "」已不存在，请在转换台重新选择目标");
+    }
+    if (mode === "merge") {
+      if (typeof ctx.loadWorldInfo !== "function") {
+        throw new Error("当前酒馆版本不支持读取世界书，无法追加");
+      }
+      var existing = await ctx.loadWorldInfo(name);
+      if (existing && typeof existing === "object") {
+        base = _tsCloneTransferValue(existing);
+      }
+      if (!base.entries || typeof base.entries !== "object") base.entries = {};
+    } else if (typeof ctx.loadWorldInfo === "function") {
+      /* 覆盖只该丢弃条目。世界书目前只有 entries 一个字段，但万一酒馆以后加了书级别的
+         设置，整本重写会连带抹掉，所以先把原书读出来、只清空 entries。读不到就照旧新写一本。 */
+      try {
+        var prev = await ctx.loadWorldInfo(name);
+        if (prev && typeof prev === "object") {
+          base = _tsCloneTransferValue(prev);
+          base.entries = {};
+        }
+      } catch (e) {}
+    }
+  }
+
+  var merged = _tsMergeWorldEntries(base, incoming);
+  await _tsSaveWorldBook(ctx, name, merged.book);
+
+  if (typeof ctx.updateWorldInfoList === "function") {
+    try {
+      await ctx.updateWorldInfoList();
+    } catch (e) {}
+  }
+  if (typeof ctx.reloadWorldInfoEditor === "function") {
+    try {
+      ctx.reloadWorldInfoEditor(name, false);
+    } catch (e) {}
+  }
+
+  return {
+    name: name,
+    mode: mode,
+    added: merged.added,
+    total: merged.total,
+    renamed: renamed,
+  };
+}
+
+function closeTransferStation() {
+  if (_tsCloseTimer) {
+    clearTimeout(_tsCloseTimer);
+    _tsCloseTimer = null;
+  }
+  if (_tsPort) {
+    try {
+      _tsPort.postMessage({ __msTransfer: 1, type: "disconnect" });
+    } catch (e) {}
+    try {
+      _tsPort.close();
+    } catch (e) {}
+    _tsPort = null;
+  }
+  if (_tsWindowHandler && _tsHostWindow) {
+    try {
+      _tsHostWindow.removeEventListener("message", _tsWindowHandler);
+    } catch (e) {}
+  }
+  _tsWindowHandler = null;
+  if (_tsOverlay && _tsOverlay.parentNode) {
+    try {
+      _tsOverlay.parentNode.removeChild(_tsOverlay);
+    } catch (e) {}
+  }
+  _tsOverlay = null;
+  _tsFrame = null;
+  _tsToken = "";
+  _tsOrigin = "";
+  if (_tsHostWindow) {
+    try {
+      if (_tsHostWindow._msTransferStationCleanup === closeTransferStation) {
+        _tsHostWindow._msTransferStationCleanup = null;
+      }
+    } catch (e) {}
+  }
+  _tsHostWindow = null;
+}
+
+function _tsAttachPort(port) {
+  if (_tsPort && _tsPort !== port) {
+    try {
+      _tsPort.close();
+    } catch (e) {}
+  }
+  _tsPort = port;
+  _tsPort.onmessage = function (event) {
+    var d = event && event.data;
+    if (!d || d.__msTransfer !== 1) return;
+    if (d.type === "snapshot-request") {
+      _tsSendSnapshot();
+      return;
+    }
+    if (d.type === "library-catalog-request") {
+      _tsSendLibraryCatalog(String(d.requestId || ""));
+      return;
+    }
+    if (d.type === "library-read-request") {
+      _tsReadLibraryResources(d);
+      return;
+    }
+    if (d.type === "push-world") {
+      _tsReceiveWorldBook(d.payload).then(
+        function (out) {
+          var verb =
+            out.mode === "merge"
+              ? "已追加进世界书"
+              : out.mode === "replace"
+                ? "已覆盖世界书"
+                : "已新建世界书";
+          toast("success", verb + "「" + out.name + "」，" + out.added + " 条");
+          _tsSend({
+            __msTransfer: 1,
+            type: "push-world-result",
+            ok: true,
+            name: out.name,
+            mode: out.mode,
+            added: out.added,
+            total: out.total,
+            renamed: out.renamed,
+          });
+        },
+        function (err) {
+          var msg = (err && err.message) || String(err);
+          toast("error", "接收转换台世界书失败: " + msg);
+          _tsSend({
+            __msTransfer: 1,
+            type: "push-world-result",
+            ok: false,
+            error: msg,
+          });
+        },
+      );
+      /* 这一侧不关闭转换台：用户常要连着推好几本 */
+      return;
+    }
+    if (d.type === "push") {
+      var res = null;
+      try {
+        res = receiveTransferPayload(d.payload);
+      } catch (e) {
+        toast("error", "接收转换台推送失败: " + (e.message || e));
+      }
+      _tsSend({
+        __msTransfer: 1,
+        type: "push-result",
+        ok: !!res,
+        accepted: res ? res.accepted : 0,
+        skipped: res ? res.skipped : 0,
+      });
+      if (res && res.accepted > 0) {
+        _tsCloseTimer = setTimeout(function () {
+          _tsCloseTimer = null;
+          closeTransferStation();
+        }, 220);
+      }
+    }
+  };
+  _tsPort.onmessageerror = function () {
+    toast("warning", "转换台通信中断，请关闭后重新打开");
+  };
+  try {
+    _tsPort.start();
+  } catch (e) {}
+  _tsSendSnapshot();
+  _tsSendLibraryCatalog("");
+}
+
+function openTransferStation() {
+  if (_tsOverlay && _tsFrame) {
+    try {
+      _tsFrame.focus();
+    } catch (e) {}
+    _tsSendSnapshot();
+    return;
+  }
+
+  var parsed;
+  try {
+    parsed = new URL(_tsEffectiveUrl());
+  } catch (e) {
+    toast("error", "转换台地址无效，请检查 TRANSFER_STATION_URL");
+    return;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    toast("error", "转换台地址必须使用 http 或 https");
+    return;
+  }
+
+  var hostWindow = _tsGetHostWindow();
+  var hostDocument;
+  try {
+    hostDocument = hostWindow.document;
+    if (!hostDocument || !hostDocument.body) throw new Error("missing body");
+  } catch (e) {
+    toast("error", "无法在酒馆页面内打开转换台");
+    return;
+  }
+
+  try {
+    if (
+      hostWindow._msTransferStationCleanup &&
+      hostWindow._msTransferStationCleanup !== closeTransferStation
+    ) {
+      hostWindow._msTransferStationCleanup();
+    }
+  } catch (e) {}
+
+  try {
+    _tsToken = _tsMakeToken(hostWindow);
+  } catch (e) {
+    toast("error", e.message || "无法建立转换台连接");
+    return;
+  }
+  parsed.searchParams.set("msTransferToken", _tsToken);
+  /* 把宿主 origin 一并交给转换台，让它握手时能指定 postMessage 的目标而不是用 *。
+     否则第三方页面只要内嵌转换台并猜中 token，就能拿到通信端口。 */
+  try {
+    var _tsHostOrigin = hostWindow.location.origin;
+    if (_tsHostOrigin && _tsHostOrigin !== "null") {
+      parsed.searchParams.set("msTavernOrigin", _tsHostOrigin);
+    }
+  } catch (e) {}
+  _tsOrigin = parsed.origin;
+  _tsHostWindow = hostWindow;
+
+  var overlay = hostDocument.createElement("div");
+  overlay.id = "ms-transfer-station-overlay";
+  overlay.style.cssText =
+    "position:fixed;inset:0;z-index:2147483646;background:#10100f;" +
+    "display:block;width:100vw;height:100vh;overflow:hidden;";
+
+  var frame = hostDocument.createElement("iframe");
+  frame.title = "格式转换台";
+  frame.src = parsed.href;
+  frame.allow = "clipboard-read; clipboard-write";
+  frame.style.cssText =
+    "display:block;width:100%;height:100%;border:0;background:#10100f;";
+
+  var closeButton = hostDocument.createElement("button");
+  closeButton.type = "button";
+  closeButton.setAttribute("aria-label", "关闭格式转换台");
+  closeButton.title = "关闭格式转换台";
+  closeButton.innerHTML = "&#10005;";
+  closeButton.style.cssText =
+    "position:absolute;top:max(10px,env(safe-area-inset-top));" +
+    "right:max(12px,env(safe-area-inset-right));z-index:2;width:38px;height:38px;" +
+    "border:1px solid rgba(255,255,255,.22);border-radius:12px;" +
+    "background:rgba(20,18,16,.78);color:#f5eee6;font:700 18px/1 sans-serif;" +
+    "cursor:pointer;box-shadow:0 4px 18px rgba(0,0,0,.28);backdrop-filter:blur(8px);";
+  closeButton.addEventListener("click", closeTransferStation);
+
+  overlay.appendChild(frame);
+  overlay.appendChild(closeButton);
+  _tsOverlay = overlay;
+  _tsFrame = frame;
+
+  _tsWindowHandler = function (event) {
+    var d = event && event.data;
+    if (!d || d.__msTransfer !== 1 || d.type !== "connect") return;
+    if (!_tsFrame || event.source !== _tsFrame.contentWindow) return;
+    if (event.origin !== _tsOrigin) return;
+    if (d.token !== _tsToken) return;
+    if (!event.ports || !event.ports[0]) return;
+    _tsAttachPort(event.ports[0]);
+  };
+  hostWindow.addEventListener("message", _tsWindowHandler);
+  try {
+    hostWindow._msTransferStationCleanup = closeTransferStation;
+  } catch (e) {}
+  hostDocument.body.appendChild(overlay);
+}
+
+function _tsDedupePrompts(list) {
+  var localFps = new Set();
+  data.prompts.forEach(function (p) {
+    localFps.add(p.fingerprint || contentFingerprint(p));
+  });
+  var kept = [];
+  var seen = new Set();
+  var skipped = 0;
+  list.forEach(function (p) {
+    if (!p || typeof p !== "object") return;
+    var fp = contentFingerprint(p);
+    if (localFps.has(fp) || seen.has(fp)) {
+      skipped++;
+      return;
+    }
+    seen.add(fp);
+    kept.push(p);
+  });
+  return { kept: kept, skipped: skipped };
+}
+
+function receiveTransferPayload(payload) {
+  if (!payload || typeof payload !== "object") {
+    toast("error", "数据格式无效");
+    return null;
+  }
+  var _tsCurView = currentView().name;
+  if (
+    (_tsCurView === "edit" && editDirty) ||
+    (_tsCurView === "group-edit" && groupEditDirty)
+  ) {
+    toast(
+      "warning",
+      "当前有未保存的编辑内容，请先保存或退出编辑，再重新推送",
+      4000,
+    );
+    return null;
+  }
+  var ip = Array.isArray(payload.prompts) ? payload.prompts : [];
+  var ig = Array.isArray(payload.groups) ? payload.groups : [];
+  if (ip.length === 0 && ig.length === 0) {
+    toast("error", "数据里没有剧场或分组");
+    return null;
+  }
+  var r = _tsDedupePrompts(ip);
+  if (r.kept.length === 0) {
+    if (r.skipped > 0) {
+      toast(
+        "warning",
+        "全部 " +
+          r.skipped +
+          " 条与本地已有内容完全重复（仅比对标题与正文），已跳过。若只需调整标签或分组，请在酒馆内直接批量修改。",
+        5000,
+      );
+    } else {
+      toast("error", "数据里没有可导入的剧场");
+    }
+    return { accepted: 0, skipped: r.skipped };
+  }
+  if (r.skipped > 0) {
+    toast("info", "跳过 " + r.skipped + " 条与本地完全重复的剧场");
+  }
+  if (!panelVisible) {
+    try {
+      showPanel();
+    } catch (e) {}
+  }
+  navigateTo({
+    name: "import-confirm",
+    importedGroups: ig,
+    importedPrompts: r.kept,
+    importedTags: Array.isArray(payload.tags) ? payload.tags : [],
+    importedCharGroups: Array.isArray(payload.charGroups)
+      ? payload.charGroups
+      : [],
+    importedBdMessages: payload.charBirthdayMessages || {},
+    importedBdDates: payload.charBirthdays || {},
+  });
+  return { accepted: r.kept.length, skipped: r.skipped };
+}
+
+function receiveTransferFromPaste() {
+  msPrompt("把转换台生成的推送数据粘贴到下方：", {
+    title: "从剪贴板接收",
+    icon: "fa-paste",
+    multiline: true,
+    placeholder: "在此粘贴 JSON",
+    okText: "解析",
+    validate: function (v) {
+      if (!v || !v.trim()) return "内容不能为空";
+      try {
+        JSON.parse(v);
+      } catch (e) {
+        return "JSON 解析失败：" + e.message;
+      }
+      return null;
+    },
+  }).then(function (val) {
+    if (!val) return;
+    var obj = null;
+    try {
+      obj = JSON.parse(val);
+    } catch (e) {
+      return;
+    }
+    receiveTransferPayload(obj);
+  });
+}
+
+(function _tsCleanupPreviousInstance() {
+  var hostWindow = _tsGetHostWindow();
+  try {
+    if (hostWindow._msTransferStationCleanup) {
+      hostWindow._msTransferStationCleanup();
+    }
+  } catch (e) {}
+})();
+
+try {
+  window.addEventListener("pagehide", closeTransferStation, { once: true });
+} catch (e) {}
 })();

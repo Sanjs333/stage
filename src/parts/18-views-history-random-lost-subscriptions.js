@@ -1,7 +1,11 @@
 async function autoCheckSubscriptions() {
   if (data.subscriptions.length === 0) return;
   if (autoCheckSubscriptions._running) return;
-  var interval = (data.settings.autoCheckInterval || 6) * 3600000;
+  var _aci =
+    data.settings.autoCheckInterval === undefined
+      ? 6
+      : data.settings.autoCheckInterval;
+  var interval = _aci * 3600000;
   if (interval <= 0) return;
   var now = Date.now();
   var needsCheck = data.subscriptions.some(function (s) {
@@ -514,6 +518,83 @@ function renderThemeBinding() {
   });
 }
 
+function buildPoolTagFilterRow(opts) {
+  if (data.settings.definedTags.length === 0) return "";
+  var activeIds = opts.activeIds || [];
+  var isExact = data.settings.tagFilterExactMatch === true;
+  var mappingCount = (data.settings.tagMappings || []).length;
+  var tagsToShow = data.settings.definedTags;
+  if (!isExact && mappingCount > 0) {
+    var hideSet = new Set();
+    (data.settings.tagMappings || []).forEach(function (mm) {
+      if (Array.isArray(mm.tagIds) && mm.primaryTagId) {
+        mm.tagIds.forEach(function (tid) {
+          if (tid !== mm.primaryTagId) hideSet.add(tid);
+        });
+      }
+    });
+    if (hideSet.size > 0) {
+      tagsToShow = tagsToShow.filter(function (t) {
+        if (!hideSet.has(t.id)) return true;
+        return activeIds.indexOf(t.id) >= 0;
+      });
+    }
+  }
+  var modeLabel =
+    data.settings.filterTagMode === "and" ? "全部匹配" : "任一匹配";
+  var html =
+    '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center;">';
+  html +=
+    '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;margin-right:2px;"><i class="fa-solid fa-tags" style="margin-right:2px;"></i></span>';
+  tagsToShow.forEach(function (t) {
+    var isActive = activeIds.indexOf(t.id) >= 0;
+    html +=
+      '<span class="ms-tag-toggle' +
+      (isActive ? " active" : "") +
+      '" ' +
+      opts.tagAttr +
+      '="' +
+      t.id +
+      '" style="font-size:10px;padding:2px 6px;' +
+      (isActive ? "background:" + t.color + ";" : "") +
+      '">' +
+      esc(t.name) +
+      "</span>";
+  });
+  if (mappingCount > 0) {
+    var mappingTitle = isExact
+      ? "当前为独立模式：只筛选你选中的标签\n点击切换到映射模式（同映射组的标签一起参与筛选）"
+      : "当前为映射模式：选中主标签时，同映射组的其他标签也会参与筛选\n点击切换到独立模式";
+    html +=
+      '<button class="ms-filter-mode-btn" id="' +
+      opts.mappingBtnId +
+      '" title="' +
+      escAttr(mappingTitle) +
+      '" style="margin-left:4px;' +
+      (isExact
+        ? ""
+        : "background:rgba(var(--ms-accent-rgb),0.15);color:var(--ms-accent);border-color:var(--ms-accent);") +
+      '"><i class="fa-solid ' +
+      (isExact ? "fa-link-slash" : "fa-link") +
+      '"></i> ' +
+      (isExact ? "独立" : "映射") +
+      "</button>";
+  }
+  html +=
+    '<button class="ms-filter-mode-btn" id="' +
+    opts.modeBtnId +
+    '" style="margin-left:4px;">' +
+    modeLabel +
+    "</button>";
+  if (activeIds.length > 0) {
+    html +=
+      '<span style="font-size:10px;color:var(--ms-accent);cursor:pointer;margin-left:2px;" id="' +
+      opts.clearBtnId +
+      '">× 清除</span>';
+  }
+  html += "</div>";
+  return html;
+}
 function renderRandomPool() {
   var ri = data.settings.randomInject;
   if (!ri) {
@@ -528,6 +609,7 @@ function renderRandomPool() {
   var $p = setupPage("随机池管理", "随机注入池");
   var _expandedGroups = new Set();
   var _expandedRpoolSeries = new Set();
+  var _expandedRpoolSub = new Set();
   var _rpoolSearch = "";
   var _rpoolFilterTags = [];
   function matchesRpoolFilter(p) {
@@ -542,22 +624,21 @@ function renderRandomPool() {
         return false;
     }
     if (_rpoolFilterTags.length > 0) {
+      if (!p.tags) return false;
       if (data.settings.filterTagMode === "and") {
-        if (
-          !p.tags ||
-          !_rpoolFilterTags.every(function (tid) {
-            return p.tags.indexOf(tid) >= 0;
-          })
-        )
-          return false;
+        var _rAll = _rpoolFilterTags.every(function (tid) {
+          var linked = expandTagsByMapping([tid]);
+          return linked.some(function (ltid) {
+            return p.tags.indexOf(ltid) >= 0;
+          });
+        });
+        if (!_rAll) return false;
       } else {
-        if (
-          !p.tags ||
-          !_rpoolFilterTags.some(function (tid) {
-            return p.tags.indexOf(tid) >= 0;
-          })
-        )
-          return false;
+        var _rEff = expandTagsByMapping(_rpoolFilterTags);
+        var _rAny = _rEff.some(function (tid) {
+          return p.tags.indexOf(tid) >= 0;
+        });
+        if (!_rAny) return false;
       }
     }
     return true;
@@ -578,6 +659,26 @@ function renderRandomPool() {
   }
   function isPromptExcluded(pid) {
     return ri.excludedPromptIds && ri.excludedPromptIds.indexOf(pid) >= 0;
+  }
+  function isSubGroupExcluded(gid, sgid) {
+    if (!sgid || !ri.excludedSubGroups) return false;
+    return ri.excludedSubGroups.some(function (x) {
+      return x && x.groupId === gid && x.subGroupId === sgid;
+    });
+  }
+  function toggleSubGroupExclude(gid, sgid) {
+    if (!Array.isArray(ri.excludedSubGroups)) ri.excludedSubGroups = [];
+    var idx = -1;
+    for (var i = 0; i < ri.excludedSubGroups.length; i++) {
+      var x = ri.excludedSubGroups[i];
+      if (x && x.groupId === gid && x.subGroupId === sgid) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx >= 0) ri.excludedSubGroups.splice(idx, 1);
+    else ri.excludedSubGroups.push({ groupId: gid, subGroupId: sgid });
+    saveData();
   }
   function toggleGroupExclude(gid) {
     if (!ri.excludedGroupIds) ri.excludedGroupIds = [];
@@ -607,7 +708,8 @@ function renderRandomPool() {
     var allExcluded =
       ri.excludedGroupIds.length > 0 ||
       ri.excludedSeries.length > 0 ||
-      ri.excludedPromptIds.length > 0;
+      ri.excludedPromptIds.length > 0 ||
+      (Array.isArray(ri.excludedSubGroups) && ri.excludedSubGroups.length > 0);
     var html = '<div style="padding:8px 14px 4px;">';
     html +=
       '<div style="position:relative;display:flex;align-items:center;"><input class="ms-search" id="ms-rpool-search" type="text" placeholder="搜索标题、内容、作者、系列..." value="' +
@@ -615,36 +717,13 @@ function renderRandomPool() {
       '" style="flex:1;padding-right:24px;"><span id="ms-rpool-search-clear" style="position:absolute;right:8px;cursor:pointer;color:var(--SmartThemeQuoteColor,#666);font-size:11px;display:' +
       (_rpoolSearch ? "block" : "none") +
       ';line-height:1;">×</span></div>';
-    if (data.settings.definedTags.length > 0) {
-      var modeLabel =
-        data.settings.filterTagMode === "and" ? "全部匹配" : "任一匹配";
-      html +=
-        '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center;">';
-      html +=
-        '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;margin-right:2px;"><i class="fa-solid fa-tags" style="margin-right:2px;"></i></span>';
-      data.settings.definedTags.forEach(function (t) {
-        var isActive = _rpoolFilterTags.indexOf(t.id) >= 0;
-        html +=
-          '<span class="ms-tag-toggle' +
-          (isActive ? " active" : "") +
-          '" data-rpool-filter-tag="' +
-          t.id +
-          '" style="font-size:10px;padding:2px 6px;' +
-          (isActive ? "background:" + t.color + ";" : "") +
-          '">' +
-          esc(t.name) +
-          "</span>";
-      });
-      if (_rpoolFilterTags.length > 0) {
-        html +=
-          '<span style="font-size:10px;color:var(--ms-accent);cursor:pointer;margin-left:2px;" id="ms-rpool-clear-tags">× 清除</span>';
-        html +=
-          '<button class="ms-filter-mode-btn" id="ms-rpool-tag-mode" style="margin-left:4px;">' +
-          modeLabel +
-          "</button>";
-      }
-      html += "</div>";
-    }
+    html += buildPoolTagFilterRow({
+      activeIds: _rpoolFilterTags,
+      tagAttr: "data-rpool-filter-tag",
+      modeBtnId: "ms-rpool-tag-mode",
+      mappingBtnId: "ms-rpool-tag-mapping",
+      clearBtnId: "ms-rpool-clear-tags",
+    });
     html += "</div>";
 
     html +=
@@ -702,61 +781,95 @@ function renderRandomPool() {
         ';" data-rpool-body="' +
         gid +
         '">';
-      var seriesMap = {};
-      var noSeries = [];
-      displayPrompts.forEach(function (p) {
-        var sn = (p.series || "").trim();
-        if (sn) {
-          if (!seriesMap[sn]) seriesMap[sn] = [];
-          seriesMap[sn].push(p);
-        } else {
-          noSeries.push(p);
-        }
-      });
-      Object.keys(seriesMap).forEach(function (sn) {
-        var sExcluded = isSeriesExcluded(gid, sn);
-        var sChecked = sExcluded ? "" : " checked";
-        var sCls = sExcluded || gExcluded ? " ms-rpool-excluded" : "";
-        var sDisabled = gExcluded ? " disabled" : "";
-        var _rpSid = gid + "_s_" + simpleHash(sn);
-        var _rpSOpen = _expandedRpoolSeries.has(_rpSid) || hasFilter;
-        blockH +=
-          '<div class="ms-rpool-series-label' +
-          (gExcluded ? " ms-rpool-excluded" : "") +
-          '" data-rpool-series-id="' +
-          _rpSid +
-          '">' +
-          '<input type="checkbox" class="ms-rpool-scb" data-gid="' +
-          gid +
-          '" data-sn="' +
-          esc(sn) +
-          '"' +
-          sChecked +
-          sDisabled +
-          '><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:11px;"></i><span class="' +
-          sCls +
-          '">' +
-          esc(sn) +
-          " (" +
-          seriesMap[sn].length +
-          ')</span><i class="fa-solid fa-angle-right ms-series-arrow' +
-          (_rpSOpen ? " open" : "") +
-          '" style="font-size:9px;margin-left:auto;"></i></div>';
-        blockH +=
-          '<div class="ms-rpool-series-items" data-rpool-series-body="' +
-          _rpSid +
-          '" style="display:' +
-          (_rpSOpen ? "block" : "none") +
-          ';">';
-        seriesMap[sn].forEach(function (p) {
+
+      function renderRpoolItems(items, sgid, upperExcluded, indentPx) {
+        var h = "";
+        var seriesMap = {};
+        var noSeries = [];
+        items.forEach(function (p) {
+          var sn = (p.series || "").trim();
+          if (sn) {
+            if (!seriesMap[sn]) seriesMap[sn] = [];
+            seriesMap[sn].push(p);
+          } else {
+            noSeries.push(p);
+          }         });
+        var padCss = indentPx ? "padding-left:" + indentPx + "px;" : "";
+        Object.keys(seriesMap).forEach(function (sn) {
+          var sExcluded = isSeriesExcluded(gid, sn);
+          var sChecked = sExcluded ? "" : " checked";
+          var sCls = sExcluded || upperExcluded ? " ms-rpool-excluded" : "";
+          var sDisabled = upperExcluded ? " disabled" : "";
+          var _rpSid = gid + "_" + (sgid || "_") + "_s_" + simpleHash(sn);
+          var _rpSOpen = _expandedRpoolSeries.has(_rpSid) || hasFilter;
+          h +=
+            '<div class="ms-rpool-series-label' +
+            (upperExcluded ? " ms-rpool-excluded" : "") +
+            '" data-rpool-series-id="' +
+            _rpSid +
+            '" style="' +
+            padCss +
+            '">' +
+            '<input type="checkbox" class="ms-rpool-scb" data-gid="' +
+            gid +
+            '" data-sn="' +
+            esc(sn) +
+            '"' +
+            sChecked +
+            sDisabled +
+            '><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:11px;"></i><span class="' +
+            sCls +
+            '">' +
+            esc(sn) +
+            " (" +
+            seriesMap[sn].length +
+            ')</span><i class="fa-solid fa-angle-right ms-series-arrow' +
+            (_rpSOpen ? " open" : "") +
+            '" style="font-size:9px;margin-left:auto;"></i></div>';
+          h +=
+            '<div class="ms-rpool-series-items" data-rpool-series-body="' +
+            _rpSid +
+            '" style="display:' +
+            (_rpSOpen ? "block" : "none") +
+            ";" +
+            padCss +
+            '">';
+          seriesMap[sn].forEach(function (p) {
+            var pExcluded = isPromptExcluded(p.id);
+            var pChecked = pExcluded ? "" : " checked";
+            var pCls =
+              pExcluded || sExcluded || upperExcluded
+                ? " ms-rpool-excluded"
+                : "";
+            var pDisabled = upperExcluded || sExcluded ? " disabled" : "";
+            h +=
+              '<div class="ms-rpool-item' +
+              (upperExcluded || sExcluded ? " disabled" : "") +
+              '"><input type="checkbox" class="ms-rpool-pcb" data-pid="' +
+              p.id +
+              '"' +
+              pChecked +
+              pDisabled +
+              '><span class="' +
+              pCls +
+              '" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
+              (hasFilter && _rpoolSearch
+                ? highlightText(p.title, _rpoolSearch)
+                : esc(truncate(p.title, 30))) +
+              "</span></div>";
+          });
+          h += "</div>";
+        });
+        noSeries.forEach(function (p) {
           var pExcluded = isPromptExcluded(p.id);
           var pChecked = pExcluded ? "" : " checked";
-          var pCls =
-            pExcluded || sExcluded || gExcluded ? " ms-rpool-excluded" : "";
-          var pDisabled = gExcluded || sExcluded ? " disabled" : "";
-          blockH +=
+          var pCls = pExcluded || upperExcluded ? " ms-rpool-excluded" : "";
+          var pDisabled = upperExcluded ? " disabled" : "";
+          h +=
             '<div class="ms-rpool-item' +
-            (gExcluded || sExcluded ? " disabled" : "") +
+            (upperExcluded ? " disabled" : "") +
+            '" style="' +
+            padCss +
             '"><input type="checkbox" class="ms-rpool-pcb" data-pid="' +
             p.id +
             '"' +
@@ -770,29 +883,86 @@ function renderRandomPool() {
               : esc(truncate(p.title, 30))) +
             "</span></div>";
         });
-        blockH += "</div>";
-      });
-      noSeries.forEach(function (p) {
-        var pExcluded = isPromptExcluded(p.id);
-        var pChecked = pExcluded ? "" : " checked";
-        var pCls = pExcluded || gExcluded ? " ms-rpool-excluded" : "";
-        var pDisabled = gExcluded ? " disabled" : "";
-        blockH +=
-          '<div class="ms-rpool-item' +
-          (gExcluded ? " disabled" : "") +
-          '"><input type="checkbox" class="ms-rpool-pcb" data-pid="' +
-          p.id +
-          '"' +
-          pChecked +
-          pDisabled +
-          '><span class="' +
-          pCls +
-          '" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' +
-          (hasFilter && _rpoolSearch
-            ? highlightText(p.title, _rpoolSearch)
-            : esc(truncate(p.title, 30))) +
-          "</span></div>";
-      });
+        return h;
+      }
+
+      var sgOnForRpool =
+        gObj && isSubGroupEnabled(gObj) && getSubGroups(gObj).length > 0;
+      if (!sgOnForRpool) {
+        blockH += renderRpoolItems(displayPrompts, null, gExcluded, 0);
+      } else {
+        var rBuckets = {};
+        var rNone = [];
+        displayPrompts.forEach(function (p) {
+          if (p.subGroupId && getSubGroup(gid, p.subGroupId)) {
+            if (!rBuckets[p.subGroupId]) rBuckets[p.subGroupId] = [];
+            rBuckets[p.subGroupId].push(p);
+          } else {
+            rNone.push(p);
+          }
+        });
+        function _rpoolSubBlock(sgid, label, color, iconCls, items) {
+          var sgExcluded = isSubGroupExcluded(gid, sgid);
+          var sgCls = sgExcluded || gExcluded ? " ms-rpool-excluded" : "";
+          var _rpSgId = gid + "_sg_" + sgid;
+          var _rpSgOpen = _expandedRpoolSub.has(_rpSgId) || hasFilter;
+          var s =
+            '<div class="ms-rpool-series-label' +
+            (gExcluded ? " ms-rpool-excluded" : "") +
+            '" data-rpool-sub-id="' +
+            _rpSgId +
+            '">' +
+            '<input type="checkbox" class="ms-rpool-sgcb" data-gid="' +
+            gid +
+            '" data-sgid="' +
+            escAttr(sgid) +
+            '"' +
+            (sgExcluded ? "" : " checked") +
+            (gExcluded ? " disabled" : "") +
+            '><i class="fa-solid ' +
+            iconCls +
+            '" style="color:' +
+            color +
+            ';font-size:11px;"></i><span class="' +
+            sgCls +
+            '">' +
+            esc(label) +
+            " (" +
+            items.length +
+            ')</span><i class="fa-solid fa-angle-right ms-series-arrow' +
+            (_rpSgOpen ? " open" : "") +
+            '" style="font-size:9px;margin-left:auto;"></i></div>';
+          s +=
+            '<div data-rpool-sub-body="' +
+            _rpSgId +
+            '" style="display:' +
+            (_rpSgOpen ? "block" : "none") +
+            ';">' +
+            renderRpoolItems(items, sgid, gExcluded || sgExcluded, 12) +
+            "</div>";
+          return s;
+        }
+        getSubGroups(gObj).forEach(function (sg) {
+          var bucket = rBuckets[sg.id];
+          if (!bucket || bucket.length === 0) return;
+          blockH += _rpoolSubBlock(
+            sg.id,
+            sg.name,
+            sg.color,
+            "fa-folder-open",
+            bucket,
+          );
+        });
+        if (rNone.length > 0) {
+          blockH += _rpoolSubBlock(
+            SUBGROUP_NONE,
+            "未分类",
+            "var(--SmartThemeQuoteColor,#888)",
+            "fa-inbox",
+            rNone,
+          );
+        }
+      }
       blockH += "</div></div>";
       return blockH;
     }
@@ -914,31 +1084,57 @@ function renderRandomPool() {
     saveData();
     refreshPool();
   });
+  $p.find("#ms-body").on("click.ms", "#ms-rpool-tag-mapping", function () {
+    data.settings.tagFilterExactMatch = !data.settings.tagFilterExactMatch;
+    saveData();
+    refreshPool();
+  });
   $p.find("#ms-body").on("click.ms", "#ms-rpool-selall", function () {
     var allExcluded =
       ri.excludedGroupIds.length > 0 ||
       ri.excludedSeries.length > 0 ||
-      ri.excludedPromptIds.length > 0;
+      ri.excludedPromptIds.length > 0 ||
+      (Array.isArray(ri.excludedSubGroups) && ri.excludedSubGroups.length > 0);
 
     if (allExcluded) {
       ri.excludedGroupIds = [];
       ri.excludedSeries = [];
       ri.excludedPromptIds = [];
+      ri.excludedSubGroups = [];
     } else {
       var visiblePrompts = data.prompts.filter(matchesRpoolFilter);
       var visibleGroupIds = new Set();
       var visibleSeriesKeys = new Set();
+      var visibleSubKeys = new Set();
       visiblePrompts.forEach(function (p) {
         var gid = p.groupId && getGroup(p.groupId) ? p.groupId : "_ungrouped";
         visibleGroupIds.add(gid);
         var sn = (p.series || "").trim();
         if (sn) visibleSeriesKeys.add(gid + "||" + sn);
+        var _gObj = gid === "_ungrouped" ? null : getGroup(gid);
+        if (isSubGroupEnabled(_gObj) && getSubGroups(_gObj).length > 0) {
+          var _sgk =
+            p.subGroupId && getSubGroup(gid, p.subGroupId)
+              ? p.subGroupId
+              : SUBGROUP_NONE;
+          visibleSubKeys.add(gid + "||" + _sgk);
+        }
       });
       if (!Array.isArray(ri.excludedGroupIds)) ri.excludedGroupIds = [];
       if (!Array.isArray(ri.excludedSeries)) ri.excludedSeries = [];
       if (!Array.isArray(ri.excludedPromptIds)) ri.excludedPromptIds = [];
+      if (!Array.isArray(ri.excludedSubGroups)) ri.excludedSubGroups = [];
       visibleGroupIds.forEach(function (gid) {
         if (ri.excludedGroupIds.indexOf(gid) < 0) ri.excludedGroupIds.push(gid);
+      });
+      visibleSubKeys.forEach(function (key) {
+        var parts = key.split("||");
+        var gid = parts[0],
+          sgid = parts.slice(1).join("||");
+        var exists = ri.excludedSubGroups.some(function (x) {
+          return x && x.groupId === gid && x.subGroupId === sgid;
+        });
+        if (!exists) ri.excludedSubGroups.push({ groupId: gid, subGroupId: sgid });
       });
       visibleSeriesKeys.forEach(function (key) {
         var parts = key.split("||");
@@ -985,6 +1181,21 @@ function renderRandomPool() {
     toggleGroupExclude(gid);
     refreshPool();
   });
+  $p.find("#ms-body").on("click.ms", ".ms-rpool-series-label", function (e) {
+    if ($(e.target).is("input[type='checkbox']")) return;
+    var subId = $(this).attr("data-rpool-sub-id");
+    if (!subId) return;
+    $(this).find(".ms-series-arrow").toggleClass("open");
+    var $sb = $p.find('[data-rpool-sub-body="' + subId + '"]');
+    $sb.toggle();
+    if ($sb.is(":visible")) _expandedRpoolSub.add(subId);
+    else _expandedRpoolSub.delete(subId);
+  });
+  $p.find("#ms-body").on("change.ms", ".ms-rpool-sgcb", function (e) {
+    e.stopPropagation();
+    toggleSubGroupExclude($(this).data("gid"), $(this).attr("data-sgid"));
+    refreshPool();
+  });
   $p.find("#ms-body").on("change.ms", ".ms-rpool-scb", function (e) {
     e.stopPropagation();
     var gid = $(this).data("gid");
@@ -1007,6 +1218,7 @@ function renderPinnedPool() {
   var $p = setupPage("固定池管理", "固定注入池");
   var _pexpGroups = new Set();
   var _pexpSeries = new Set();
+  var _pexpSub = new Set();
   var _psearch = "";
   var _pfilterTags = [];
 
@@ -1022,22 +1234,21 @@ function renderPinnedPool() {
         return false;
     }
     if (_pfilterTags.length > 0) {
+      if (!p.tags) return false;
       if (data.settings.filterTagMode === "and") {
-        if (
-          !p.tags ||
-          !_pfilterTags.every(function (tid) {
-            return p.tags.indexOf(tid) >= 0;
-          })
-        )
-          return false;
+        var _pAll = _pfilterTags.every(function (tid) {
+          var linked = expandTagsByMapping([tid]);
+          return linked.some(function (ltid) {
+            return p.tags.indexOf(ltid) >= 0;
+          });
+        });
+        if (!_pAll) return false;
       } else {
-        if (
-          !p.tags ||
-          !_pfilterTags.some(function (tid) {
-            return p.tags.indexOf(tid) >= 0;
-          })
-        )
-          return false;
+        var _pEff = expandTagsByMapping(_pfilterTags);
+        var _pAny = _pEff.some(function (tid) {
+          return p.tags.indexOf(tid) >= 0;
+        });
+        if (!_pAny) return false;
       }
     }
     return true;
@@ -1138,36 +1349,13 @@ function renderPinnedPool() {
       '" style="flex:1;padding-right:24px;"><span id="ms-ppool-search-clear" style="position:absolute;right:8px;cursor:pointer;color:var(--SmartThemeQuoteColor,#666);font-size:11px;display:' +
       (_psearch ? "block" : "none") +
       ';line-height:1;">×</span></div>';
-    if (data.settings.definedTags.length > 0) {
-      var modeLabel =
-        data.settings.filterTagMode === "and" ? "全部匹配" : "任一匹配";
-      html +=
-        '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:6px;align-items:center;">';
-      html +=
-        '<span style="font-size:10px;color:var(--SmartThemeQuoteColor,#666);flex-shrink:0;margin-right:2px;"><i class="fa-solid fa-tags" style="margin-right:2px;"></i></span>';
-      data.settings.definedTags.forEach(function (t) {
-        var isActive = _pfilterTags.indexOf(t.id) >= 0;
-        html +=
-          '<span class="ms-tag-toggle' +
-          (isActive ? " active" : "") +
-          '" data-ppool-filter-tag="' +
-          t.id +
-          '" style="font-size:10px;padding:2px 6px;' +
-          (isActive ? "background:" + t.color + ";" : "") +
-          '">' +
-          esc(t.name) +
-          "</span>";
-      });
-      if (_pfilterTags.length > 0) {
-        html +=
-          '<span style="font-size:10px;color:var(--ms-accent);cursor:pointer;margin-left:2px;" id="ms-ppool-clear-tags">× 清除</span>';
-        html +=
-          '<button class="ms-filter-mode-btn" id="ms-ppool-tag-mode" style="margin-left:4px;">' +
-          modeLabel +
-          "</button>";
-      }
-      html += "</div>";
-    }
+    html += buildPoolTagFilterRow({
+      activeIds: _pfilterTags,
+      tagAttr: "data-ppool-filter-tag",
+      modeBtnId: "ms-ppool-tag-mode",
+      mappingBtnId: "ms-ppool-tag-mapping",
+      clearBtnId: "ms-ppool-clear-tags",
+    });
     html += "</div>";
 
     function itemH(p) {
@@ -1228,44 +1416,118 @@ function renderPinnedPool() {
         ';" data-ppool-body="' +
         gid +
         '">';
-      var seriesMap = {};
-      var noSeries = [];
-      list.forEach(function (p) {
-        var sn = (p.series || "").trim();
-        if (sn) {
-          if (!seriesMap[sn]) seriesMap[sn] = [];
-          seriesMap[sn].push(p);
-        } else {
-          noSeries.push(p);
-        }
-      });
-      Object.keys(seriesMap).forEach(function (sn) {
-        var sid = gid + "_s_" + simpleHash(sn);
-        var sOpen = _pexpSeries.has(sid) || hasFilter;
-        h +=
-          '<div class="ms-rpool-series-label" data-ppool-series-id="' +
-          sid +
-          '"><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:11px;"></i><span>' +
-          esc(sn) +
-          " (" +
-          seriesMap[sn].length +
-          ')</span><i class="fa-solid fa-angle-right ms-series-arrow' +
-          (sOpen ? " open" : "") +
-          '" style="font-size:9px;margin-left:auto;"></i></div>';
-        h +=
-          '<div class="ms-rpool-series-items" data-ppool-series-body="' +
-          sid +
-          '" style="display:' +
-          (sOpen ? "block" : "none") +
-          ';">';
-        seriesMap[sn].forEach(function (p) {
-          h += itemH(p);
+      function renderPpoolItems(items, sgid, indentPx) {
+        var out = "";
+        var seriesMap = {};
+        var noSeries = [];
+        items.forEach(function (p) {
+          var sn = (p.series || "").trim();
+          if (sn) {
+            if (!seriesMap[sn]) seriesMap[sn] = [];
+            seriesMap[sn].push(p);
+          } else {
+            noSeries.push(p);
+          }
         });
-        h += "</div>";
-      });
-      noSeries.forEach(function (p) {
-        h += itemH(p);
-      });
+        var padCss = indentPx ? "padding-left:" + indentPx + "px;" : "";
+        Object.keys(seriesMap).forEach(function (sn) {
+          var sid = gid + "_" + (sgid || "_") + "_s_" + simpleHash(sn);
+          var sOpen = _pexpSeries.has(sid) || hasFilter;
+          out +=
+            '<div class="ms-rpool-series-label" data-ppool-series-id="' +
+            sid +
+            '" style="' +
+            padCss +
+            '"><i class="fa-solid fa-layer-group" style="color:var(--ms-accent);opacity:0.6;font-size:11px;"></i><span>' +
+            esc(sn) +
+            " (" +
+            seriesMap[sn].length +
+            ')</span><i class="fa-solid fa-angle-right ms-series-arrow' +
+            (sOpen ? " open" : "") +
+            '" style="font-size:9px;margin-left:auto;"></i></div>';
+          out +=
+            '<div class="ms-rpool-series-items" data-ppool-series-body="' +
+            sid +
+            '" style="display:' +
+            (sOpen ? "block" : "none") +
+            ";" +
+            padCss +
+            '">';
+          seriesMap[sn].forEach(function (p) {
+            out += itemH(p);
+          });
+          out += "</div>";
+        });
+        if (noSeries.length > 0) {
+          out += '<div style="' + padCss + '">';
+          noSeries.forEach(function (p) {
+            out += itemH(p);
+          });
+          out += "</div>";
+        }
+        return out;
+      }
+      var sgOnForPpool =
+        gObj && isSubGroupEnabled(gObj) && getSubGroups(gObj).length > 0;
+      if (!sgOnForPpool) {
+        h += renderPpoolItems(list, null, 0);
+      } else {
+        var pBuckets = {};
+        var pNone = [];
+        list.forEach(function (p) {
+          if (p.subGroupId && getSubGroup(gid, p.subGroupId)) {
+            if (!pBuckets[p.subGroupId]) pBuckets[p.subGroupId] = [];
+            pBuckets[p.subGroupId].push(p);
+          } else {
+            pNone.push(p);
+          }
+        });
+        function _ppoolSubBlock(sgid, label, color, iconCls, items) {
+          var _sid = gid + "_sg_" + sgid;
+          var _open = _pexpSub.has(_sid) || hasFilter;
+          var _pinned = items.filter(function (p) {
+            return _pIsPinned(p.id);
+          }).length;
+          var s =
+            '<div class="ms-rpool-series-label" data-ppool-sub-id="' +
+            _sid +
+            '"><i class="fa-solid ' +
+            iconCls +
+            '" style="color:' +
+            color +
+            ';font-size:11px;"></i><span>' +
+            esc(label) +
+            " (" +
+            (_pinned > 0 ? _pinned + "/" : "") +
+            items.length +
+            ')</span><i class="fa-solid fa-angle-right ms-series-arrow' +
+            (_open ? " open" : "") +
+            '" style="font-size:9px;margin-left:auto;"></i></div>';
+          s +=
+            '<div data-ppool-sub-body="' +
+            _sid +
+            '" style="display:' +
+            (_open ? "block" : "none") +
+            ';">' +
+            renderPpoolItems(items, sgid, 12) +
+            "</div>";
+          return s;
+        }
+        getSubGroups(gObj).forEach(function (sg) {
+          var bucket = pBuckets[sg.id];
+          if (!bucket || bucket.length === 0) return;
+          h += _ppoolSubBlock(sg.id, sg.name, sg.color, "fa-folder-open", bucket);
+        });
+        if (pNone.length > 0) {
+          h += _ppoolSubBlock(
+            SUBGROUP_NONE,
+            "未分类",
+            "var(--SmartThemeQuoteColor,#888)",
+            "fa-inbox",
+            pNone,
+          );
+        }
+      }
       h += "</div></div>";
       return h;
     }
@@ -1394,6 +1656,15 @@ function renderPinnedPool() {
     if ($sb.is(":visible")) _pexpSeries.add(sid);
     else _pexpSeries.delete(sid);
   });
+  $p.find("#ms-body").on("click.ms", ".ms-rpool-series-label", function () {
+    var subId = $(this).attr("data-ppool-sub-id");
+    if (!subId) return;
+    $(this).find(".ms-series-arrow").toggleClass("open");
+    var $sb = $p.find('[data-ppool-sub-body="' + subId + '"]');
+    $sb.toggle();
+    if ($sb.is(":visible")) _pexpSub.add(subId);
+    else _pexpSub.delete(subId);
+  });
   $p.find("#ms-body").on("compositionstart.ms", "#ms-ppool-search", function () {
     this._composing = true;
   });
@@ -1428,6 +1699,11 @@ function renderPinnedPool() {
   $p.find("#ms-body").on("click.ms", "#ms-ppool-tag-mode", function () {
     data.settings.filterTagMode =
       data.settings.filterTagMode === "and" ? "or" : "and";
+    saveData();
+    refreshAll();
+  });
+  $p.find("#ms-body").on("click.ms", "#ms-ppool-tag-mapping", function () {
+    data.settings.tagFilterExactMatch = !data.settings.tagFilterExactMatch;
     saveData();
     refreshAll();
   });

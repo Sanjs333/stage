@@ -25,6 +25,11 @@ function renderView() {
   _clearPagedCtx();
   const $p = $("#" + PANEL_ID);
   if (!$p.length) return;
+  $p.find("#ms-gp-popup, #ms-sp-popup, #ms-char-search-popup").remove();
+  $p.off(
+    "pointerdown.ms-gp keydown.ms-gp pointerdown.ms-sp keydown.ms-sp pointerdown.ms-char-search-close",
+  );
+  $p.find("#ms-body").off("scroll.ms-gp scroll.ms-sp");
   $p.find("#ms-count").text(data.prompts.length + " 条");
   $p.find("#ms-filter-panel").removeClass("open").empty();
   $p.find("#ms-title-info").hide().removeClass("open").off("click.ms-note");
@@ -36,6 +41,7 @@ function renderView() {
     "lost-chars": renderLostChars,
     list: renderList,
     group: renderGroup,
+    subgroup: renderSubGroup,
     starred: renderStarred,
     recent: renderRecent,
     characters: renderCharacters,
@@ -54,10 +60,20 @@ function renderView() {
     "quick-phrases": renderQuickPhrases,
     "quick-phrase-edit": renderQuickPhraseEdit,
     settings: renderSettings,
+    "settings-inject": renderSettingsInject,
+    "settings-pools": renderSettingsPools,
+    "settings-content": renderSettingsContent,
+    "settings-appearance": renderSettingsAppearance,
+    "settings-data": renderSettingsData,
+    "settings-transfer": renderSettingsTransfer,
+    "settings-about": renderSettingsAbout,
     stats: renderStats,
     "reorder-groups": renderReorderGroups,
     "reorder-prompts": renderReorderPrompts,
     "reorder-tags": renderReorderTags,
+    "reorder-subgroups": renderReorderSubGroups,
+    "group-subgroups": renderGroupSubGroups,
+    "group-prefixes": renderGroupPrefixes,
     history: renderHistory,
     "history-diff": renderHistoryDiff,
     "history-list": renderHistoryList,
@@ -88,12 +104,7 @@ function renderView() {
       $p.find(".ms-series-arrow").css("transition", "");
     });
   }
-  if (
-    v._filterPanelOpen &&
-    (filterState.includeTags.length > 0 ||
-      filterState.excludeTags.length > 0 ||
-      filterState.groupId)
-  ) {
+  if (v._filterPanelOpen) {
     $p.find("#ms-filter-panel").html(buildFilterPanel()).addClass("open");
     bindFilterEvents($p);
   }
@@ -131,13 +142,14 @@ function refreshKeepingState() {
   var $p = $("#" + PANEL_ID);
   var v = currentView();
   var $body = $p.find("#ms-body");
-  if (v.name === "group" || v.name === "character") {
+  if (v.name === "group" || v.name === "character" || v.name === "subgroup") {
     var _openSeries = [];
     $body.find(".ms-series-body.open").each(function () {
       _openSeries.push(this.id);
     });
     v._expandedSeries = _openSeries;
     v._savedScrollTop = $body.scrollTop();
+    v._filterPanelOpen = $p.find("#ms-filter-panel").hasClass("open");
     renderView();
   } else {
     renderBodyOnly();
@@ -183,7 +195,11 @@ function renderBodyOnly() {
     } else {
       $p.find("#ms-footer").html(buildListFooter()).show();
     }
-  } else if (v.name === "group") {
+  } else if (
+    v.name === "group" ||
+    v.name === "subgroup" ||
+    v.name === "character"
+  ) {
     var $oldSearch = $p.find("#ms-search");
     var _searchWasFocused = $oldSearch.is(":focus");
     var _searchStart =
@@ -192,6 +208,8 @@ function renderBodyOnly() {
         : 0;
     var _searchEnd =
       _searchWasFocused && $oldSearch[0] ? $oldSearch[0].selectionEnd || 0 : 0;
+    v._filterPanelOpen = $p.find("#ms-filter-panel").hasClass("open");
+    v._savedScrollTop = 0;
     renderView();
     if (_searchWasFocused) {
       var $newSearch = $p.find("#ms-search");
@@ -379,6 +397,7 @@ function buildListBody() {
     });
     const charCnt = charSet.size;
     const seriesCnt = seriesSet.size;
+    const subGroupCnt = isSubGroupEnabled(g) ? getSubGroups(g).length : 0;
     const noteH = g.note ? `<div class="ms-nav-note">${esc(g.note)}</div>` : "";
     const selCnt = _selByGroup[g.id] || 0;
     const selBadge =
@@ -403,6 +422,12 @@ function buildListBody() {
       cntParts.push(
         '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-user" style="font-size:8px;opacity:0.7;"></i>' +
           charCnt +
+          "</span>",
+      );
+    if (subGroupCnt > 0)
+      cntParts.push(
+        '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-folder-open" style="font-size:8px;opacity:0.7;"></i>' +
+          subGroupCnt +
           "</span>",
       );
     if (seriesCnt > 0)
@@ -439,6 +464,132 @@ function buildListBody() {
   return html;
 }
 
+function buildSubGroupEntries(g, charScope) {
+  if (!isSubGroupEnabled(g)) return "";
+  var list = getSubGroupsInScope(g.id, charScope);
+  if (list.length === 0) return "";
+  var stageIds = data.settings.stageSelectedIds || [];
+  function _inScope(p) {
+    if (charScope === "_general") {
+      return !p.character;
+    }
+    if (charScope) return p.character === charScope;
+    return true;
+  }
+  var html = "";
+  list.forEach(function (it) {
+    var sg = it.subGroup;
+    if (!sg) return;
+    var sgid = sg.id;
+    var iconBg = sg.color + "22";
+    var iconColor = sg.color;
+    var iconCls = "fa-folder-open";
+    var name = sg.name;
+    var scopePrompts = getPromptsInSubGroup(g.id, sgid).filter(_inScope);
+    var hasStage =
+      stageIds.length > 0 &&
+      scopePrompts.some(function (p) {
+        return stageIds.indexOf(p.id) >= 0;
+      });
+    var seriesSet = new Set();
+    scopePrompts.forEach(function (p) {
+      var sn = String(p.series || "").trim();
+      if (sn) seriesSet.add(sn);
+    });
+    var cntParts = [];
+    if (seriesSet.size > 0) {
+      cntParts.push(
+        '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-layer-group" style="font-size:8px;opacity:0.7;"></i>' +
+          seriesSet.size +
+          "</span>",
+      );
+    }
+    if (it.count === 0) {
+      cntParts.push(
+        '<span style="display:inline-flex;align-items:center;gap:2px;opacity:0.45;"><i class="fa-solid fa-masks-theater" style="font-size:8px;"></i>0</span>',
+      );
+    } else {
+      cntParts.push(
+        '<span style="display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-masks-theater" style="font-size:8px;opacity:0.7;"></i>' +
+          it.count +
+          "</span>",
+      );
+    }
+    var checkH = "";
+    if (selectMode) {
+      var scopeIds = scopePrompts.map(function (p) {
+        return p.id;
+      });
+      var allSel =
+        scopeIds.length > 0 &&
+        scopeIds.every(function (id) {
+          return selectedIds.has(id);
+        });
+      var someSel =
+        !allSel &&
+        scopeIds.some(function (id) {
+          return selectedIds.has(id);
+        });
+      var scCls = allSel ? " ms-sc-all" : someSel ? " ms-sc-some" : "";
+      checkH =
+        '<div class="ms-series-check' +
+        scCls +
+        "\" data-series-ids='" +
+        JSON.stringify(scopeIds) +
+        "' data-series-key=\"" +
+        escAttr(g.id + ":" + sgid + ":" + (charScope || "")) +
+        '"><i class="fa-solid ' +
+        (someSel && !allSel ? "fa-minus" : "fa-check") +
+        '"></i></div>';
+    }
+    html +=
+      '<div class="ms-sg-entry' +
+      (hasStage ? " ms-stage-injecting" : "") +
+      (it.count === 0 ? '" style="opacity:0.6;' : "") +
+      '" data-sg-nav="' +
+      escAttr(sgid) +
+      '" data-sg-scope="' +
+      escAttr(charScope || "") +
+      '">' +
+      checkH +
+      '<div class="ms-sg-entry-icon" style="background:' +
+      iconBg +
+      ";color:" +
+      iconColor +
+      ';"><i class="fa-solid ' +
+      iconCls +
+      '"></i></div>' +
+      '<div class="ms-sg-entry-info"><div class="ms-sg-entry-name">' +
+      esc(name) +
+      "</div>" +
+      (sg && sg.note
+        ? '<div class="ms-sg-entry-note">' + esc(sg.note) + "</div>"
+        : "") +
+      "</div>" +
+      '<span class="ms-sg-entry-cnt">' +
+      cntParts.join('<span style="opacity:0.35;">·</span>') +
+      "</span>" +
+      '<i class="fa-solid fa-angle-right" style="color:var(--SmartThemeQuoteColor,#555);font-size:10px;flex-shrink:0;"></i>' +
+      "</div>";
+  });
+  return html;
+}
+function buildSubGroupSection(g, charScope) {
+  var html = buildSubGroupEntries(g, charScope);
+  var noneList = getPromptsInSubGroup(g.id, SUBGROUP_NONE);
+  if (charScope === "_general") {
+    noneList = noneList.filter(function (p) {
+      return !p.character;
+    });
+  } else if (charScope) {
+    noneList = noneList.filter(function (p) {
+      return p.character === charScope;
+    });
+  }
+  if (noneList.length === 0) return html;
+  html += renderGroupBodyWithSeries(sortPrompts(noneList));
+  return html;
+}
 function buildListFooter() {
   var subDot =
     data.settings.subUpdatesPending > 0
@@ -505,20 +656,35 @@ function buildToolbar(opts) {
 function buildFilterPanel() {
   let html = "";
   const v = currentView();
-  const inGroupView = v.name === "group";
+  const inGroupView = v.name === "group" || v.name === "subgroup";
   const inCharView = v.name === "character";
   const hasAnyFilter =
     filterState.includeTags.length > 0 ||
     filterState.excludeTags.length > 0 ||
-    filterState.groupId;
+    filterState.groupId ||
+    filterState.subGroupId;
   var _visibleTagIds = null;
-  if (v.name === "group" || v.name === "character") {
+  if (v.name === "group" || v.name === "character" || v.name === "subgroup") {
     var _scopeList;
     if (v.name === "group") {
       _scopeList =
         v.groupId === "_ungrouped"
           ? getUngroupedPrompts()
           : getPromptsInGroup(v.groupId);
+    } else if (v.name === "subgroup") {
+      _scopeList = getPromptsInSubGroup(
+        v.groupId,
+        v.subGroupId || SUBGROUP_NONE,
+      );
+      if (v.charScope === "_general") {
+        _scopeList = _scopeList.filter(function (p) {
+          return !p.character;
+        });
+      } else if (v.charScope) {
+        _scopeList = _scopeList.filter(function (p) {
+          return p.character === v.charScope;
+        });
+      }
     } else {
       _scopeList = getPromptsByCharacter(v.charKey || v.charName);
     }
@@ -597,6 +763,66 @@ function buildFilterPanel() {
     }
     html += `</div>`;
   }
+  var _sgFilterGid = null;
+  if (v.name === "group" && v.groupId && v.groupId !== "_ungrouped") {
+    _sgFilterGid = v.groupId;
+  } else if (
+    v.name === "list" &&
+    filterState.groupId &&
+    filterState.groupId !== "_ungrouped"
+  ) {
+    _sgFilterGid = filterState.groupId;
+  }
+  if (_sgFilterGid) {
+    var _sgFilterG = getGroup(_sgFilterGid);
+    if (isSubGroupEnabled(_sgFilterG) && getSubGroups(_sgFilterG).length > 0) {
+      var _sgCounts = {};
+      var _sgNoneCnt = 0;
+      getPromptsInGroup(_sgFilterGid).forEach(function (p) {
+        if (p.subGroupId && getSubGroup(_sgFilterGid, p.subGroupId))
+          _sgCounts[p.subGroupId] = (_sgCounts[p.subGroupId] || 0) + 1;
+        else _sgNoneCnt++;
+      });
+      html +=
+        '<div class="ms-filter-section">文件夹筛选</div><div class="ms-tag-row">';
+      var _sgAll = !filterState.subGroupId;
+      html +=
+        '<span class="ms-tag-toggle' +
+        (_sgAll ? " active" : "") +
+        '" data-filter-subgroup="" style="' +
+        (_sgAll ? "background:#666;" : "") +
+        '">全部</span>';
+      getSubGroups(_sgFilterG).forEach(function (sg) {
+        var _a = filterState.subGroupId === sg.id;
+        html +=
+          '<span class="ms-tag-toggle' +
+          (_a ? " active" : "") +
+          '" data-filter-subgroup="' +
+          escAttr(sg.id) +
+          '" style="' +
+          (_a ? "background:" + sg.color + ";" : "") +
+          '">' +
+          esc(sg.name) +
+          ' <span style="opacity:0.55;font-size:9px;">' +
+          (_sgCounts[sg.id] || 0) +
+          "</span></span>";
+      });
+      if (_sgNoneCnt > 0) {
+        var _aN = filterState.subGroupId === SUBGROUP_NONE;
+        html +=
+          '<span class="ms-tag-toggle' +
+          (_aN ? " active" : "") +
+          '" data-filter-subgroup="' +
+          SUBGROUP_NONE +
+          '" style="' +
+          (_aN ? "background:#666;" : "") +
+          '">未分类 <span style="opacity:0.55;font-size:9px;">' +
+          _sgNoneCnt +
+          "</span></span>";
+      }
+      html += "</div>";
+    }
+  }
   var curK = getCurrentCharKeySafe();
   if (!inGroupView && !inCharView && curK) {
     var onlyCur = filterState.onlyCurrentChar;
@@ -663,6 +889,18 @@ function getPromptCardBlocks(list, showGroupLabel) {
         }
       }
 
+      if (p.subGroupId && g) {
+        var _sgForCard = getSubGroup(g.id, p.subGroupId);
+        if (_sgForCard) {
+          _metaParts.push(
+            '<span style="color:' +
+              _sgForCard.color +
+              ';display:inline-flex;align-items:center;gap:3px;"><i class="fa-solid fa-folder-open" style="font-size:9px;"></i>' +
+              esc(_sgForCard.name) +
+              "</span>",
+          );
+        }
+      }
       if (p.series) {
         _metaParts.push(
           '<span style="color:var(--ms-accent);opacity:0.8;display:inline-flex;align-items:center;gap:2px;"><i class="fa-solid fa-layer-group" style="font-size:9px;"></i>' +
@@ -736,7 +974,7 @@ function getPromptCardBlocks(list, showGroupLabel) {
     }
     var cardHtml = "";
     if (selectMode) {
-      cardHtml += `<div class="ms-card ${isSel ? "selected" : ""}${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><div class="ms-card-check"><i class="fa-solid fa-check"></i></div>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}${anchorH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div>`;
+      cardHtml += `<div class="ms-card ${isSel ? "selected" : ""}${isStageTarget ? " ms-stage-injecting" : ""}" data-pid="${p.id}"><div class="ms-card-check"><i class="fa-solid fa-check"></i></div>${pinH}<div class="ms-card-info">${seriesAboveH}<div class="ms-card-title">${titleH}${anchorH}</div><div class="ms-card-preview${searchQuery ? " ms-has-search" : ""}">${prevH}</div></div><div class="ms-card-quick"><button class="ms-card-qbtn" data-qaction="preview" data-pid="${p.id}" title="预览"><i class="fa-solid fa-eye"></i></button></div>`;
       if (_bottomRowH) cardHtml += _bottomRowH;
       cardHtml += `</div>`;
     } else {
@@ -765,12 +1003,18 @@ function getGroupBodySeriesBlocks(list) {
       var seriesName = p.series.trim();
       var seriesItems = list.filter(function (q) {
         return (
-          q.series && q.series.trim() === seriesName && !rendered.has(q.id)
+          q.series &&
+          q.series.trim() === seriesName &&
+          (q.subGroupId || null) === (p.subGroupId || null) &&
+          !rendered.has(q.id)
         );
       });
       if (seriesItems.length > 1) {
         var sid =
-          "ms-series-" + simpleHash(seriesName + "||" + (p.groupId || ""));
+          "ms-series-" +
+          simpleHash(
+            seriesName + "||" + (p.groupId || "") + "||" + (p.subGroupId || ""),
+          );
         var headerExtra = "";
         var anchorBadge = "";
         if (selectMode) {
@@ -836,13 +1080,21 @@ function getGroupBodySeriesBlocks(list) {
             return (
               q.series &&
               q.series.trim() === seriesName &&
-              q.groupId === p.groupId
+              q.groupId === p.groupId &&
+              (q.subGroupId || null) === (p.subGroupId || null)
             );
           }).length;
           if (fullSeriesCount > 1) {
             var sid2 =
               "ms-series-" +
-              simpleHash(seriesName + "||" + (p.groupId || "") + "||_f");
+              simpleHash(
+                seriesName +
+                  "||" +
+                  (p.groupId || "") +
+                  "||" +
+                  (p.subGroupId || "") +
+                  "||_f",
+              );
             var headerExtra2 = "";
             var anchorBadge2 = "";
             if (selectMode) {
@@ -974,6 +1226,26 @@ function showMoveDropdown($p) {
   let html = `<div class="ms-dropdown-item" data-moveto="">未分组</div>`;
   data.groups.forEach((g) => {
     html += `<div class="ms-dropdown-item" data-moveto="${g.id}">${esc(g.name)}</div>`;
+    if (isSubGroupEnabled(g) && getSubGroups(g).length > 0) {
+      getSubGroups(g).forEach(function (sg) {
+        html +=
+          '<div class="ms-dropdown-item" data-moveto="' +
+          g.id +
+          '" data-movetosub="' +
+          sg.id +
+          '" style="padding-left:26px;font-size:11px;"><i class="fa-solid fa-folder-open" style="color:' +
+          sg.color +
+          ';font-size:9px;margin-right:5px;"></i>' +
+          esc(sg.name) +
+          "</div>";
+      });
+      html +=
+        '<div class="ms-dropdown-item" data-moveto="' +
+        g.id +
+        '" data-movetosub="' +
+        SUBGROUP_NONE +
+        '" style="padding-left:26px;font-size:11px;"><i class="fa-solid fa-inbox" style="opacity:0.6;font-size:9px;margin-right:5px;"></i>未分类</div>';
+    }
   });
   html += `<div style="border-top:1px solid var(--SmartThemeBorderColor,#333);"></div>`;
   html += `<div class="ms-dropdown-item" data-moveto="_new" style="color:var(--ms-accent);"><i class="fa-solid fa-plus" style="margin-right:4px;"></i>新建分组</div>`;
@@ -1000,7 +1272,12 @@ function showMoveDropdown($p) {
       });
       return;
     } else {
-      movePromptsToGroup([...selectedIds], target || null);
+      var subTarget = $(this).attr("data-movetosub");
+      if (subTarget !== undefined) {
+        movePromptsToGroup([...selectedIds], target || null, subTarget);
+      } else {
+        movePromptsToGroup([...selectedIds], target || null);
+      }
       toast("success", `已移动 ${selectedIds.size} 项`);
     }
     exitSelectMode();
@@ -1382,7 +1659,14 @@ function showBatchSeriesDropdown($p) {
     var isIP = g && isIPGroup(g);
     var charKey =
       isIP && p.character && isLocalCharKey(p.character) ? p.character : null;
-    var optKey = sn + "||" + (charKey || "_") + "||" + (p.groupId || "_");
+    var optKey =
+      sn +
+      "||" +
+      (charKey || "_") +
+      "||" +
+      (p.groupId || "_") +
+      "||" +
+      (p.subGroupId || "_");
     if (seenOptKey.has(optKey)) return;
     seenOptKey.add(optKey);
     seriesOptions.push({ name: sn, charKey: charKey });

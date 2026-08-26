@@ -1,6 +1,14 @@
 function loadData() {
   try {
     const ctx = getCtx();
+    // 下面整段默认值播种都在 if 分支内，全新安装（还没有存储键）会整段跳过，
+    // 于是首个会话里这三个值是 undefined：界面自定义一打开就显示「undefinedpx」，
+    // zoom/width 拿到 NaN 被 CSSOM 丢弃，设置形同失效，直到刷新页面才正常
+    if (data.settings.uiFontSize === undefined) data.settings.uiFontSize = 14;
+    if (data.settings.uiPanelWidth === undefined)
+      data.settings.uiPanelWidth = 500;
+    if (data.settings.uiPanelHeight === undefined)
+      data.settings.uiPanelHeight = 82;
     if (ctx && ctx.s[STORAGE_KEY]) {
       const stored = ctx.s[STORAGE_KEY];
       data.groups = Array.isArray(stored.groups) ? stored.groups : [];
@@ -86,6 +94,11 @@ function loadData() {
         !Array.isArray(data.settings.randomInject.excludedCharGroupIds)
       )
         data.settings.randomInject.excludedCharGroupIds = [];
+      if (
+        data.settings.randomInject &&
+        !Array.isArray(data.settings.randomInject.excludedSubGroups)
+      )
+        data.settings.randomInject.excludedSubGroups = [];
       if (!Array.isArray(data.settings.tagMappings))
         data.settings.tagMappings = [];
       data.settings.tagMappings.forEach(function (m) {
@@ -247,6 +260,7 @@ function loadData() {
         if (!p.usageByCharacter || typeof p.usageByCharacter !== "object")
           p.usageByCharacter = {};
         if (p.sourceId === undefined) p.sourceId = null;
+        if (p.subGroupId === undefined) p.subGroupId = null;
         if (!p.fingerprint) p.fingerprint = contentFingerprint(p);
         if (p.usageCount === undefined) p.usageCount = 0;
         if (p.updatedAt === undefined) p.updatedAt = p.createdAt || null;
@@ -266,6 +280,15 @@ function loadData() {
         if (g.iconUrl === undefined) g.iconUrl = "";
         if (g.iconCharKey === undefined) g.iconCharKey = "";
         if (!Array.isArray(g.charDisplayOrder)) g.charDisplayOrder = [];
+        if (!Array.isArray(g.subGroups)) g.subGroups = [];
+        g.subGroups.forEach(function (sg) {
+          if (!sg.id) sg.id = uid();
+          if (typeof sg.name !== "string")
+            sg.name = String(sg.name || "未命名");
+          if (!sg.color) sg.color = GROUP_COLORS[0];
+          if (sg.note === undefined) sg.note = "";
+        });
+        g.subGroupEnabled = g.subGroups.length > 0;
         if (g.multiPrefixEnabled === undefined) g.multiPrefixEnabled = false;
         if (!Array.isArray(g.prefixTemplates)) g.prefixTemplates = [];
         if (!g.prefixAssignments || typeof g.prefixAssignments !== "object")
@@ -304,6 +327,7 @@ function loadData() {
         if (s.importCharGroups === undefined) s.importCharGroups = true;
         if (s.targetGroupId === undefined) s.targetGroupId = null;
       });
+      cleanOrphanSubGroupIds();
     }
     if (!data.settings.guideCreated && data.prompts.length === 0) {
       createBuiltinGuide();
@@ -746,6 +770,7 @@ function saveData() {
   _groupIdx = null;
   _promptIdx = null;
   _tagIdx = null;
+  _subGroupIdx = null;
   _visIdsCache = null;
   _savePending = true;
   if (_saveTimer) return;
@@ -800,7 +825,8 @@ function clearDraft() {
 
 var _groupIdx = null,
   _promptIdx = null,
-  _tagIdx = null;
+  _tagIdx = null,
+  _subGroupIdx = null;
 function _rebuildIdx() {
   _groupIdx = {};
   data.groups.forEach(function (g) {
@@ -814,6 +840,13 @@ function _rebuildIdx() {
   data.settings.definedTags.forEach(function (t) {
     _tagIdx[t.id] = t;
   });
+  _subGroupIdx = {};
+  data.groups.forEach(function (g) {
+    if (!Array.isArray(g.subGroups)) return;
+    g.subGroups.forEach(function (sg) {
+      if (sg && sg.id) _subGroupIdx[g.id + "|" + sg.id] = sg;
+    });
+  });
 }
 function getGroup(id) {
   if (!_groupIdx) _rebuildIdx();
@@ -825,6 +858,91 @@ function getPrompt(id) {
 }
 function getPromptsInGroup(gid) {
   return data.prompts.filter((p) => p.groupId === gid);
+}
+function isSubGroupEnabled(g) {
+  return !!(g && Array.isArray(g.subGroups) && g.subGroups.length > 0);
+}
+function getSubGroups(g) {
+  if (!g || !Array.isArray(g.subGroups)) return [];
+  return g.subGroups;
+}
+function getSubGroup(gid, sgid) {
+  if (!gid || !sgid || sgid === SUBGROUP_NONE) return null;
+  if (!_subGroupIdx) _rebuildIdx();
+  return _subGroupIdx[gid + "|" + sgid] || null;
+}
+function getPromptsInSubGroup(gid, sgid) {
+  if (!gid) return [];
+  var isNone = !sgid || sgid === SUBGROUP_NONE;
+  return data.prompts.filter(function (p) {
+    if (p.groupId !== gid) return false;
+    if (isNone) return !p.subGroupId || !getSubGroup(gid, p.subGroupId);
+    return p.subGroupId === sgid;
+  });
+}
+function getSubGroupsInScope(gid, charScope) {
+  var g = getGroup(gid);
+  if (!isSubGroupEnabled(g)) return [];
+  var counts = {};
+  data.prompts.forEach(function (p) {
+    if (p.groupId !== gid) return;
+    if (charScope === "_general") {
+      if (p.character) return;
+    } else if (charScope) {
+      if (p.character !== charScope) return;
+    }
+    if (p.subGroupId && getSubGroup(gid, p.subGroupId)) {
+      counts[p.subGroupId] = (counts[p.subGroupId] || 0) + 1;
+    }
+  });
+  var result = [];
+  var showEmpty = !charScope || charScope === "_general";
+  getSubGroups(g).forEach(function (sg) {
+    var c = counts[sg.id] || 0;
+    if (c > 0 || showEmpty) result.push({ subGroup: sg, count: c });
+  });
+  return result;
+}
+function cleanOrphanSubGroupIds() {
+  var changed = 0;
+  data.prompts.forEach(function (p) {
+    if (!p.subGroupId) return;
+    if (!p.groupId) {
+      p.subGroupId = null;
+      changed++;
+      return;
+    }
+    var g = data.groups.find(function (x) {
+      return x.id === p.groupId;
+    });
+    if (!g || !Array.isArray(g.subGroups)) {
+      p.subGroupId = null;
+      changed++;
+      return;
+    }
+    var found = g.subGroups.some(function (sg) {
+      return sg.id === p.subGroupId;
+    });
+    if (!found) {
+      p.subGroupId = null;
+      changed++;
+    }
+  });
+  var ri = data.settings.randomInject;
+  if (ri && Array.isArray(ri.excludedSubGroups)) {
+    ri.excludedSubGroups = ri.excludedSubGroups.filter(function (x) {
+      if (!x || !x.groupId || !x.subGroupId) return false;
+      var g = data.groups.find(function (y) {
+        return y.id === x.groupId;
+      });
+      if (!g || !Array.isArray(g.subGroups)) return false;
+      if (x.subGroupId === SUBGROUP_NONE) return g.subGroups.length > 0;
+      return g.subGroups.some(function (sg) {
+        return sg.id === x.subGroupId;
+      });
+    });
+  }
+  return changed;
 }
 function getUngroupedPrompts() {
   return data.prompts.filter((p) => !p.groupId || !getGroup(p.groupId));
@@ -1578,6 +1696,33 @@ function _rebindLostKeyByName(key, nameMap) {
   return key;
 }
 
+function mergeSubGroupsByName(localG, impG) {
+  var map = {};
+  if (!localG || !impG || !Array.isArray(impG.subGroups)) return map;
+  if (!Array.isArray(localG.subGroups)) localG.subGroups = [];
+  if (Array.isArray(impG.subGroups) && impG.subGroups.length > 0)
+    localG.subGroupEnabled = true;
+  impG.subGroups.forEach(function (isg) {
+    if (!isg || !isg.id || !isg.name) return;
+    var ex = localG.subGroups.find(function (lsg) {
+      return lsg.name === isg.name;
+    });
+    if (ex) {
+      map[isg.id] = ex.id;
+      return;
+    }
+    var nsg = {
+      id: uid(),
+      name: isg.name,
+      color:
+        isg.color || GROUP_COLORS[localG.subGroups.length % GROUP_COLORS.length],
+      note: isg.note || "",
+    };
+    localG.subGroups.push(nsg);
+    map[isg.id] = nsg.id;
+  });
+  return map;
+}
 function _buildIPGroupFromImport(icg) {
   return {
     id: uid(),
@@ -1591,6 +1736,10 @@ function _buildIPGroupFromImport(icg) {
     iconUrl: icg.iconUrl || "",
     iconCharKey: icg.iconCharKey || "",
     charKeys: [],
+    subGroupEnabled: Array.isArray(icg.subGroups) && icg.subGroups.length > 0,
+    subGroups: Array.isArray(icg.subGroups)
+      ? JSON.parse(JSON.stringify(icg.subGroups))
+      : [],
     multiPrefixEnabled: icg.multiPrefixEnabled === true,
     prefixTemplates: Array.isArray(icg.prefixTemplates)
       ? JSON.parse(JSON.stringify(icg.prefixTemplates))

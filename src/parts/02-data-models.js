@@ -7,6 +7,8 @@ function createGroup(name) {
     defaultAuthor: "",
     stagePrefix: "",
     charKeys: [],
+    subGroupEnabled: false,
+    subGroups: [],
   };
   data.groups.push(g);
   _invalidateCharGroupCache();
@@ -26,7 +28,10 @@ function deleteGroup(id) {
   data.groups = data.groups.filter((g) => g.id !== id);
   if (data.settings.generalCollapsed) delete data.settings.generalCollapsed[id];
   data.prompts.forEach((p) => {
-    if (p.groupId === id) p.groupId = null;
+    if (p.groupId === id) {
+      p.groupId = null;
+      p.subGroupId = null;
+    }
   });
   data.subscriptions.forEach((s) => {
     if (s.targetGroupId === id) s.targetGroupId = null;
@@ -40,6 +45,11 @@ function deleteGroup(id) {
   if (ri && Array.isArray(ri.excludedSeries)) {
     ri.excludedSeries = ri.excludedSeries.filter(function (s) {
       return s.groupId !== id;
+    });
+  }
+  if (ri && Array.isArray(ri.excludedSubGroups)) {
+    ri.excludedSubGroups = ri.excludedSubGroups.filter(function (x) {
+      return !x || x.groupId !== id;
     });
   }
   _invalidateCharGroupCache();
@@ -56,12 +66,85 @@ function deleteGroupWithPrompts(gid) {
   if (ids.length > 0) deletePrompts(ids);
   deleteGroup(gid);
 }
+function createSubGroup(gid, name) {
+  var g = getGroup(gid);
+  if (!g) return null;
+  if (!Array.isArray(g.subGroups)) g.subGroups = [];
+  var sg = {
+    id: uid(),
+    name: name || "未命名",
+    color: GROUP_COLORS[g.subGroups.length % GROUP_COLORS.length],
+    note: "",
+  };
+  g.subGroups.push(sg);
+  g.subGroupEnabled = true;
+  saveData();
+  return sg;
+}
+function updateSubGroup(gid, sgid, u) {
+  var sg = getSubGroup(gid, sgid);
+  if (!sg) return;
+  Object.assign(sg, u);
+  saveData();
+}
+function deleteSubGroup(gid, sgid, mode, targetSgid) {
+  var g = getGroup(gid);
+  if (!g || !Array.isArray(g.subGroups)) return;
+  var affected = data.prompts.filter(function (p) {
+    return p.groupId === gid && p.subGroupId === sgid;
+  });
+  if (mode === "delete") {
+    if (affected.length > 0) {
+      deletePrompts(
+        affected.map(function (p) {
+          return p.id;
+        }),
+      );
+    }
+  } else if (mode === "move" && targetSgid && getSubGroup(gid, targetSgid)) {
+    affected.forEach(function (p) {
+      p.subGroupId = targetSgid;
+    });
+  } else {
+    affected.forEach(function (p) {
+      p.subGroupId = null;
+    });
+  }
+  g.subGroups = g.subGroups.filter(function (sg) {
+    return sg.id !== sgid;
+  });
+  if (g.subGroups.length === 0) g.subGroupEnabled = false;
+  if (filterState.subGroupId === sgid) filterState.subGroupId = null;
+  // 视图栈里各层存过 filterState 快照，不清掉的话返回上一页会把失效的
+  // 文件夹筛选恢复出来，导致列表命中 0 条且筛选面板已无 chip 可取消
+  if (Array.isArray(viewStack)) {
+    viewStack.forEach(function (v) {
+      if (v && v._savedFilter && v._savedFilter.subGroupId === sgid) {
+        v._savedFilter.subGroupId = null;
+      }
+    });
+  }
+  var ri = data.settings.randomInject;
+  if (ri && Array.isArray(ri.excludedSubGroups)) {
+    var _sgAllGone = g.subGroups.length === 0;
+    ri.excludedSubGroups = ri.excludedSubGroups.filter(function (x) {
+      if (!x || x.groupId !== gid) return true;
+      if (x.subGroupId === sgid) return false;
+      // 分组已无任何文件夹时，「未分类」的排除记录会命中该组全部剧场，
+      // 而随机池页面此时不再渲染文件夹行，用户无法取消，必须一并清掉
+      if (_sgAllGone && x.subGroupId === SUBGROUP_NONE) return false;
+      return true;
+    });
+  }
+  saveData();
+}
 function createPrompt(obj) {
   const p = {
     id: uid(),
     title: obj.title || "未命名",
     content: obj.content || "",
     groupId: obj.groupId || null,
+    subGroupId: obj.subGroupId || null,
     author: obj.author || "",
     tags: obj.tags || [],
     starred: false,
@@ -91,6 +174,13 @@ function updatePrompt(id, u) {
     var oldChar = p.character;
     var oldGroupId = p.groupId;
     Object.assign(p, u);
+    if (
+      u.groupId !== undefined &&
+      u.groupId !== oldGroupId &&
+      u.subGroupId === undefined
+    ) {
+      p.subGroupId = null;
+    }
     _invalidateLc(p);
     if (oldChar !== p.character || oldGroupId !== p.groupId) {
       _invalidateCharGroupCache();
@@ -106,7 +196,8 @@ function updatePrompt(id, u) {
       u.author !== undefined ||
       u.series !== undefined ||
       u.tags !== undefined ||
-      u.groupId !== undefined
+      u.groupId !== undefined ||
+      u.subGroupId !== undefined
     ) {
       p.updatedAt = Date.now();
     }
@@ -142,10 +233,17 @@ function deletePrompts(ids) {
   _invalidateCharGroupCache();
   saveData();
 }
-function movePromptsToGroup(ids, gid) {
+function movePromptsToGroup(ids, gid, sgid) {
   const s = new Set(ids);
   data.prompts.forEach((p) => {
-    if (s.has(p.id)) p.groupId = gid;
+    if (!s.has(p.id)) return;
+    var switched = p.groupId !== gid;
+    p.groupId = gid;
+    if (sgid !== undefined) {
+      p.subGroupId = sgid && sgid !== SUBGROUP_NONE ? sgid : null;
+    } else if (switched) {
+      p.subGroupId = null;
+    }
   });
   _invalidateCharGroupCache();
   saveData();
@@ -157,6 +255,7 @@ function duplicatePrompt(id) {
     title: p.title + " (副本)",
     content: p.content,
     groupId: p.groupId,
+    subGroupId: p.subGroupId || null,
     author: p.author,
     tags: [...(p.tags || [])],
     series: p.series || "",
@@ -390,6 +489,17 @@ function filterPrompts(list) {
       r = r.filter((p) => !p.groupId || !getGroup(p.groupId));
     else r = r.filter((p) => p.groupId === filterState.groupId);
   }
+  if (filterState.subGroupId) {
+    if (filterState.subGroupId === SUBGROUP_NONE) {
+      r = r.filter(function (p) {
+        return !p.subGroupId || !getSubGroup(p.groupId, p.subGroupId);
+      });
+    } else {
+      r = r.filter(function (p) {
+        return p.subGroupId === filterState.subGroupId;
+      });
+    }
+  }
   if (filterState.onlyCurrentChar) {
     var curK2 = getCurrentCharKeySafe();
     r = curK2
@@ -426,6 +536,11 @@ function searchPrompts(list, q) {
     if (_getLc(p, "content").indexOf(lq) >= 0) return true;
     if (_getLc(p, "author").indexOf(lq) >= 0) return true;
     if (_getLc(p, "series").indexOf(lq) >= 0) return true;
+    if (p.subGroupId && p.groupId) {
+      var _sgS = getSubGroup(p.groupId, p.subGroupId);
+      if (_sgS && _sgS.name && _sgS.name.toLowerCase().indexOf(lq) >= 0)
+        return true;
+    }
     if (p.character) {
       var dn = getCharDisplayName(p.character);
       if (dn && dn.toLowerCase().indexOf(lq) >= 0) return true;
@@ -448,12 +563,32 @@ var _visIdsCacheKey = "";
 function getVisiblePromptIds() {
   const v = currentView();
   var curCharForCache = getCurrentCharKeySafe() || "";
+  var _sgSigForCache = "";
+  if (v.groupId && v.groupId !== "_ungrouped") {
+    var _sgGForCache = getGroup(v.groupId);
+    if (_sgGForCache) {
+      _sgSigForCache =
+        (_sgGForCache.subGroupEnabled ? "1" : "0") +
+        ":" +
+        getSubGroups(_sgGForCache)
+          .map(function (sg) {
+            return sg.id;
+          })
+          .join(",");
+    }
+  }
   var cacheKey =
     v.name +
     "|" +
     (v.groupId || "") +
     "|" +
     (v.charKey || "") +
+    "|" +
+    (v.subGroupId || "") +
+    "|" +
+    (v.charScope === undefined ? "" : String(v.charScope)) +
+    "|" +
+    _sgSigForCache +
     "|" +
     searchQuery +
     "|" +
@@ -476,7 +611,18 @@ function getVisiblePromptIds() {
   else if (v.name === "recent") list = getRecentPrompts();
   else if (v.name === "character")
     list = getPromptsByCharacter(v.charKey || v.charName);
-  else return [];
+  else if (v.name === "subgroup") {
+    list = getPromptsInSubGroup(v.groupId, v.subGroupId);
+    if (v.charScope === "_general") {
+      list = list.filter(function (p) {
+        return !p.character;
+      });
+    } else if (v.charScope) {
+      list = list.filter(function (p) {
+        return p.character === v.charScope;
+      });
+    }
+  } else return [];
   var sorted = sortPrompts(filterPrompts(searchPrompts(list, searchQuery)));
 
   function _groupBySeriesVisual(items) {
@@ -496,6 +642,33 @@ function getVisiblePromptIds() {
         out.push(p);
         seen.add(p.id);
       }
+    });
+    return out;
+  }
+
+  function _groupBySubGroupVisual(items, g) {
+    if (!isSubGroupEnabled(g) || getSubGroups(g).length === 0) {
+      return _groupBySeriesVisual(items);
+    }
+    var buckets = {};
+    var noSub = [];
+    items.forEach(function (p) {
+      if (p.subGroupId && getSubGroup(g.id, p.subGroupId)) {
+        if (!buckets[p.subGroupId]) buckets[p.subGroupId] = [];
+        buckets[p.subGroupId].push(p);
+      } else {
+        noSub.push(p);
+      }
+    });
+    var out = [];
+    getSubGroups(g).forEach(function (sg) {
+      if (!buckets[sg.id]) return;
+      _groupBySeriesVisual(buckets[sg.id]).forEach(function (p) {
+        out.push(p);
+      });
+    });
+    _groupBySeriesVisual(noSub).forEach(function (p) {
+      out.push(p);
     });
     return out;
   }
@@ -539,18 +712,20 @@ function getVisiblePromptIds() {
         if (orderedKeys.indexOf(k) < 0) orderedKeys.push(k);
       });
       var visual = [];
-      _groupBySeriesVisual(general).forEach(function (p) {
+      _groupBySubGroupVisual(general, g).forEach(function (p) {
         visual.push(p);
       });
       orderedKeys.forEach(function (k) {
-        _groupBySeriesVisual(byChar[k] || []).forEach(function (p) {
+        _groupBySubGroupVisual(byChar[k] || [], g).forEach(function (p) {
           visual.push(p);
         });
       });
       ordered = visual;
     } else {
-      ordered = _groupBySeriesVisual(sorted);
+      ordered = _groupBySubGroupVisual(sorted, g);
     }
+  } else if (v.name === "subgroup" && !searchQuery) {
+    ordered = _groupBySeriesVisual(sorted);
   } else if (v.name === "character" && !searchQuery) {
     ordered = _groupBySeriesVisual(sorted);
   } else if (
@@ -559,7 +734,7 @@ function getVisiblePromptIds() {
     filterState.groupId !== "_ungrouped" &&
     !searchQuery
   ) {
-    ordered = _groupBySeriesVisual(sorted);
+    ordered = _groupBySubGroupVisual(sorted, getGroup(filterState.groupId));
   }
 
   var result = ordered.map(function (p) {

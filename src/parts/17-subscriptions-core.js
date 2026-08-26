@@ -10,6 +10,7 @@
             series: p.series || "",
             tags: (p.tags || []).slice().sort(),
             groupId: p.groupId || "",
+            subGroupId: p.subGroupId || "",
             character: p.character || "",
           };
         })
@@ -34,6 +35,17 @@
             defaultAuthor: g.defaultAuthor || "",
             stagePrefix: g.stagePrefix || "",
             multiStagePrefix: g.multiStagePrefix || "",
+            subGroupEnabled: g.subGroupEnabled === true,
+            subGroups: Array.isArray(g.subGroups)
+              ? g.subGroups.map(function (sg) {
+                  return {
+                    id: sg.id || "",
+                    name: sg.name || "",
+                    color: sg.color || "",
+                    note: sg.note || "",
+                  };
+                })
+              : [],
             multiPrefixEnabled: g.multiPrefixEnabled === true,
             prefixTemplates: Array.isArray(g.prefixTemplates)
               ? g.prefixTemplates.map(function (t) {
@@ -82,6 +94,17 @@
             iconCharKey: cg.iconCharKey || "",
             charKeys: (cg.charKeys || []).slice().sort(),
             charDisplayOrder: (cg.charDisplayOrder || []).slice(),
+            subGroupEnabled: cg.subGroupEnabled === true,
+            subGroups: Array.isArray(cg.subGroups)
+              ? cg.subGroups.map(function (sg) {
+                  return {
+                    id: sg.id || "",
+                    name: sg.name || "",
+                    color: sg.color || "",
+                    note: sg.note || "",
+                  };
+                })
+              : [],
             multiPrefixEnabled: cg.multiPrefixEnabled === true,
             prefixTemplates: Array.isArray(cg.prefixTemplates)
               ? cg.prefixTemplates.map(function (t) {
@@ -136,6 +159,10 @@
     var itags = imported.tags || [];
     var conflicts = [];
     var _subNameMap = _buildLocalNameIndex();
+    var subSgidMap = {};
+    function _subSgKey(gid, sgid) {
+      return (gid || "") + "|" + (sgid || "");
+    }
     try {
       ip.forEach(function (p) {
         _rebindPromptChar(p, _subNameMap);
@@ -173,6 +200,10 @@
         });
         if (ex) {
           gidMap[g.id] = ex.id;
+          var _subM = mergeSubGroupsByName(ex, g);
+          Object.keys(_subM).forEach(function (k) {
+            subSgidMap[_subSgKey(g.id, k)] = _subM[k];
+          });
           if (sub.updateExisting !== false) {
             if (g.color !== undefined) ex.color = g.color;
             if (g.note !== undefined) ex.note = g.note;
@@ -192,8 +223,15 @@
           }
         } else {
           var ng = Object.assign({}, g, { id: uid() });
+          ng.subGroups = Array.isArray(g.subGroups)
+            ? JSON.parse(JSON.stringify(g.subGroups))
+            : [];
+          ng.subGroupEnabled = ng.subGroups.length > 0;
           data.groups.push(ng);
           gidMap[g.id] = ng.id;
+          ng.subGroups.forEach(function (sg) {
+            subSgidMap[_subSgKey(g.id, sg.id)] = sg.id;
+          });
         }
       });
     }
@@ -265,8 +303,21 @@
         existingBySource.fingerprint = fp;
         existingBySource._lastSubFingerprint = fp;
         existingBySource.updatedAt = Date.now();
-        if (sub.importGroups && p.groupId)
+        if (sub.importGroups && p.groupId) {
           existingBySource.groupId = gidMap[p.groupId] || p.groupId;
+          var _impGSg = (ig || []).find(function (x) {
+            return x && x.id === p.groupId;
+          });
+          if (
+            _impGSg &&
+            Array.isArray(_impGSg.subGroups) &&
+            _impGSg.subGroups.length > 0
+          ) {
+            // 远端明确给出归类才覆盖；远端该条没归类时保留本地归类
+            var _mappedSg = subSgidMap[_subSgKey(p.groupId, p.subGroupId)];
+            if (_mappedSg) existingBySource.subGroupId = _mappedSg;
+          }
+        }
         if (sub.importTags && p.tags)
           existingBySource.tags = p.tags.map(function (tid) {
             return tagIdMap[tid] || tid;
@@ -298,6 +349,9 @@
       np.groupId = sub.importGroups
         ? gidMap[p.groupId] || p.groupId || null
         : sub.targetGroupId || null;
+      np.subGroupId = sub.importGroups
+        ? subSgidMap[_subSgKey(p.groupId, p.subGroupId)] || null
+        : null;
       np.tags = sub.importTags
         ? (p.tags || []).map(function (tid) {
             return tagIdMap[tid] || tid;
@@ -330,6 +384,14 @@
               if (oi >= 0) other.charKeys.splice(oi, 1);
             });
             if (existing.charKeys.indexOf(k) < 0) existing.charKeys.push(k);
+          });
+          /* 注意：这里登记 subSgidMap 的时机晚于上面 prompt 循环里消费它的地方。
+             目前不出问题，只因为导出端会把 IP 分组同时放进 groups 数组、在那边已经
+             登记过一遍；一旦哪天导出端把 IP 分组从 groups 里裁掉，这些剧场的文件夹
+             归属就会在订阅更新时静默丢成 null。改动顺序前先确认这个前提。 */
+          var _subCgM = mergeSubGroupsByName(existing, icg);
+          Object.keys(_subCgM).forEach(function (k) {
+            subSgidMap[_subSgKey(icg.id, k)] = _subCgM[k];
           });
           if (!existing.stagePrefix && icg.stagePrefix)
             existing.stagePrefix = icg.stagePrefix;
@@ -511,6 +573,7 @@
       );
     })();
     dedupePromptTags();
+    cleanOrphanSubGroupIds();
     _invalidateCharGroupCache();
     saveData();
     return {

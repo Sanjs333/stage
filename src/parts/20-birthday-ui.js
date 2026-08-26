@@ -1274,6 +1274,68 @@ function togglePanel() {
   else showPanel();
 }
 
+function msGetVisibleBand() {
+  var panelEl = document.getElementById(PANEL_ID);
+  var win =
+    (panelEl && panelEl.ownerDocument && panelEl.ownerDocument.defaultView) ||
+    window;
+  var winH = Math.round(
+    win.innerHeight ||
+      (win.document && win.document.documentElement.clientHeight) ||
+      0,
+  );
+  var winW = Math.round(
+    win.innerWidth ||
+      (win.document && win.document.documentElement.clientWidth) ||
+      0,
+  );
+  var band = {
+    top: 0,
+    left: 0,
+    width: winW,
+    height: winH,
+    keyboard: 0,
+    crossOrigin: false,
+  };
+  var topWin = win;
+  var offTop = 0;
+  var offLeft = 0;
+  try {
+    var guard = 0;
+    while (guard < 12 && topWin.parent && topWin.parent !== topWin) {
+      void topWin.parent.document;
+      var fe = topWin.frameElement;
+      if (!fe) break;
+      var fr = fe.getBoundingClientRect();
+      offTop += fr.top;
+      offLeft += fr.left;
+      topWin = topWin.parent;
+      guard++;
+    }
+  } catch (e) {
+    band.crossOrigin = true;
+  }
+  var tvv = null;
+  try {
+    tvv = topWin.visualViewport || win.visualViewport || null;
+  } catch (e) {
+    tvv = win.visualViewport || null;
+  }
+  if (!tvv || !tvv.height || !winH) return band;
+  var vTop = Math.round((tvv.offsetTop || 0) - offTop);
+  var vLeft = Math.round((tvv.offsetLeft || 0) - offLeft);
+  var bTop = Math.max(0, vTop);
+  var bLeft = Math.max(0, vLeft);
+  var bBottom = Math.min(winH, vTop + Math.round(tvv.height));
+  var bRight = Math.min(winW, vLeft + Math.round(tvv.width || winW));
+  if (bBottom - bTop < 120) return band;
+  band.top = bTop;
+  band.left = bLeft;
+  band.height = bBottom - bTop;
+  band.width = Math.max(120, bRight - bLeft);
+  band.keyboard = Math.max(0, winH - bBottom);
+  return band;
+}
 function setupKeyboardAdapt() {
   if (setupKeyboardAdapt._bound) return;
   var vv = window.visualViewport || null;
@@ -1291,6 +1353,21 @@ function setupKeyboardAdapt() {
     el.style.removeProperty("zoom");
     el.removeAttribute("data-ms-kb");
   }
+  function clearSoftClamp(el) {
+    if (el.getAttribute("data-ms-kb") === "2") {
+      el.style.removeProperty("top");
+      el.style.removeProperty("max-height");
+      el.removeAttribute("data-ms-kb");
+      if (data.settings.panelPos && data.settings.panelPos.top) {
+        el.style.setProperty("top", data.settings.panelPos.top, "important");
+      }
+      applyUICustomization();
+    }
+    /* 这一句故意留在守卫外：data-ms-kb 会被 exitFocusMode 抹掉，若跟着守卫走，
+       标记一没就再也清不到正文框，inline max-height 会一直卡着。 */
+    var softTa = el.querySelector("#ms-edit-content");
+    if (softTa) softTa.style.removeProperty("max-height");
+  }
 
   function adapt() {
     _kbRaf = null;
@@ -1303,22 +1380,18 @@ function setupKeyboardAdapt() {
       el.classList.contains("ms-modal-expand-mode") ||
       el.classList.contains("ms-fs-editor-mode");
 
+    var band = msGetVisibleBand();
     var isMobileLike =
       /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) ||
       Math.min(window.innerWidth || 0, window.innerHeight || 0) <= 900 ||
-      Math.min(vv.width || 0, vv.height || 0) <= 900;
+      Math.min(band.width || 0, band.height || 0) <= 900;
 
     if (isFull && isMobileLike) {
-      var viewW = Math.round(
-        vv.width || window.innerWidth || document.documentElement.clientWidth,
-      );
-      var viewH = Math.round(
-        vv.height ||
-          window.innerHeight ||
-          document.documentElement.clientHeight,
-      );
-      var viewLeft = Math.round(vv.offsetLeft || 0);
-      var viewTop = Math.round(vv.offsetTop || 0);
+      clearSoftClamp(el);
+      var viewW = band.width;
+      var viewH = band.height;
+      var viewLeft = band.left;
+      var viewTop = band.top;
 
       el.style.setProperty("left", viewLeft + "px", "important");
       el.style.setProperty("top", viewTop + "px", "important");
@@ -1336,7 +1409,28 @@ function setupKeyboardAdapt() {
     if (el.getAttribute("data-ms-kb") === "1") {
       clearKeyboardPatch(el);
       el.style.removeProperty("border-radius");
+      applyUICustomization();
     }
+
+    if (!isMobileLike) {
+      clearSoftClamp(el);
+    } else if (band.keyboard > 120) {
+      var softAvail = Math.max(200, band.height - 12);
+      el.style.setProperty("top", band.top + 6 + "px", "important");
+      el.style.setProperty("max-height", softAvail + "px", "important");
+      el.setAttribute("data-ms-kb", "2");
+      var softTa = el.querySelector("#ms-edit-content");
+      if (softTa) {
+        softTa.style.setProperty(
+          "max-height",
+          Math.max(120, Math.round(softAvail * 0.55)) + "px",
+          "important",
+        );
+      }
+    } else {
+      clearSoftClamp(el);
+    }
+
   }
 
   function schedule() {
@@ -1350,6 +1444,24 @@ function setupKeyboardAdapt() {
     vv.addEventListener("resize", schedule);
     vv.addEventListener("scroll", schedule);
   }
+  try {
+    var _topWin = window;
+    var _tGuard = 0;
+    while (_tGuard < 12 && _topWin.parent && _topWin.parent !== _topWin) {
+      void _topWin.parent.document;
+      _topWin = _topWin.parent;
+      _tGuard++;
+    }
+    if (_topWin !== window) {
+      if (_topWin.visualViewport) {
+        _topWin.visualViewport.addEventListener("resize", schedule);
+        _topWin.visualViewport.addEventListener("scroll", schedule);
+      }
+      _topWin.addEventListener("resize", function () {
+        setTimeout(schedule, 80);
+      });
+    }
+  } catch (e) {}
   window.addEventListener("resize", function () {
     setTimeout(schedule, 80);
   });

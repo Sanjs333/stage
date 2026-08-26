@@ -117,6 +117,14 @@ function renderGroup(v) {
     filterState.includeTags.length === 0 &&
     filterState.excludeTags.length === 0 &&
     !filterState.onlyCurrentChar;
+  var sgMode =
+    isSubGroupEnabled(g) &&
+    getSubGroups(g).length > 0 &&
+    !searchQuery &&
+    !filterState.subGroupId &&
+    filterState.includeTags.length === 0 &&
+    filterState.excludeTags.length === 0 &&
+    !filterState.onlyCurrentChar;
 
   if (isIP && !searchQuery) {
     var memberH =
@@ -185,7 +193,9 @@ function renderGroup(v) {
         '" id="' +
         _genSid +
         '">' +
-        renderGroupBodyWithSeries(generalPrompts) +
+        (sgMode
+          ? buildSubGroupSection(g, "_general")
+          : renderGroupBodyWithSeries(generalPrompts)) +
         "</div>";
     }
     var orderedKeys = [];
@@ -240,19 +250,39 @@ function renderGroup(v) {
         '" id="' +
         sid +
         '">' +
-        renderGroupBodyWithSeries(ps) +
+        (sgMode ? buildSubGroupSection(g, k) : renderGroupBodyWithSeries(ps)) +
         "</div></div>";
     });
+  } else if (sgMode) {
+    bodyHtml += buildSubGroupSection(g, null);
   } else {
     bodyHtml += _applyPagedRender(getGroupBodySeriesBlocks(filtered));
   }
 
   $p.find("#ms-body").html(bodyHtml);
+  var _gHasFilter = !!(
+    searchQuery ||
+    filterState.includeTags.length > 0 ||
+    filterState.excludeTags.length > 0 ||
+    filterState.subGroupId ||
+    filterState.onlyCurrentChar
+  );
+  var _gNoneCnt = 0;
+  if (!isU && isSubGroupEnabled(g)) {
+    list.forEach(function (p) {
+      if (!p.subGroupId || !getSubGroup(gid, p.subGroupId)) _gNoneCnt++;
+    });
+  }
+  var _gCntText = _gHasFilter
+    ? filtered.length + "/" + list.length + " 条"
+    : list.length +
+      " 条" +
+      (_gNoneCnt > 0 ? " · 未分类 " + _gNoneCnt + " 条" : "");
   $p.find("#ms-footer")
     .html(
       selectMode
         ? buildBatchFooter()
-        : `<span>${filtered.length}/${list.length} 条${isIP ? " · IP 分组" : ""}</span>` +
+        : `<span>${_gCntText}${isIP ? " · IP 分组" : ""}</span>` +
             (!isU
               ? `<div class="ms-footer-btns"><a data-action="group-settings"><i class="fa-solid fa-gear"></i> 分组设置</a></div>`
               : ``),
@@ -362,6 +392,17 @@ function renderGroup(v) {
     $(this).find(".ms-series-arrow").toggleClass("open");
     $p.find("#" + sid).toggleClass("open");
   });
+  $p.find("#ms-body").on("click.ms", "[data-sg-nav]", function (e) {
+    if ($(e.target).closest(".ms-series-check").length) return;
+    var sgid = $(this).attr("data-sg-nav");
+    var scope = $(this).attr("data-sg-scope") || null;
+    navigateTo({
+      name: "subgroup",
+      groupId: gid,
+      subGroupId: sgid,
+      charScope: scope || null,
+    });
+  });
   if (!isU) {
     $p.find("#ms-footer").on(
       "click.ms",
@@ -373,6 +414,155 @@ function renderGroup(v) {
   }
 }
 
+function renderSubGroup(v) {
+  const $p = $("#" + PANEL_ID);
+  var g = getGroup(v.groupId);
+  if (!g) {
+    navigateBack();
+    return;
+  }
+  var isNone = !v.subGroupId || v.subGroupId === SUBGROUP_NONE;
+  var sg = isNone ? null : getSubGroup(v.groupId, v.subGroupId);
+  if (!isNone && !sg) {
+    navigateBack();
+    return;
+  }
+  var sgName = sg ? sg.name : "未分类";
+  var list = getPromptsInSubGroup(
+    v.groupId,
+    isNone ? SUBGROUP_NONE : v.subGroupId,
+  );
+  if (v.charScope === "_general") {
+    list = list.filter(function (p) {
+      return !p.character;
+    });
+  } else if (v.charScope) {
+    list = list.filter(function (p) {
+      return p.character === v.charScope;
+    });
+  }
+  var filtered = sortPrompts(filterPrompts(searchPrompts(list, searchQuery)));
+  $p.find("#ms-title").text(sgName);
+  $p.find("#ms-toolbar").html(
+    buildToolbar({
+      back: true,
+      search: true,
+      filter: true,
+      select: true,
+      sort: true,
+      random: list.length > 0,
+      reorder: list.length > 1,
+      add: true,
+      addId: "ms-btn-new-in-subgroup",
+    }),
+  );
+  var scopeLabel = "";
+  if (v.charScope === "_general") scopeLabel = "通用剧场";
+  else if (v.charScope) scopeLabel = getCharDisplayName(v.charScope);
+  var headerH =
+    '<div style="padding:8px 14px;border-bottom:1px solid rgba(255,255,255,0.04);font-size:11px;color:var(--SmartThemeQuoteColor,#888);display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+    '<i class="fa-solid fa-folder" style="color:' +
+    g.color +
+    ';font-size:10px;"></i><span>' +
+    esc(g.name) +
+    "</span>" +
+    (scopeLabel
+      ? '<span style="opacity:0.4;">/</span><span style="color:#b48cc8;">' +
+        esc(scopeLabel) +
+        "</span>"
+      : "") +
+    '<span style="opacity:0.4;">/</span>' +
+    (sg
+      ? '<span data-action="subgroup-settings" title="点击编辑此文件夹" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;color:' +
+        sg.color +
+        ';font-weight:600;"><i class="fa-solid fa-folder-open" style="font-size:10px;"></i>' +
+        esc(sgName) +
+        '<i class="fa-solid fa-pen" style="font-size:8px;opacity:0.5;"></i></span>'
+      : '<span style="display:inline-flex;align-items:center;gap:4px;color:var(--SmartThemeQuoteColor,#888);font-weight:600;"><i class="fa-solid fa-inbox" style="font-size:10px;"></i>' +
+        esc(sgName) +
+        "</span>") +
+    "</div>";
+  if (sg && sg.note) {
+    headerH +=
+      '<div style="padding:6px 14px;font-size:11px;color:var(--SmartThemeQuoteColor,#999);font-style:italic;line-height:1.6;border-bottom:1px solid rgba(255,255,255,0.04);">' +
+      esc(sg.note) +
+      "</div>";
+  }
+  var bodyH = headerH + buildRangeModeHint();
+  if (filtered.length === 0) {
+    bodyH +=
+      '<div class="ms-empty"><i class="fa-solid fa-masks-theater"></i>暂无内容</div>';
+  } else {
+    bodyH += _applyPagedRender(getGroupBodySeriesBlocks(filtered));
+  }
+  $p.find("#ms-body").html(bodyH);
+  var _sgHasFilter = !!(
+    searchQuery ||
+    filterState.includeTags.length > 0 ||
+    filterState.excludeTags.length > 0 ||
+    filterState.onlyCurrentChar
+  );
+  var _sgCntText = _sgHasFilter
+    ? filtered.length + "/" + list.length + " 条"
+    : list.length + " 条";
+  $p.find("#ms-footer")
+    .html(
+      selectMode
+        ? buildBatchFooter()
+        : "<span>" +
+            _sgCntText +
+            "</span>" +
+            (sg
+              ? '<div class="ms-footer-btns"><a data-action="subgroup-settings"><i class="fa-solid fa-gear"></i> 文件夹设置</a></div>'
+              : '<div class="ms-footer-btns"><a data-action="group-subgroups"><i class="fa-solid fa-folder-open"></i> 管理文件夹</a></div>'),
+    )
+    .show();
+  bindAllEvents();
+  $p.find("#ms-toolbar").on("click.ms", "#ms-btn-new-in-subgroup", function () {
+    navigateTo({
+      name: "edit",
+      promptId: null,
+      defaultGroupId: v.groupId,
+      defaultSubGroupId: isNone ? null : v.subGroupId,
+      defaultCharacter:
+        v.charScope && v.charScope !== "_general" ? v.charScope : "",
+    });
+  });
+  $p.find("#ms-toolbar").on("click.ms", "#ms-btn-reorder", function () {
+    navigateTo({
+      name: "reorder-prompts",
+      groupId: v.groupId,
+      subGroupId: isNone ? SUBGROUP_NONE : v.subGroupId,
+      charScope: v.charScope || null,
+    });
+  });
+  function openSubGroupSettings() {
+    if (isNone || !sg) {
+      navigateTo({ name: "group-subgroups", groupId: v.groupId });
+      return;
+    }
+    showSubGroupEditDialog(v.groupId, v.subGroupId, function () {
+      renderView();
+    });
+  }
+  $p.find("#ms-body").on(
+    "click.ms",
+    "[data-action='subgroup-settings']",
+    openSubGroupSettings,
+  );
+  $p.find("#ms-footer").on(
+    "click.ms",
+    "[data-action='subgroup-settings']",
+    openSubGroupSettings,
+  );
+  $p.find("#ms-footer").on(
+    "click.ms",
+    "[data-action='group-subgroups']",
+    function () {
+      navigateTo({ name: "group-subgroups", groupId: v.groupId });
+    },
+  );
+}
 function renderStarred() {
   const $p = $("#" + PANEL_ID),
     list = sortPrompts(
@@ -657,15 +847,21 @@ function renderCharacter(v) {
         esc(charCg.name) +
         "</span>",
     );
+  var _cHasFilter = !!(
+    searchQuery ||
+    filterState.includeTags.length > 0 ||
+    filterState.excludeTags.length > 0
+  );
+  var _cCntText = _cHasFilter
+    ? filtered.length + "/" + list.length + " 条"
+    : list.length + " 条";
   $p.find("#ms-footer")
     .html(
       selectMode
         ? buildBatchFooter()
         : "<span>" +
-            filtered.length +
-            "/" +
-            list.length +
-            " 条 · 角色专属" +
+            _cCntText +
+            " · 角色专属" +
             (metaParts.length ? " · " + metaParts.join(" · ") : "") +
             '</span><div class="ms-footer-btns">' +
             (canEditBd
@@ -811,6 +1007,11 @@ function renderPreview(v) {
     groupL,
     g ? g.color : "var(--SmartThemeQuoteColor,#888)",
   );
+  if (pr.subGroupId && g) {
+    var _sgPv = getSubGroup(g.id, pr.subGroupId);
+    if (_sgPv)
+      metaChips += buildPvChip("fa-folder-open", _sgPv.name, _sgPv.color);
+  }
   if (pr.series)
     metaChips += buildPvChip("fa-layer-group", pr.series, "var(--ms-accent)");
   if (pr.author) metaChips += buildPvChip("fa-user", pr.author);
@@ -920,6 +1121,7 @@ function renderPreview(v) {
       name: "edit",
       promptId: null,
       defaultGroupId: pr.groupId,
+      defaultSubGroupId: pr.subGroupId || null,
       defaultSeries: pr.series || "",
       defaultCharacter: pr.character || "",
     });

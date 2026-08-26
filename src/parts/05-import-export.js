@@ -19,10 +19,11 @@ function buildExportPayload(
     : [];
   const finalPrompts = exportPrompts.map((p) => {
     const cp = { ...p };
+    if (!includeGroups) cp.subGroupId = null;
     if (!includeHistory) delete cp.history;
+    cp.usageByCharacter = {};
     if (!includeCharacter) {
       cp.character = "";
-      cp.usageByCharacter = {};
     } else if (cp.character) {
       cp.character_name = getCharDisplayName(cp.character);
     }
@@ -60,6 +61,10 @@ function buildExportPayload(
             ? cg.charDisplayOrder.filter(function (k) {
                 return matchedKeys.indexOf(k) >= 0;
               })
+            : [],
+          subGroupEnabled: cg.subGroupEnabled === true,
+          subGroups: Array.isArray(cg.subGroups)
+            ? JSON.parse(JSON.stringify(cg.subGroups))
             : [],
           multiPrefixEnabled: cg.multiPrefixEnabled === true,
           prefixTemplates: Array.isArray(cg.prefixTemplates)
@@ -218,6 +223,10 @@ function executeImport(
   var _importNameMap = _buildLocalNameIndex();
   var importBdDateConflicts = [];
   var importBdMsgConflicts = [];
+  var sgidMap = {};
+  function _sgKey(gid, sgid) {
+    return (gid || "") + "|" + (sgid || "");
+  }
   ip.forEach(function (p) {
     _rebindPromptChar(p, _importNameMap);
   });
@@ -257,6 +266,10 @@ function executeImport(
             if (oi >= 0) other.charKeys.splice(oi, 1);
           });
           if (existing.charKeys.indexOf(k) < 0) existing.charKeys.push(k);
+        });
+        var _cgSgMap = mergeSubGroupsByName(existing, icg);
+        Object.keys(_cgSgMap).forEach(function (k) {
+          sgidMap[_sgKey(icg.id, k)] = _cgSgMap[k];
         });
         if (!existing.stagePrefix && icg.stagePrefix)
           existing.stagePrefix = icg.stagePrefix;
@@ -344,49 +357,59 @@ function executeImport(
     });
     const replaceTagIdMap = {};
     if (useTags && itags.length) {
-      var _impTagNames = new Set(
-        itags.map(function (t) {
-          return normalizeTagName(t.name);
-        }),
-      );
-      var _removedTagIds = new Set();
-      data.settings.definedTags.forEach(function (t) {
-        if (_impTagNames.has(normalizeTagName(t.name)))
-          _removedTagIds.add(t.id);
-      });
-      data.settings.definedTags = data.settings.definedTags.filter(
-        function (t) {
-          return !_impTagNames.has(normalizeTagName(t.name));
-        },
-      );
-      if (_removedTagIds.size > 0) {
-        data.prompts.forEach(function (p) {
-          if (Array.isArray(p.tags)) {
-            p.tags = p.tags.filter(function (tid) {
-              return !_removedTagIds.has(tid);
-            });
-          }
-        });
-      }
+      /* 原先的做法是「删掉同名本地标签 → 从剧场上摘掉它的引用 → 再把导入标签加回来」，
+         但摘引用那一步是对 data.prompts 全表执行的，不受「范围内」约束：本地其他分组里
+         引用同名标签的剧场会静默丢掉标签，而标签定义与颜色看着毫发无损，用户根本无从
+         定位。改成只建 id 映射 + 就地更新同名标签的属性，本地的引用一律不动。 */
       itags.forEach(function (t) {
-        var nt = Object.assign({}, t, { id: t.id || uid() });
-        data.settings.definedTags.push(nt);
-        replaceTagIdMap[t.id] = nt.id;
+        var _localSame = data.settings.definedTags.find(function (lt) {
+          return normalizeTagName(lt.name) === normalizeTagName(t.name);
+        });
+        if (_localSame) {
+          // 按字段赋值而非 Object.assign：导入文件是用户提供的任意 JSON，
+          // 整体合并会把未知字段一起带进本地标签数据里
+          _localSame.name = t.name;
+          if (t.color) _localSame.color = t.color;
+          replaceTagIdMap[t.id] = _localSame.id;
+        } else {
+          var nt = Object.assign({}, t, { id: t.id || uid() });
+          data.settings.definedTags.push(nt);
+          replaceTagIdMap[t.id] = nt.id;
+        }
       });
     }
     var replaceGidMap = {};
     var replacedLocalGids = new Set();
     if (useGroups && ig.length > 0) {
       ig.forEach(function (impG) {
-        var ex = data.groups.find(function (g) {
-          return g.name === impG.name;
-        });
+        /* 与 merge 分支一致：转换台推来的分组带 sourceId，优先按它精确命中，
+           否则本地有同名分组时会落进靠前的那一个。sourceId 只是传输期的线索，
+           不写进本地数据。 */
+        var ex = impG.sourceId
+          ? data.groups.find(function (g) {
+              return g.id === impG.sourceId;
+            })
+          : null;
+        if (!ex) {
+          ex = data.groups.find(function (g) {
+            return g.name === impG.name;
+          });
+        }
+        var _impSubs = Array.isArray(impG.subGroups)
+          ? JSON.parse(JSON.stringify(impG.subGroups))
+          : [];
         if (ex) {
           replacedLocalGids.add(ex.id);
           Object.assign(ex, impG, { id: ex.id });
+          delete ex.sourceId;
+          ex.subGroups = _impSubs;
+          ex.subGroupEnabled = _impSubs.length > 0;
           replaceGidMap[impG.id] = ex.id;
         } else {
           var newG = Object.assign({}, impG, { id: uid() });
+          delete newG.sourceId;
+          newG.subGroups = _impSubs;
+          newG.subGroupEnabled = _impSubs.length > 0;
           data.groups.push(newG);
           replaceGidMap[impG.id] = newG.id;
         }
@@ -433,8 +456,10 @@ function executeImport(
       np.fingerprint = contentFingerprint(np);
       if (useGroups) {
         np.groupId = replaceGidMap[p.groupId] || null;
+        np.subGroupId = np.groupId ? p.subGroupId || null : null;
       } else {
         np.groupId = targetGroupId || null;
+        np.subGroupId = null;
       }
       data.prompts.push(np);
     });
@@ -458,12 +483,30 @@ function executeImport(
     const gidMap = {};
     if (useGroups) {
       ig.forEach((g) => {
-        const ex = data.groups.find((eg) => eg.name === g.name);
-        if (ex) gidMap[g.id] = ex.id;
-        else {
+        /* 转换台推来的分组带 sourceId（用户在转换台里选中的那个本地分组的真实
+           id）。只按名字匹配的话，本地存在两个同名分组时会落进靠前的那一个。 */
+        let ex = g.sourceId
+          ? data.groups.find((eg) => eg.id === g.sourceId)
+          : null;
+        if (!ex) ex = data.groups.find((eg) => eg.name === g.name);
+        if (ex) {
+          gidMap[g.id] = ex.id;
+          var _m = mergeSubGroupsByName(ex, g);
+          Object.keys(_m).forEach(function (k) {
+            sgidMap[_sgKey(g.id, k)] = _m[k];
+          });
+        } else {
           const ng = { ...g, id: uid() };
+          delete ng.sourceId;
+          ng.subGroups = Array.isArray(g.subGroups)
+            ? JSON.parse(JSON.stringify(g.subGroups))
+            : [];
+          ng.subGroupEnabled = ng.subGroups.length > 0;
           data.groups.push(ng);
           gidMap[g.id] = ng.id;
+          ng.subGroups.forEach(function (sg) {
+            sgidMap[_sgKey(g.id, sg.id)] = sg.id;
+          });
         }
       });
     }
@@ -501,8 +544,21 @@ function executeImport(
           p.series !== undefined ? p.series : existingBySource.series;
         existingBySource.fingerprint = fp;
         existingBySource.updatedAt = Date.now();
-        if (useGroups && p.groupId)
+        if (useGroups && p.groupId) {
           existingBySource.groupId = gidMap[p.groupId] || p.groupId;
+          var _impGSg = (ig || []).find(function (x) {
+            return x && x.id === p.groupId;
+          });
+          if (
+            _impGSg &&
+            Array.isArray(_impGSg.subGroups) &&
+            _impGSg.subGroups.length > 0
+          ) {
+            // 远端明确给出归类才覆盖；远端该条没归类时保留本地归类
+            var _mappedSg = sgidMap[_sgKey(p.groupId, p.subGroupId)];
+            if (_mappedSg) existingBySource.subGroupId = _mappedSg;
+          }
+        }
         if (useTags && p.tags)
           existingBySource.tags = p.tags.map((tid) => tagIdMap[tid] || tid);
         updatedCount++;
@@ -528,6 +584,9 @@ function executeImport(
       np.groupId = useGroups
         ? gidMap[p.groupId] || p.groupId || null
         : targetGroupId || null;
+      np.subGroupId = useGroups
+        ? sgidMap[_sgKey(p.groupId, p.subGroupId)] || null
+        : null;
       np.tags = useTags
         ? (p.tags || []).map((tid) => tagIdMap[tid] || tid)
         : [];
@@ -545,6 +604,11 @@ function executeImport(
     if (useGroups) {
       ig.forEach((g) => {
         const ng = { ...g, id: uid() };
+        delete ng.sourceId;
+        ng.subGroups = Array.isArray(g.subGroups)
+          ? JSON.parse(JSON.stringify(g.subGroups))
+          : [];
+        ng.subGroupEnabled = ng.subGroups.length > 0;
         data.groups.push(ng);
         gidMap[g.id] = ng.id;
       });
@@ -579,6 +643,7 @@ function executeImport(
       np.groupId = useGroups
         ? gidMap[p.groupId] || null
         : targetGroupId || null;
+      np.subGroupId = useGroups && np.groupId ? p.subGroupId || null : null;
       np.tags = useTags
         ? (p.tags || []).map((tid) => tagIdMap[tid] || tid)
         : [];
@@ -724,6 +789,7 @@ function executeImport(
     });
   }
   dedupePromptTags();
+  cleanOrphanSubGroupIds();
   _invalidateCharGroupCache();
   saveData();
   toast("success", importMsg);
@@ -782,6 +848,16 @@ function exitFocusMode() {
   const el = $panel[0];
   $panel.removeClass("ms-focus-mode");
   el.removeAttribute("data-ms-kb");
+  /* 键盘适配在专注/全屏模式下给面板打过 width/height/zoom 的 !important 内联样式，
+     而负责清理它们的 clearKeyboardPatch 被 data-ms-kb 守卫拦着——标记在上一行刚被
+     抹掉，它就永远不会再执行了。这里显式清一遍：否则手机上退出专注模式（尤其键盘
+     还开着时）面板会永久卡在当次的可视高度上，max-height 抢不过 height !important，
+     关掉面板重开也救不回来，只能刷新页面。 */
+  el.style.removeProperty("width");
+  el.style.removeProperty("max-width");
+  el.style.removeProperty("height");
+  el.style.removeProperty("max-height");
+  el.style.removeProperty("zoom");
   el.style.removeProperty("border-radius");
   applyUICustomization();
   const saved = $panel.data("ms-focus-saved-pos");
@@ -852,6 +928,16 @@ function isInRandomPool(p) {
     p.groupId && getGroup(p.groupId) ? p.groupId : "_ungrouped";
   if (ri.excludedGroupIds && ri.excludedGroupIds.indexOf(effectiveGid) >= 0)
     return false;
+  if (ri.excludedSubGroups && ri.excludedSubGroups.length > 0) {
+    var _pSgKey =
+      p.subGroupId && getSubGroup(effectiveGid, p.subGroupId)
+        ? p.subGroupId
+        : SUBGROUP_NONE;
+    var _sgExcluded = ri.excludedSubGroups.some(function (x) {
+      return x && x.groupId === effectiveGid && x.subGroupId === _pSgKey;
+    });
+    if (_sgExcluded) return false;
+  }
   if (p.character) {
     var charG = getCharGroupOfChar(p.character);
     if (
@@ -1287,4 +1373,86 @@ function _loadMorePagedBlocks($body) {
   } else {
     $anchor.replaceWith(_buildPagedAnchor(ctx.rendered, ctx.blocks.length));
   }
+}
+
+function buildTransferSnapshot() {
+  var gCounts = {};
+  var tCounts = {};
+  var sMap = {};
+  var sOrder = [];
+  data.prompts.forEach(function (p) {
+    var gid = p.groupId && getGroup(p.groupId) ? p.groupId : "_ungrouped";
+    gCounts[gid] = (gCounts[gid] || 0) + 1;
+    (p.tags || []).forEach(function (tid) {
+      if (getTag(tid)) tCounts[tid] = (tCounts[tid] || 0) + 1;
+    });
+    var sn = String(p.series || "").trim();
+    if (!sn) return;
+    var skey = gid + "\u0000" + sn;
+    if (!sMap[skey]) {
+      sMap[skey] = { name: sn, groupId: gid, count: 0 };
+      sOrder.push(skey);
+    }
+    sMap[skey].count++;
+  });
+  /* 指纹表只用来在转换台上标「已有」，算炸了也不该把分组标签快照一起拖没 */
+  var stageIndex = null;
+  try {
+    stageIndex = _tsBuildStageDupIndex();
+  } catch (e) {
+    stageIndex = null;
+  }
+  return {
+    _msSnapshot: true,
+    snapshotVersion: 1,
+    stageIndex: stageIndex,
+    scriptVersion: SCRIPT_VERSION,
+    exportedAt: new Date().toISOString(),
+    groups: data.groups.map(function (g) {
+      return {
+        id: g.id,
+        name: g.name,
+        color: g.color || "",
+        note: g.note || "",
+        isIP: isIPGroup(g),
+        promptCount: gCounts[g.id] || 0,
+        subGroups: getSubGroups(g).map(function (sg) {
+          return { id: sg.id, name: sg.name, color: sg.color || "" };
+        }),
+      };
+    }),
+    ungroupedCount: gCounts["_ungrouped"] || 0,
+    series: sOrder
+      .slice()
+      .sort(function (a, b) {
+        var x = sMap[a];
+        var y = sMap[b];
+        if (y.count !== x.count) return y.count - x.count;
+        return x.name.localeCompare(y.name, "zh-CN");
+      })
+      .map(function (k) {
+        return {
+          name: sMap[k].name,
+          groupId: sMap[k].groupId,
+          count: sMap[k].count,
+        };
+      }),
+    tagFilterExactMatch: data.settings.tagFilterExactMatch === true,
+    tags: (data.settings.definedTags || []).map(function (t) {
+      return {
+        id: t.id,
+        name: t.name,
+        color: t.color || "",
+        useCount: tCounts[t.id] || 0,
+      };
+    }),
+    tagMappings: (data.settings.tagMappings || []).map(function (m) {
+      return {
+        id: m.id,
+        name: m.name,
+        tagIds: (m.tagIds || []).slice(),
+        primaryTagId: m.primaryTagId || null,
+      };
+    }),
+  };
 }
