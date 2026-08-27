@@ -6,7 +6,9 @@
 <title>格式转换台 · 世界书 / 预设 / 小剧场</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=Noto+Sans+SC:wght@400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=Noto+Sans+SC:wght@400;500&family=Noto+Serif+SC:wght@400;500&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<link rel="preconnect" href="https://fontsapi.zeoseven.com" crossorigin>
+<link href="https://fontsapi.zeoseven.com/779/main/result.css" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <style>
 :root{
@@ -24,6 +26,7 @@
   --accent-soft:#e7ebf3;
   --accent-line:#c9d1e0;
   --font-display:'Instrument Serif','Source Serif 4',Georgia,ui-serif,serif;
+  --font-display-cn:'BabelStone Erjian 1','Noto Serif SC','Source Han Serif SC',var(--font-display);
   --font-ui:'Inter','Noto Sans SC',ui-sans-serif,system-ui,-apple-system,sans-serif;
   --font-mono:'JetBrains Mono','Fira Code',ui-monospace,monospace;
   --r1:10px;
@@ -39,8 +42,9 @@
   --sh1:0 1px 2px rgba(16,20,28,.05);
   --sh2:0 1px 3px rgba(16,20,28,.06),0 8px 24px -12px rgba(16,20,28,.14);
   --sh3:0 12px 48px -12px rgba(16,20,28,.28),0 0 0 1px rgba(16,20,28,.05);
-  --page:1440px;          /* 桌面端内容最大宽度 */
+  --page:1440px;
   --topbar-h:56px;
+  --topbar-safe:64px;
   --dur:.18s;
 }
 *{box-sizing:border-box;margin:0;padding:0}
@@ -61,7 +65,6 @@ body.locked{overflow:hidden}
 button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 input,select,textarea{font:inherit;color:inherit}
 
-/* ══ 按钮 ══ */
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:var(--s2);
   min-height:40px;padding:0 16px;border-radius:var(--pill);
@@ -90,7 +93,6 @@ input,select,textarea{font:inherit;color:inherit}
 .btn-row{display:flex;gap:var(--s2);flex-wrap:wrap}
 .btn-row>.btn{flex:1 1 auto}
 
-/* ══ 表单 ══ */
 .field{margin-bottom:var(--s3)}
 .field:last-child{margin-bottom:0}
 .field>label{display:block;font-size:13px;font-weight:500;color:var(--ink-2);margin-bottom:6px}
@@ -113,7 +115,6 @@ input,select,textarea{font:inherit;color:inherit}
 .switch{display:flex;align-items:flex-start;gap:var(--s2);font-size:13.5px;color:var(--ink-2);cursor:pointer;margin-top:var(--s3);line-height:1.5}
 .switch input{width:18px;height:18px;margin-top:1px;accent-color:var(--ink);flex:none}
 
-/* 方形勾选框：唯一含义是「是否参与转换」 */
 .chk{
   position:relative;width:22px;height:22px;flex:none;border-radius:6px;
   border:1.5px solid var(--ink-4);background:var(--surface);
@@ -125,7 +126,6 @@ input,select,textarea{font:inherit;color:inherit}
 .chk[aria-checked="true"] svg{opacity:1}
 .chk[aria-checked="mixed"]::after{content:"";position:absolute;width:10px;height:2px;border-radius:1px;background:#fff}
 
-/* 处理标记：最低视觉重量的进度记号 */
 .flagbtn{
   width:26px;height:26px;flex:none;border-radius:var(--pill);display:grid;place-items:center;
   color:var(--ink-4);border:1px solid transparent;transition:all var(--dur);
@@ -162,7 +162,8 @@ input,select,textarea{font:inherit;color:inherit}
 .topbar-inner{max-width:var(--page);margin:0 auto;padding:var(--s2) var(--s3);display:flex;align-items:center;flex-wrap:wrap;gap:var(--s2);min-height:var(--topbar-h)}
 .brand{font-family:var(--font-display);font-size:20px;line-height:1.1;letter-spacing:-.2px;white-space:nowrap}
 .brand em{font-family:var(--font-ui);font-style:normal;font-size:12.5px;color:var(--ink-3);margin-left:8px}
-.topbar-right{margin-left:auto;display:flex;align-items:center;gap:6px}
+.brand b{display:inline-block;vertical-align:1px;margin-left:9px;margin-right:-.08em;font-family:var(--font-display-cn);font-weight:normal;font-size:16px;letter-spacing:.08em;color:var(--ink-2)}
+.topbar-right{margin-left:auto;margin-right:var(--topbar-safe);display:flex;align-items:center;gap:6px}
 .link-chip{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:var(--pill);background:var(--surface-3);color:var(--ink-2);font-size:12.5px;max-width:180px}
 .link-chip .dot{width:7px;height:7px;border-radius:50%;background:var(--ink-4);flex:none}
 .link-chip.on{background:var(--accent-soft);color:var(--accent)}
@@ -191,7 +192,6 @@ input,select,textarea{font:inherit;color:inherit}
 .work[data-step="rule"] .col-main,.work[data-step="rule"] #panel-out{display:none}
 .work[data-step="out"] .col-main,.work[data-step="out"] #panel-rule{display:none}
 
-/* 导入区：有文件后自动收成一条细带 */
 .dropzone{
   border:1.5px dashed var(--line);border-radius:var(--r3);background:var(--surface-2);
   padding:var(--s5) var(--s4);display:flex;flex-direction:column;align-items:center;gap:var(--s3);
@@ -540,7 +540,7 @@ details.fold[open]>summary::after{transform:rotate(-135deg)}
 
 /* ══════ 桌面 ≥1080px ══════ */
 @media(min-width:1080px){
-  .shell{--side-w:460px;--tabs-h:50px}   /* 右列宽度与 tab 栏高度，想让右列更宽就改 460px */
+  .shell{--side-w:460px;--tabs-h:50px}
   .steps{position:sticky;top:calc(var(--topbar-h) + var(--s2));z-index:20;height:var(--tabs-h);width:var(--side-w);margin-left:auto}
   .steps .step-tab[data-s="src"]{display:none}
   .work{display:grid;grid-template-columns:minmax(0,1fr) var(--side-w);align-items:start;gap:var(--s4)}
@@ -558,11 +558,12 @@ details.fold[open]>summary::after{transform:rotate(-135deg)}
   .shell{padding:var(--s5) var(--s6) 64px}
   .topbar-inner{padding:var(--s2) var(--s6)}
 }
-/* ══════ 手机 ≤699px：只在窄屏生效的覆盖，放在所有基础规则之后 ══════ */
+/* ══════ 手机 ≤699px ══════ */
 @media(max-width:699px){
-  :root{--topbar-h:48px}
+  :root{--topbar-h:48px;--topbar-safe:44px}
   .topbar-inner{min-height:var(--topbar-h);padding:6px 8px;gap:4px;flex-wrap:nowrap}
   .brand{font-size:18px;flex:none}
+  .brand b{font-size:13px;margin-left:7px;letter-spacing:.04em}
   .brand em{display:none}
   .topbar-right{margin-left:auto;flex:1 1 auto;min-width:0;gap:4px;flex-wrap:nowrap;justify-content:flex-end}
   .topbar-right>.btn-sm{min-height:30px;padding:0 9px;font-size:12px}
@@ -588,7 +589,7 @@ details.fold[open]>summary::after{transform:rotate(-135deg)}
   .assign{display:block;flex:none}
   .assign>.abox{min-height:0;margin-bottom:var(--s3)}
   .assign>.abox:last-child{margin-bottom:0}
-  .assign .alist{max-height:25vh}       /* 上方条目列表高度，想更高就调大 */
+  .assign .alist{max-height:25vh}
   .assign .aeditor{overflow:visible;max-height:none;padding:var(--s3)}
   .aeditor .tagpicks{max-height:none}
 
@@ -614,7 +615,7 @@ html[data-theme="light"]{color-scheme:light}
 .ico-sun{display:none}
 html[data-theme="dark"]{
   color-scheme:dark;
-  --bg:#101216;              /* 页面最底色，想更黑就调低 */
+  --bg:#101216;              /* 页面最底色 */
   --surface:#171a1f;         /* 卡片、弹窗底色 */
   --surface-2:#1c2026;
   --surface-3:#23272f;
@@ -622,9 +623,9 @@ html[data-theme="dark"]{
   --ink-2:#a8aeba;
   --ink-3:#7c8492;
   --ink-4:#5b6270;
-  --line:#2c313a;            /* 描边色，想更明显就调亮 */
+  --line:#2c313a;            /* 描边色 */
   --line-2:#23272f;
-  --accent:#9db4dc;          /* 强调色，推送卡片与提示条用它 */
+  --accent:#9db4dc;          /* 强调色，推送卡片与提示条 */
   --accent-soft:#232c3a;
   --accent-line:#3a4658;
   --sh1:0 1px 2px rgba(0,0,0,.45);
@@ -686,7 +687,7 @@ html[data-theme="dark"] .select{background-image:url("data:image/svg+xml;utf8,<s
 
 <header class="topbar">
   <div class="topbar-inner">
-    <div class="brand">Steep<em>格式转换台</em></div>
+    <div class="brand">Steep<b>转换台</b><em>世界书 / 预设 / 小剧场</em></div>
     <div class="topbar-right">
       <span class="link-chip" id="sync-chip"><i class="dot"></i><span id="sync-text">未连接酒馆</span></span>
       <button class="btn btn-outline btn-sm topbar-command" data-act="open-link" aria-label="数据交换" title="数据交换"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h11l-3-3M17 17H6l3 3"/><path d="M18 7l-3 3M6 17l3-3"/></svg><span class="topbar-command-label">数据交换</span></button>
@@ -1354,7 +1355,7 @@ function buildItems(file){
   return [];
 }
 
-var STAGE_TITLE_RE=/(小剧场|剧场)/;   /* 想增删关键词改这里，例如 /(小剧场|剧场|番外)/ */
+var STAGE_TITLE_RE=/(小剧场|剧场)/;
 function smartPickBase(item,type){
   if(item.meta.empty)return false;
   if(type==='preset')return !item.meta.marker&&item.meta.enabled!==false;
@@ -1614,7 +1615,6 @@ function dupSigOf(s){
   for(var i=0;i<s.length;i++)h=((h<<5)-h+s.charCodeAt(i))|0;
   return h;
 }
-/* 正文在 buildItems 之后不再变，哈希算一次存住；标题受转换规则影响，按标题当键存 */
 function dupItemContentHash(item){
   if(item._dupC===undefined){
     var n=dupNorm(item.content);
@@ -1626,7 +1626,6 @@ function dupItemFullHash(item,title){
   var key=String(title==null?'':title);
   if(item._dupFT!==key){
     item._dupFT=key;
-    /* 与宿主 contentFingerprint 同一个式子：(title||"")+"||"+(content||"") */
     item._dupF=dupHash(key+'||'+(item.content||''));
   }
   return item._dupF;
@@ -1683,7 +1682,6 @@ function itemFlags(item,type){
   }
   if(item.pushAssignment&&typeof item.pushAssignment==='object'&&Object.keys(item.pushAssignment).length)f.push(['归属已自定义',false]);
   if(item.meta.empty)f.push(['内容为空',true]);
-  /* 「已有」摆最前面：这条要不要转，用户先看的就是它 */
   return dupBadge(item)+f.map(function(x){return '<span class="flag'+(x[1]?' hot':'')+'">'+esc(x[0])+'</span>'}).join('');
 }
 function matchFilter(item,q){
@@ -2749,7 +2747,6 @@ document.addEventListener('change',function(e){
     });
     renderFiles();
   }
-  /* 标题规则一改，输出标题跟着变，严格命中（标题+正文）的结果也会变，列表得重画 */
   if(dupIndex.ready&&(t.id==='st-title-mode'||t.id==='preset-title-mode'))renderFiles();
   if((t.classList.contains('select')||t.classList.contains('input'))&&!(t.dataset&&t.dataset.nostale)){
     markStale();
@@ -2865,7 +2862,6 @@ function tsClosePort(){
 }
 function libraryKey(item){
   var kind=String(item&&item.kind||'world');
-  /* 剧场认分组 id：分组名可以改、也可以重名，拿名字当键会串号 */
   if(kind==='stage')return kind+'\u0000'+String(item&&item.gid||item&&item.name||'');
   return kind+'\u0000'+String(item&&item.name||'');
 }
@@ -3732,7 +3728,6 @@ function applySnapshot(snap,origin){
   tavernLink.snapshot=snap;tavernLink.connected=true;tavernLink.reason='';tavernLink.origin=origin||'';
   var dupRes=setDupIndex(snap);
   renderSyncChip();renderSnapBox();renderPushBlock();renderLibrary();
-  /* 指纹变了才重画：窗口回焦会重取快照，白重画会把正在输入的搜索框光标带走 */
   if(dupRes.changed)renderFiles();
   if(pvFileId&&(pvTab==='assign'||dupRes.changed)&&$('pv-sheet').classList.contains('on'))renderPreview();
   notify('已读取酒馆数据：'+snap.groups.length+' 个分组 · '+snap.tags.length+' 个标签'+(dupRes.ok?(' · '+dupIndex.total+' 条剧场指纹'):''));
@@ -3857,7 +3852,6 @@ function renderPushWorldTarget(){
   if(!sel)return;
   var worlds=((libraryState.catalog&&libraryState.catalog.worlds)||[]).map(function(x){return String((x&&x.name)||'').trim()}).filter(Boolean);
   var want=sel.value||pushWorldState.target||'';
-  /* 列表没变就一个字不动，否则勾一下条目就重建下拉、会把展开的菜单顶掉 */
   var sig=worlds.join('\u0000');
   if(sel.dataset.sig!==sig){
     sel.innerHTML=worlds.length?worlds.map(function(n){return '<option value="'+esc(n)+'">'+esc(n)+'</option>'}).join(''):'<option value="">（尚未读取到酒馆世界书列表）</option>';
@@ -4527,7 +4521,6 @@ function wsApplyConfig(cfg){
   if(wm&&cfg['push-world-mode']!==undefined)wm.value=cfg['push-world-mode'];
   var wn=$('push-world-name');
   if(wn&&cfg['push-world-name']!==undefined)wn.value=cfg['push-world-name'];
-  /* 目标世界书的 option 要等酒馆列表到了才填，先记在状态里由 renderPushWorldTarget 认领 */
   if(pushWorldState&&cfg['push-world-target']!==undefined)pushWorldState.target=cfg['push-world-target']||'';
   if(cfg['__dir']==='ms'||cfg['__dir']==='wb')state.dir=cfg['__dir'];
   applyDirection(true);
@@ -4619,7 +4612,6 @@ function wsApplyFileState(file,rec){
 function wsClaimFile(file){
   if(!wsPendingRestore||!Array.isArray(wsPendingRestore.files)||!wsPendingRestore.files.length)return false;
   var list=wsPendingRestore.files,idx=-1,i;
-  /* 分组要是在保存之后改过名，重新读回来的名字就和存档里对不上，只有 gid 能对上 */
   if(file.libraryGid){
     for(i=0;i<list.length;i++){
       if(list[i].source==='tavern'&&list[i].libraryKind===file.libraryKind&&list[i].libraryGid===file.libraryGid){idx=i;break}
@@ -4630,7 +4622,6 @@ function wsClaimFile(file){
       if(list[i].source==='tavern'&&list[i].libraryKind===file.libraryKind&&list[i].libraryName===file.libraryName){idx=i;break}
     }
   }
-  /* 名字兜底只给本机文件用：两边都是酒馆资源却没在上面对上，说明本来就不是同一个东西 */
   function nameFallbackOk(rec){return !(rec.libraryName&&file.libraryName)}
   if(idx<0){
     for(i=0;i<list.length;i++){
@@ -4904,7 +4895,6 @@ function ckptRender(){
 
 document.addEventListener('click',function(e){
   var t=e.target&&e.target.closest?e.target.closest('[data-act]'):null;
-  /* 恢复与删除都是两段式：第一下只把按钮变成「确认…」，点别处即取消 */
   if(ckptArm&&String(t?t.dataset.act:'').indexOf('ckpt-')!==0){ckptArm=null;ckptRender()}
   if(t){
     var act=t.dataset.act;

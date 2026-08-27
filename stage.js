@@ -118,18 +118,46 @@ function setupPanelInputPrivacy(root) {
     'input:not([type]),input[type="text"],input[type="search"]';
   var searchInputSelector =
     'input[type="search"],input.ms-search,input.ms-modal-search,input.ms-gp-search,input[id*="-search"],#ms-find-input';
+  var numericSelector = 'input[type="number"]';
 
-  function protectInput(input) {
-    if (!input || !input.matches || !input.matches(singleLineSelector)) return;
+  function hardenCommonAttrs(input) {
     if (!input.hasAttribute("autocomplete")) {
       input.setAttribute("autocomplete", "off");
     }
+    input.setAttribute("autocapitalize", "none");
+    input.setAttribute("autocorrect", "off");
+    input.setAttribute("spellcheck", "false");
+    if (!input.hasAttribute("data-ms-name-guard")) {
+      input.setAttribute("data-ms-name-guard", "1");
+      input.setAttribute(
+        "name",
+        "ms-f-" + Math.random().toString(36).slice(2, 10),
+      );
+    }
+  }
+
+  function protectInput(input) {
+    if (!input || !input.matches) return;
+    if (input.matches(numericSelector)) {
+      hardenCommonAttrs(input);
+      if (!input.hasAttribute("inputmode")) {
+        input.setAttribute("inputmode", "numeric");
+      }
+      return;
+    }
+    if (!input.matches(singleLineSelector)) return;
+    hardenCommonAttrs(input);
     if (input.matches(searchInputSelector)) {
       input.setAttribute("inputmode", "search");
       input.setAttribute("enterkeyhint", "search");
-      input.setAttribute("autocapitalize", "none");
-      input.setAttribute("autocorrect", "off");
-      input.setAttribute("spellcheck", "false");
+    } else if (!input.hasAttribute("enterkeyhint")) {
+      input.setAttribute("enterkeyhint", "done");
+    }
+    if (input.getAttribute("type") !== "search") {
+      var doc = input.ownerDocument;
+      if (!doc || doc.activeElement !== input) {
+        input.setAttribute("type", "search");
+      }
     }
   }
 
@@ -1240,9 +1268,6 @@ function getThemeBindingInputStyle(binding) {
   var lum = null;
   if (binding.bgMode === "color" && binding.bgColor) {
     var _op = binding.bgOpacity === undefined ? 1 : binding.bgOpacity;
-    /* 半透明背景下宿主底色仍占主导，bgColor 判不出面板的真实亮度。这里只是
-       放弃用 bgColor 推导，不直接 return——下面还有一层用 textColor 反推的兜底，
-       绑了文字色的主题仍然应该拿到匹配的输入框配色。 */
     if (_op >= 0.6) lum = _msColorLuminance(binding.bgColor);
   }
   if (lum === null && binding.textColor) {
@@ -1697,10 +1722,10 @@ function applyUICustomization() {
 
 function getThemeInputCandidates(doc) {
   var selectors = [
-    ".drawer-content .text_pole",
+    ".drawer-content .text_pole:not(select)",
     ".drawer-content textarea:not(#send_textarea)",
     ".drawer-content input:not([type='file' i], [type='image' i], [type='checkbox' i], [type='radio' i], [type='range' i])",
-    ".text_pole",
+    ".text_pole:not(select)",
     "textarea:not(#send_textarea)",
     "input:not([type='file' i], [type='image' i], [type='checkbox' i], [type='radio' i], [type='range' i])",
     "#send_textarea",
@@ -1745,8 +1770,15 @@ function readControlStyle(win, el) {
   ]
     .filter(Boolean)
     .join(" ");
+  var bgImage = cs.backgroundImage || "";
+  if (bgImage === "none") bgImage = "";
+  if (el.tagName === "SELECT") bgImage = "";
   return {
     background: bg || "",
+    bgImage: bgImage,
+    bgSize: cs.backgroundSize || "",
+    bgRepeat: cs.backgroundRepeat || "",
+    bgPosition: cs.backgroundPosition || "",
     border: border,
     radius: radius || cs.borderRadius || "",
     shadow: cs.boxShadow || "none",
@@ -1757,6 +1789,10 @@ function readControlStyle(win, el) {
 function clearThemeInputStyleVars($p) {
   [
     "--ms-themed-input-bg",
+    "--ms-themed-input-image",
+    "--ms-themed-input-bg-size",
+    "--ms-themed-input-bg-repeat",
+    "--ms-themed-input-bg-position",
     "--ms-themed-input-border",
     "--ms-themed-input-radius",
     "--ms-themed-input-shadow",
@@ -1796,6 +1832,26 @@ function syncThemeColors() {
     if (style) {
       if (style.background)
         $p[0].style.setProperty("--ms-themed-input-bg", style.background);
+      if (style.bgImage) {
+        $p[0].style.setProperty("--ms-themed-input-image", style.bgImage);
+        if (style.bgSize)
+          $p[0].style.setProperty("--ms-themed-input-bg-size", style.bgSize);
+        if (style.bgRepeat)
+          $p[0].style.setProperty(
+            "--ms-themed-input-bg-repeat",
+            style.bgRepeat,
+          );
+        if (style.bgPosition)
+          $p[0].style.setProperty(
+            "--ms-themed-input-bg-position",
+            style.bgPosition,
+          );
+      } else {
+        $p[0].style.removeProperty("--ms-themed-input-image");
+        $p[0].style.removeProperty("--ms-themed-input-bg-size");
+        $p[0].style.removeProperty("--ms-themed-input-bg-repeat");
+        $p[0].style.removeProperty("--ms-themed-input-bg-position");
+      }
       if (style.border)
         $p[0].style.setProperty("--ms-themed-input-border", style.border);
       if (style.radius)
@@ -1816,9 +1872,12 @@ function syncThemeColors() {
   var _tbcInput = getThemeBindingInputStyle(_tbc);
   if (_tbcInput) {
     $p[0].style.setProperty("--ms-themed-input-bg", _tbcInput.bg);
+    $p[0].style.removeProperty("--ms-themed-input-image");
+    $p[0].style.removeProperty("--ms-themed-input-bg-size");
+    $p[0].style.removeProperty("--ms-themed-input-bg-repeat");
+    $p[0].style.removeProperty("--ms-themed-input-bg-position");
     $p[0].style.setProperty("--ms-themed-input-border", _tbcInput.border);
     $p[0].style.setProperty("--ms-themed-input-shadow", "none");
-    // 底色被换掉后，宿主采样来的文字色可能与新底色同明度，需一并推导
     if (!hasBoundText && _tbcInput.color) {
       $p[0].style.setProperty("--ms-themed-input-color", _tbcInput.color);
     }
@@ -6275,7 +6334,6 @@ function buildTransferSnapshot() {
     }
     sMap[skey].count++;
   });
-  /* 指纹表只用来在转换台上标「已有」，算炸了也不该把分组标签快照一起拖没 */
   var stageIndex = null;
   try {
     stageIndex = _tsBuildStageDupIndex();
@@ -6841,6 +6899,9 @@ function getCSS() {
 .ms-diff-line.del .ms-diff-text{color:#e88;text-decoration:line-through;opacity:0.8;}
 .ms-diff-line.same .ms-diff-text{color:var(--SmartThemeBodyColor,#ccc);opacity:0.45;}
 .ms-diff-body.ms-diff-changes-only .ms-diff-line.same{display:none;}
+#${PANEL_ID} input[type="search"]{-webkit-appearance:none!important;appearance:none!important;}
+#${PANEL_ID} input[type="search"]::-webkit-search-cancel-button,#${PANEL_ID} input[type="search"]::-webkit-search-decoration,#${PANEL_ID} input[type="search"]::-webkit-search-results-button,#${PANEL_ID} input[type="search"]::-webkit-search-results-decoration{-webkit-appearance:none!important;appearance:none!important;display:none!important;}
+#${PANEL_ID} input::-webkit-calendar-picker-indicator,#${PANEL_ID} input::-webkit-list-button{-webkit-appearance:none!important;appearance:none!important;display:none!important;opacity:0!important;}
 #${PANEL_ID} input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:2px solid var(--SmartThemeBorderColor,#555);border-radius:4px;background:transparent;cursor:pointer;position:relative;flex-shrink:0;transition:all 0.15s;vertical-align:middle;}
 #${PANEL_ID} input[type="checkbox"]:checked{background:var(--ms-accent);border-color:var(--ms-accent);}
 #${PANEL_ID} input[type="checkbox"]::before{content:none!important;}
@@ -7165,6 +7226,7 @@ function getCSS() {
 #${PANEL_ID} .ms-gp-newgroup{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:30px;border:1px solid var(--ms-accent)!important;background:rgba(var(--ms-accent-rgb),0.12)!important;color:var(--ms-accent)!important;border-radius:7px;cursor:pointer;font-size:12px;font-family:inherit;box-shadow:none!important;transition:background 0.12s;}
 #${PANEL_ID} .ms-gp-newgroup:hover{background:rgba(var(--ms-accent-rgb),0.22)!important;}
 .ms-page-minh{min-height:52vh;}
+#${PANEL_ID} .ms-search,#${PANEL_ID} .ms-field input,#${PANEL_ID} .ms-field select,#${PANEL_ID} .ms-field textarea,#${PANEL_ID} .ms-modal-input,#${PANEL_ID} .ms-modal-textarea,#${PANEL_ID} .ms-modal-search,#${PANEL_ID} .ms-find-input,#${PANEL_ID} .ms-fs-editor-overlay .ms-fs-textarea,#${PANEL_ID} .ms-sg-input,#${PANEL_ID} .ms-gp-trigger,#${PANEL_ID} input.ms-gp-search,#${PANEL_ID} textarea{background-image:var(--ms-themed-input-image,none)!important;background-size:var(--ms-themed-input-bg-size,auto)!important;background-repeat:var(--ms-themed-input-bg-repeat,no-repeat)!important;background-position:var(--ms-themed-input-bg-position,center)!important;}
 `;
 }
 
@@ -29013,7 +29075,7 @@ function renderGroupPrefixes(v) {
   });
 }
 
-/* 正式转换台走 GitHub Pages；本地开发时可在设置中临时覆盖这个地址。 */
+/* 本地开发时：http://127.0.0.1:8765/converter.html */
 var TRANSFER_STATION_URL = "https://sanjs333.github.io/stage/converter.html";
 
 var _tsOverlay = null;
@@ -29164,7 +29226,6 @@ function _tsNormDupContent(content) {
 
 function _tsDupContentFingerprint(content) {
   var text = _tsNormDupContent(content);
-  /* 空正文一律给空串：否则所有空条目会互相命中，标出一片假的「已有」 */
   return text ? fastDualHash(text) : "";
 }
 
@@ -29192,8 +29253,6 @@ function _tsBuildStageDupIndex() {
 
 var _TS_STAGE_ALL = "_all";
 var _TS_STAGE_UNGROUPED = "_ungrouped";
-
-/* 与 _tsUniqueWorldName 的区别：这只是给列表去重显示名，撞多少次都不该抛错把整张目录带崩 */
 function _tsUniqueLabel(name, taken) {
   if (taken.indexOf(name) < 0) return name;
   for (var i = 2; i < 500; i++) {
@@ -29402,7 +29461,6 @@ async function _tsReadLibraryResources(message) {
         if (typeof buildExportPayload !== "function") {
           throw new Error("当前脚本版本不支持导出剧场数据");
         }
-        /* 不带历史版本、不带角色信息：转世界书只用到标题、正文和标签，别的只是白占体积 */
         value = buildExportPayload(
           stagePrompts,
           true,
@@ -29411,10 +29469,6 @@ async function _tsReadLibraryResources(message) {
           false,
           false,
         );
-        /* includeCharacter=false 只清了 prompt 上的 character，而 groups 拿到的是
-           活的原始分组对象——charKeys、prefixAssignments、iconUrl 全在里面，IP 分组
-           下没被本次剧场引用的角色卡也会一起出去。转换台只读 id / name / subGroups，
-           这里按白名单重建一份。 */
         if (value && Array.isArray(value.groups)) {
           value.groups = value.groups.map(function (g) {
             return {
@@ -29487,10 +29541,6 @@ async function _tsReadLibraryResources(message) {
     failed: failed,
   });
 }
-
-/* ---------- 接收转换台推来的世界书 ---------- */
-/* 与 receiveTransferPayload 是两个方向：那边把条目收进小剧场，这边把条目写成酒馆的世界书。 */
-
 var _TS_WORLD_BAD_NAME = /[\\/:*?"<>|]/;
 
 function _tsWorldNames(ctx) {
@@ -29511,7 +29561,6 @@ function _tsUniqueWorldName(name, taken) {
   throw new Error("同名世界书过多，请换一个名字");
 }
 
-/* 追加时必须重排编号：转换台生成的条目一律从 0 开始，直接塞进去会盖掉目标世界书的原有条目。 */
 function _tsMergeWorldEntries(base, incoming) {
   var out = base && typeof base === "object" ? base : {};
   if (!out.entries || typeof out.entries !== "object") out.entries = {};
@@ -29540,7 +29589,6 @@ function _tsMergeWorldEntries(base, incoming) {
   return { book: out, added: added, total: Object.keys(out.entries).length };
 }
 
-/* 面板可能跑在 iframe 里，相对地址会解析到 iframe 自己的文档上，所以拿宿主页的 origin 拼绝对地址 */
 function _tsApiUrl(path) {
   var origin = "";
   try {
@@ -29564,7 +29612,6 @@ async function _tsSaveWorldBook(ctx, name, book) {
     await ctx.saveWorldInfo(name, book, true);
     return;
   }
-  /* 退路：老版本酒馆的 context 上没有 saveWorldInfo，直接打后端接口 */
   if (typeof ctx.getRequestHeaders !== "function") {
     throw new Error("当前酒馆版本不支持写入世界书");
   }
@@ -29612,7 +29659,6 @@ async function _tsReceiveWorldBook(payload) {
     renamed = unique !== name;
     name = unique;
   } else {
-    /* 取不到列表时不拦，交给写入本身报错，免得旧版本上明明能写却被这里挡下 */
     if (taken.length && taken.indexOf(name) < 0) {
       throw new Error("世界书「" + name + "」已不存在，请在转换台重新选择目标");
     }
@@ -29626,8 +29672,6 @@ async function _tsReceiveWorldBook(payload) {
       }
       if (!base.entries || typeof base.entries !== "object") base.entries = {};
     } else if (typeof ctx.loadWorldInfo === "function") {
-      /* 覆盖只该丢弃条目。世界书目前只有 entries 一个字段，但万一酒馆以后加了书级别的
-         设置，整本重写会连带抹掉，所以先把原书读出来、只清空 entries。读不到就照旧新写一本。 */
       try {
         var prev = await ctx.loadWorldInfo(name);
         if (prev && typeof prev === "object") {
@@ -29754,7 +29798,6 @@ function _tsAttachPort(port) {
           });
         },
       );
-      /* 这一侧不关闭转换台：用户常要连着推好几本 */
       return;
     }
     if (d.type === "push") {

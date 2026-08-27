@@ -1,4 +1,4 @@
-/* 正式转换台走 GitHub Pages；本地开发时可在设置中临时覆盖这个地址。 */
+/* 本地开发时：http://127.0.0.1:8765/converter.html */
 var TRANSFER_STATION_URL = "https://sanjs333.github.io/stage/converter.html";
 
 var _tsOverlay = null;
@@ -149,7 +149,6 @@ function _tsNormDupContent(content) {
 
 function _tsDupContentFingerprint(content) {
   var text = _tsNormDupContent(content);
-  /* 空正文一律给空串：否则所有空条目会互相命中，标出一片假的「已有」 */
   return text ? fastDualHash(text) : "";
 }
 
@@ -177,8 +176,6 @@ function _tsBuildStageDupIndex() {
 
 var _TS_STAGE_ALL = "_all";
 var _TS_STAGE_UNGROUPED = "_ungrouped";
-
-/* 与 _tsUniqueWorldName 的区别：这只是给列表去重显示名，撞多少次都不该抛错把整张目录带崩 */
 function _tsUniqueLabel(name, taken) {
   if (taken.indexOf(name) < 0) return name;
   for (var i = 2; i < 500; i++) {
@@ -387,7 +384,6 @@ async function _tsReadLibraryResources(message) {
         if (typeof buildExportPayload !== "function") {
           throw new Error("当前脚本版本不支持导出剧场数据");
         }
-        /* 不带历史版本、不带角色信息：转世界书只用到标题、正文和标签，别的只是白占体积 */
         value = buildExportPayload(
           stagePrompts,
           true,
@@ -396,10 +392,6 @@ async function _tsReadLibraryResources(message) {
           false,
           false,
         );
-        /* includeCharacter=false 只清了 prompt 上的 character，而 groups 拿到的是
-           活的原始分组对象——charKeys、prefixAssignments、iconUrl 全在里面，IP 分组
-           下没被本次剧场引用的角色卡也会一起出去。转换台只读 id / name / subGroups，
-           这里按白名单重建一份。 */
         if (value && Array.isArray(value.groups)) {
           value.groups = value.groups.map(function (g) {
             return {
@@ -472,10 +464,6 @@ async function _tsReadLibraryResources(message) {
     failed: failed,
   });
 }
-
-/* ---------- 接收转换台推来的世界书 ---------- */
-/* 与 receiveTransferPayload 是两个方向：那边把条目收进小剧场，这边把条目写成酒馆的世界书。 */
-
 var _TS_WORLD_BAD_NAME = /[\\/:*?"<>|]/;
 
 function _tsWorldNames(ctx) {
@@ -496,7 +484,6 @@ function _tsUniqueWorldName(name, taken) {
   throw new Error("同名世界书过多，请换一个名字");
 }
 
-/* 追加时必须重排编号：转换台生成的条目一律从 0 开始，直接塞进去会盖掉目标世界书的原有条目。 */
 function _tsMergeWorldEntries(base, incoming) {
   var out = base && typeof base === "object" ? base : {};
   if (!out.entries || typeof out.entries !== "object") out.entries = {};
@@ -525,7 +512,6 @@ function _tsMergeWorldEntries(base, incoming) {
   return { book: out, added: added, total: Object.keys(out.entries).length };
 }
 
-/* 面板可能跑在 iframe 里，相对地址会解析到 iframe 自己的文档上，所以拿宿主页的 origin 拼绝对地址 */
 function _tsApiUrl(path) {
   var origin = "";
   try {
@@ -549,7 +535,6 @@ async function _tsSaveWorldBook(ctx, name, book) {
     await ctx.saveWorldInfo(name, book, true);
     return;
   }
-  /* 退路：老版本酒馆的 context 上没有 saveWorldInfo，直接打后端接口 */
   if (typeof ctx.getRequestHeaders !== "function") {
     throw new Error("当前酒馆版本不支持写入世界书");
   }
@@ -597,7 +582,6 @@ async function _tsReceiveWorldBook(payload) {
     renamed = unique !== name;
     name = unique;
   } else {
-    /* 取不到列表时不拦，交给写入本身报错，免得旧版本上明明能写却被这里挡下 */
     if (taken.length && taken.indexOf(name) < 0) {
       throw new Error("世界书「" + name + "」已不存在，请在转换台重新选择目标");
     }
@@ -611,8 +595,6 @@ async function _tsReceiveWorldBook(payload) {
       }
       if (!base.entries || typeof base.entries !== "object") base.entries = {};
     } else if (typeof ctx.loadWorldInfo === "function") {
-      /* 覆盖只该丢弃条目。世界书目前只有 entries 一个字段，但万一酒馆以后加了书级别的
-         设置，整本重写会连带抹掉，所以先把原书读出来、只清空 entries。读不到就照旧新写一本。 */
       try {
         var prev = await ctx.loadWorldInfo(name);
         if (prev && typeof prev === "object") {
@@ -739,7 +721,6 @@ function _tsAttachPort(port) {
           });
         },
       );
-      /* 这一侧不关闭转换台：用户常要连着推好几本 */
       return;
     }
     if (d.type === "push") {

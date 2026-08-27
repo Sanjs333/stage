@@ -1395,7 +1395,6 @@ function buildTransferSnapshot() {
     }
     sMap[skey].count++;
   });
-  /* 指纹表只用来在转换台上标「已有」，算炸了也不该把分组标签快照一起拖没 */
   var stageIndex = null;
   try {
     stageIndex = _tsBuildStageDupIndex();

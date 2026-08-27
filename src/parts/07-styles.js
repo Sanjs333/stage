@@ -342,6 +342,9 @@ function getCSS() {
 .ms-diff-line.del .ms-diff-text{color:#e88;text-decoration:line-through;opacity:0.8;}
 .ms-diff-line.same .ms-diff-text{color:var(--SmartThemeBodyColor,#ccc);opacity:0.45;}
 .ms-diff-body.ms-diff-changes-only .ms-diff-line.same{display:none;}
+#${PANEL_ID} input[type="search"]{-webkit-appearance:none!important;appearance:none!important;}
+#${PANEL_ID} input[type="search"]::-webkit-search-cancel-button,#${PANEL_ID} input[type="search"]::-webkit-search-decoration,#${PANEL_ID} input[type="search"]::-webkit-search-results-button,#${PANEL_ID} input[type="search"]::-webkit-search-results-decoration{-webkit-appearance:none!important;appearance:none!important;display:none!important;}
+#${PANEL_ID} input::-webkit-calendar-picker-indicator,#${PANEL_ID} input::-webkit-list-button{-webkit-appearance:none!important;appearance:none!important;display:none!important;opacity:0!important;}
 #${PANEL_ID} input[type="checkbox"]{-webkit-appearance:none;appearance:none;width:16px;height:16px;border:2px solid var(--SmartThemeBorderColor,#555);border-radius:4px;background:transparent;cursor:pointer;position:relative;flex-shrink:0;transition:all 0.15s;vertical-align:middle;}
 #${PANEL_ID} input[type="checkbox"]:checked{background:var(--ms-accent);border-color:var(--ms-accent);}
 #${PANEL_ID} input[type="checkbox"]::before{content:none!important;}
@@ -666,5 +669,6 @@ function getCSS() {
 #${PANEL_ID} .ms-gp-newgroup{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;height:30px;border:1px solid var(--ms-accent)!important;background:rgba(var(--ms-accent-rgb),0.12)!important;color:var(--ms-accent)!important;border-radius:7px;cursor:pointer;font-size:12px;font-family:inherit;box-shadow:none!important;transition:background 0.12s;}
 #${PANEL_ID} .ms-gp-newgroup:hover{background:rgba(var(--ms-accent-rgb),0.22)!important;}
 .ms-page-minh{min-height:52vh;}
+#${PANEL_ID} .ms-search,#${PANEL_ID} .ms-field input,#${PANEL_ID} .ms-field select,#${PANEL_ID} .ms-field textarea,#${PANEL_ID} .ms-modal-input,#${PANEL_ID} .ms-modal-textarea,#${PANEL_ID} .ms-modal-search,#${PANEL_ID} .ms-find-input,#${PANEL_ID} .ms-fs-editor-overlay .ms-fs-textarea,#${PANEL_ID} .ms-sg-input,#${PANEL_ID} .ms-gp-trigger,#${PANEL_ID} input.ms-gp-search,#${PANEL_ID} textarea{background-image:var(--ms-themed-input-image,none)!important;background-size:var(--ms-themed-input-bg-size,auto)!important;background-repeat:var(--ms-themed-input-bg-repeat,no-repeat)!important;background-position:var(--ms-themed-input-bg-position,center)!important;}
 `;
 }

@@ -112,18 +112,46 @@ function setupPanelInputPrivacy(root) {
     'input:not([type]),input[type="text"],input[type="search"]';
   var searchInputSelector =
     'input[type="search"],input.ms-search,input.ms-modal-search,input.ms-gp-search,input[id*="-search"],#ms-find-input';
+  var numericSelector = 'input[type="number"]';
 
-  function protectInput(input) {
-    if (!input || !input.matches || !input.matches(singleLineSelector)) return;
+  function hardenCommonAttrs(input) {
     if (!input.hasAttribute("autocomplete")) {
       input.setAttribute("autocomplete", "off");
     }
+    input.setAttribute("autocapitalize", "none");
+    input.setAttribute("autocorrect", "off");
+    input.setAttribute("spellcheck", "false");
+    if (!input.hasAttribute("data-ms-name-guard")) {
+      input.setAttribute("data-ms-name-guard", "1");
+      input.setAttribute(
+        "name",
+        "ms-f-" + Math.random().toString(36).slice(2, 10),
+      );
+    }
+  }
+
+  function protectInput(input) {
+    if (!input || !input.matches) return;
+    if (input.matches(numericSelector)) {
+      hardenCommonAttrs(input);
+      if (!input.hasAttribute("inputmode")) {
+        input.setAttribute("inputmode", "numeric");
+      }
+      return;
+    }
+    if (!input.matches(singleLineSelector)) return;
+    hardenCommonAttrs(input);
     if (input.matches(searchInputSelector)) {
       input.setAttribute("inputmode", "search");
       input.setAttribute("enterkeyhint", "search");
-      input.setAttribute("autocapitalize", "none");
-      input.setAttribute("autocorrect", "off");
-      input.setAttribute("spellcheck", "false");
+    } else if (!input.hasAttribute("enterkeyhint")) {
+      input.setAttribute("enterkeyhint", "done");
+    }
+    if (input.getAttribute("type") !== "search") {
+      var doc = input.ownerDocument;
+      if (!doc || doc.activeElement !== input) {
+        input.setAttribute("type", "search");
+      }
     }
   }
 
@@ -1234,9 +1262,6 @@ function getThemeBindingInputStyle(binding) {
   var lum = null;
   if (binding.bgMode === "color" && binding.bgColor) {
     var _op = binding.bgOpacity === undefined ? 1 : binding.bgOpacity;
-    /* 半透明背景下宿主底色仍占主导，bgColor 判不出面板的真实亮度。这里只是
-       放弃用 bgColor 推导，不直接 return——下面还有一层用 textColor 反推的兜底，
-       绑了文字色的主题仍然应该拿到匹配的输入框配色。 */
     if (_op >= 0.6) lum = _msColorLuminance(binding.bgColor);
   }
   if (lum === null && binding.textColor) {
@@ -1691,10 +1716,10 @@ function applyUICustomization() {
 
 function getThemeInputCandidates(doc) {
   var selectors = [
-    ".drawer-content .text_pole",
+    ".drawer-content .text_pole:not(select)",
     ".drawer-content textarea:not(#send_textarea)",
     ".drawer-content input:not([type='file' i], [type='image' i], [type='checkbox' i], [type='radio' i], [type='range' i])",
-    ".text_pole",
+    ".text_pole:not(select)",
     "textarea:not(#send_textarea)",
     "input:not([type='file' i], [type='image' i], [type='checkbox' i], [type='radio' i], [type='range' i])",
     "#send_textarea",
@@ -1739,8 +1764,15 @@ function readControlStyle(win, el) {
   ]
     .filter(Boolean)
     .join(" ");
+  var bgImage = cs.backgroundImage || "";
+  if (bgImage === "none") bgImage = "";
+  if (el.tagName === "SELECT") bgImage = "";
   return {
     background: bg || "",
+    bgImage: bgImage,
+    bgSize: cs.backgroundSize || "",
+    bgRepeat: cs.backgroundRepeat || "",
+    bgPosition: cs.backgroundPosition || "",
     border: border,
     radius: radius || cs.borderRadius || "",
     shadow: cs.boxShadow || "none",
@@ -1751,6 +1783,10 @@ function readControlStyle(win, el) {
 function clearThemeInputStyleVars($p) {
   [
     "--ms-themed-input-bg",
+    "--ms-themed-input-image",
+    "--ms-themed-input-bg-size",
+    "--ms-themed-input-bg-repeat",
+    "--ms-themed-input-bg-position",
     "--ms-themed-input-border",
     "--ms-themed-input-radius",
     "--ms-themed-input-shadow",
@@ -1790,6 +1826,26 @@ function syncThemeColors() {
     if (style) {
       if (style.background)
         $p[0].style.setProperty("--ms-themed-input-bg", style.background);
+      if (style.bgImage) {
+        $p[0].style.setProperty("--ms-themed-input-image", style.bgImage);
+        if (style.bgSize)
+          $p[0].style.setProperty("--ms-themed-input-bg-size", style.bgSize);
+        if (style.bgRepeat)
+          $p[0].style.setProperty(
+            "--ms-themed-input-bg-repeat",
+            style.bgRepeat,
+          );
+        if (style.bgPosition)
+          $p[0].style.setProperty(
+            "--ms-themed-input-bg-position",
+            style.bgPosition,
+          );
+      } else {
+        $p[0].style.removeProperty("--ms-themed-input-image");
+        $p[0].style.removeProperty("--ms-themed-input-bg-size");
+        $p[0].style.removeProperty("--ms-themed-input-bg-repeat");
+        $p[0].style.removeProperty("--ms-themed-input-bg-position");
+      }
       if (style.border)
         $p[0].style.setProperty("--ms-themed-input-border", style.border);
       if (style.radius)
@@ -1810,9 +1866,12 @@ function syncThemeColors() {
   var _tbcInput = getThemeBindingInputStyle(_tbc);
   if (_tbcInput) {
     $p[0].style.setProperty("--ms-themed-input-bg", _tbcInput.bg);
+    $p[0].style.removeProperty("--ms-themed-input-image");
+    $p[0].style.removeProperty("--ms-themed-input-bg-size");
+    $p[0].style.removeProperty("--ms-themed-input-bg-repeat");
+    $p[0].style.removeProperty("--ms-themed-input-bg-position");
     $p[0].style.setProperty("--ms-themed-input-border", _tbcInput.border);
     $p[0].style.setProperty("--ms-themed-input-shadow", "none");
-    // 底色被换掉后，宿主采样来的文字色可能与新底色同明度，需一并推导
     if (!hasBoundText && _tbcInput.color) {
       $p[0].style.setProperty("--ms-themed-input-color", _tbcInput.color);
     }
