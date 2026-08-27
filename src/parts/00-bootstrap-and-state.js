@@ -3,7 +3,7 @@ const STORAGE_KEY = "miniStage_data";
 const PANEL_ID = "mini-stage-panel";
 const STYLE_ID = "mini-stage-styles";
 const SUBGROUP_NONE = "_nosub";
-const SCRIPT_VERSION = "3.8.0";
+const SCRIPT_VERSION = "3.8.1";
 const GROUP_COLORS = [
   "#D6A2A2",
   "#DDAA90",
@@ -26,7 +26,7 @@ const GROUP_COLORS = [
   "#8b5b8c",
 ];
 const TAG_COLORS = GROUP_COLORS;
-var GUIDE_VERSION = "3.8.0";
+var GUIDE_VERSION = "3.8.1";
 var GUIDE_REMOTE_URLS = {
   guide:
     "https://gist.githubusercontent.com/Sanjs333/c45460dc2bb5908ff53b5769088b122d/raw/guide.md",
@@ -105,6 +105,63 @@ let _imgPreloaded = new Set();
 let _inputAppendList = [];
 let _msShuttingDown = false;
 let _msActiveFetchControllers = new Set();
+
+function setupPanelInputPrivacy(root) {
+  if (!root) return;
+  var singleLineSelector =
+    'input:not([type]),input[type="text"],input[type="search"]';
+  var searchInputSelector =
+    'input[type="search"],input.ms-search,input.ms-modal-search,input.ms-gp-search,input[id*="-search"],#ms-find-input';
+
+  function protectInput(input) {
+    if (!input || !input.matches || !input.matches(singleLineSelector)) return;
+    if (!input.hasAttribute("autocomplete")) {
+      input.setAttribute("autocomplete", "off");
+    }
+    if (input.matches(searchInputSelector)) {
+      input.setAttribute("inputmode", "search");
+      input.setAttribute("enterkeyhint", "search");
+      input.setAttribute("autocapitalize", "none");
+      input.setAttribute("autocorrect", "off");
+      input.setAttribute("spellcheck", "false");
+    }
+  }
+
+  function protectTree(node) {
+    if (!node || node.nodeType !== 1) return;
+    protectInput(node);
+    if (node.querySelectorAll) {
+      node.querySelectorAll(singleLineSelector).forEach(protectInput);
+    }
+  }
+
+  protectTree(root);
+  root.addEventListener(
+    "pointerdown",
+    function (e) {
+      protectInput(e.target);
+    },
+    true,
+  );
+  root.addEventListener(
+    "focusin",
+    function (e) {
+      protectInput(e.target);
+    },
+    true,
+  );
+  if (typeof MutationObserver !== "undefined") {
+    root._msInputPrivacyObserver = new MutationObserver(function (records) {
+      records.forEach(function (record) {
+        record.addedNodes.forEach(protectTree);
+      });
+    });
+    root._msInputPrivacyObserver.observe(root, {
+      childList: true,
+      subtree: true,
+    });
+  }
+}
 
 function isShutdownFetchError(e) {
   var msg = e && e.message ? String(e.message) : "";

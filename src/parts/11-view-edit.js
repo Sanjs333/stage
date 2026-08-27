@@ -435,7 +435,7 @@ function renderEdit(v) {
         '<div class="ms-gp-head"><div class="ms-gp-head-t"><i class="fa-solid fa-layer-group"></i>选择分组 / 文件夹</div>' +
         '<span class="ms-gp-head-n" id="ms-gp-summary"></span>' +
         '<button type="button" class="ms-gp-x" id="ms-gp-close" title="关闭"><i class="fa-solid fa-xmark"></i></button></div>' +
-        '<div class="ms-gp-searchwrap"><input type="text" class="ms-gp-search" id="ms-gp-search" placeholder="搜索分组或文件夹..."></div>' +
+        '<div class="ms-gp-searchwrap"><input type="text" class="ms-gp-search" id="ms-gp-search" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="search" enterkeyhint="search" placeholder="搜索分组或文件夹..."></div>' +
         '<div class="ms-gp-list" id="ms-gp-list"></div>' +
         '<div class="ms-gp-foot"><button type="button" class="ms-gp-newgroup" id="ms-gp-newgroup"><i class="fa-solid fa-plus"></i>新建分组</button></div>' +
         "</div>",
@@ -836,7 +836,7 @@ function renderEdit(v) {
         '<div class="ms-gp-head"><div class="ms-gp-head-t"><i class="fa-solid fa-layer-group"></i>选择系列</div>' +
         '<span class="ms-gp-head-n" id="ms-sp-summary"></span>' +
         '<button type="button" class="ms-gp-x" id="ms-sp-close" title="关闭"><i class="fa-solid fa-xmark"></i></button></div>' +
-        '<div class="ms-gp-searchwrap"><input type="text" class="ms-gp-search" id="ms-sp-search" placeholder="搜索本组系列，或输入新名称后回车..."></div>' +
+        '<div class="ms-gp-searchwrap"><input type="text" class="ms-gp-search" id="ms-sp-search" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="search" enterkeyhint="search" placeholder="搜索本组系列，或输入新名称后回车..."></div>' +
         '<div class="ms-gp-list" id="ms-sp-list"></div>' +
         '<div class="ms-gp-foot"><button type="button" class="ms-gp-newgroup" id="ms-sp-newseries"><i class="fa-solid fa-plus"></i>新建系列</button></div>' +
         "</div>",

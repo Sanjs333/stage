@@ -9,7 +9,7 @@ const STORAGE_KEY = "miniStage_data";
 const PANEL_ID = "mini-stage-panel";
 const STYLE_ID = "mini-stage-styles";
 const SUBGROUP_NONE = "_nosub";
-const SCRIPT_VERSION = "3.8.0";
+const SCRIPT_VERSION = "3.8.1";
 const GROUP_COLORS = [
   "#D6A2A2",
   "#DDAA90",
@@ -32,7 +32,7 @@ const GROUP_COLORS = [
   "#8b5b8c",
 ];
 const TAG_COLORS = GROUP_COLORS;
-var GUIDE_VERSION = "3.8.0";
+var GUIDE_VERSION = "3.8.1";
 var GUIDE_REMOTE_URLS = {
   guide:
     "https://gist.githubusercontent.com/Sanjs333/c45460dc2bb5908ff53b5769088b122d/raw/guide.md",
@@ -111,6 +111,63 @@ let _imgPreloaded = new Set();
 let _inputAppendList = [];
 let _msShuttingDown = false;
 let _msActiveFetchControllers = new Set();
+
+function setupPanelInputPrivacy(root) {
+  if (!root) return;
+  var singleLineSelector =
+    'input:not([type]),input[type="text"],input[type="search"]';
+  var searchInputSelector =
+    'input[type="search"],input.ms-search,input.ms-modal-search,input.ms-gp-search,input[id*="-search"],#ms-find-input';
+
+  function protectInput(input) {
+    if (!input || !input.matches || !input.matches(singleLineSelector)) return;
+    if (!input.hasAttribute("autocomplete")) {
+      input.setAttribute("autocomplete", "off");
+    }
+    if (input.matches(searchInputSelector)) {
+      input.setAttribute("inputmode", "search");
+      input.setAttribute("enterkeyhint", "search");
+      input.setAttribute("autocapitalize", "none");
+      input.setAttribute("autocorrect", "off");
+      input.setAttribute("spellcheck", "false");
+    }
+  }
+
+  function protectTree(node) {
+    if (!node || node.nodeType !== 1) return;
+    protectInput(node);
+    if (node.querySelectorAll) {
+      node.querySelectorAll(singleLineSelector).forEach(protectInput);
+    }
+  }
+
+  protectTree(root);
+  root.addEventListener(
+    "pointerdown",
+    function (e) {
+      protectInput(e.target);
+    },
+    true,
+  );
+  root.addEventListener(
+    "focusin",
+    function (e) {
+      protectInput(e.target);
+    },
+    true,
+  );
+  if (typeof MutationObserver !== "undefined") {
+    root._msInputPrivacyObserver = new MutationObserver(function (records) {
+      records.forEach(function (record) {
+        record.addedNodes.forEach(protectTree);
+      });
+    });
+    root._msInputPrivacyObserver.observe(root, {
+      childList: true,
+      subtree: true,
+    });
+  }
+}
 
 function isShutdownFetchError(e) {
   var msg = e && e.message ? String(e.message) : "";
@@ -12220,7 +12277,7 @@ function renderEdit(v) {
         '<div class="ms-gp-head"><div class="ms-gp-head-t"><i class="fa-solid fa-layer-group"></i>选择分组 / 文件夹</div>' +
         '<span class="ms-gp-head-n" id="ms-gp-summary"></span>' +
         '<button type="button" class="ms-gp-x" id="ms-gp-close" title="关闭"><i class="fa-solid fa-xmark"></i></button></div>' +
-        '<div class="ms-gp-searchwrap"><input type="text" class="ms-gp-search" id="ms-gp-search" placeholder="搜索分组或文件夹..."></div>' +
+        '<div class="ms-gp-searchwrap"><input type="text" class="ms-gp-search" id="ms-gp-search" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="search" enterkeyhint="search" placeholder="搜索分组或文件夹..."></div>' +
         '<div class="ms-gp-list" id="ms-gp-list"></div>' +
         '<div class="ms-gp-foot"><button type="button" class="ms-gp-newgroup" id="ms-gp-newgroup"><i class="fa-solid fa-plus"></i>新建分组</button></div>' +
         "</div>",
@@ -12621,7 +12678,7 @@ function renderEdit(v) {
         '<div class="ms-gp-head"><div class="ms-gp-head-t"><i class="fa-solid fa-layer-group"></i>选择系列</div>' +
         '<span class="ms-gp-head-n" id="ms-sp-summary"></span>' +
         '<button type="button" class="ms-gp-x" id="ms-sp-close" title="关闭"><i class="fa-solid fa-xmark"></i></button></div>' +
-        '<div class="ms-gp-searchwrap"><input type="text" class="ms-gp-search" id="ms-sp-search" placeholder="搜索本组系列，或输入新名称后回车..."></div>' +
+        '<div class="ms-gp-searchwrap"><input type="text" class="ms-gp-search" id="ms-sp-search" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" inputmode="search" enterkeyhint="search" placeholder="搜索本组系列，或输入新名称后回车..."></div>' +
         '<div class="ms-gp-list" id="ms-sp-list"></div>' +
         '<div class="ms-gp-foot"><button type="button" class="ms-gp-newgroup" id="ms-sp-newseries"><i class="fa-solid fa-plus"></i>新建系列</button></div>' +
         "</div>",
@@ -25448,6 +25505,7 @@ function showPanel() {
     }
     makeDraggable();
     setupKeyboardAdapt();
+    setupPanelInputPrivacy($p[0]);
     applyUICustomization();
     $p.off("click.ms-inject-clear-btn").on(
       "click.ms-inject-clear-btn",

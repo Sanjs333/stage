@@ -234,6 +234,7 @@ function showPanel() {
     }
     makeDraggable();
     setupKeyboardAdapt();
+    setupPanelInputPrivacy($p[0]);
     applyUICustomization();
     $p.off("click.ms-inject-clear-btn").on(
       "click.ms-inject-clear-btn",
